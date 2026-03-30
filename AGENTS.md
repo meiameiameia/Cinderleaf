@@ -78,6 +78,8 @@ Workflow intent for this repo:
 10. If a decision affects architecture, release process, product safety posture, or future routing assumptions, record the durable decision in `ARCHITECT_NOTES.md`.
 11. The Architect is responsible for the final gate decision even when execution is delegated.
 12. The executor must not widen scope, weaken validation, or mutate locked framework contracts without explicit human approval.
+13. After issuing a gate decision on a subagent handoff, the Architect must immediately close that subagent thread. Completed subagents do not persist.
+14. The only active subagent at any point should be the one currently executing the current increment.
 
 ## 3. Pre-Dispatch Declaration Format
 
@@ -248,6 +250,8 @@ The following are framework violations:
 - Expanding scope because a nearby cleanup seems convenient rather than because it was approved and re-gated.
 - Treating a partially validated desktop change as complete without naming the manual validation gap.
 - Allowing docs to imply contribution, release, or packaging behavior that the current repo does not actually support.
+- Leaving completed subagent threads open after their handoff has been gated.
+- Keeping more than one active subagent alive for the same current increment.
 
 ## 10. Default Posture
 
