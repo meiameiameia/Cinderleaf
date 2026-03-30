@@ -50,6 +50,18 @@ class SetupConfigurationSurface(QScrollArea):
         active_backup_bundle_label: QLabel,
         backup_bundle_inspection_summary_label: QLabel,
         restore_import_planning_summary_label: QLabel,
+        managed_folders_summary_label: QLabel,
+        managed_sandbox_mods_path_label: QLabel,
+        open_managed_sandbox_mods_button: QPushButton,
+        managed_sandbox_archive_path_label: QLabel,
+        open_managed_sandbox_archive_button: QPushButton,
+        managed_real_archive_path_label: QLabel,
+        open_managed_real_archive_button: QPushButton,
+        managed_real_logs_path_label: QLabel,
+        open_managed_real_logs_button: QPushButton,
+        managed_sandbox_logs_path_label: QLabel,
+        open_managed_sandbox_logs_button: QPushButton,
+        migrate_managed_folders_button: QPushButton,
         setup_output_box: QPlainTextEdit,
     ) -> None:
         super().__init__()
@@ -85,6 +97,32 @@ class SetupConfigurationSurface(QScrollArea):
             if secondary_button is not None:
                 field_row.addWidget(secondary_button)
             row_layout.addLayout(field_row)
+            return row_widget
+
+        def _build_read_only_path_row(
+            *,
+            object_name: str,
+            label_text: str,
+            value_label: QLabel,
+            open_button: QPushButton,
+        ) -> QWidget:
+            row_widget = QWidget()
+            row_widget.setObjectName(object_name)
+            row_layout = QVBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
+
+            row_label = QLabel(label_text)
+            row_label.setProperty("setupFieldLabel", True)
+            row_layout.addWidget(row_label)
+
+            value_row = QHBoxLayout()
+            value_row.setContentsMargins(0, 0, 0, 0)
+            value_row.setSpacing(8)
+            value_label.setWordWrap(True)
+            value_row.addWidget(value_label, 1)
+            value_row.addWidget(open_button)
+            row_layout.addLayout(value_row)
             return row_widget
 
         primary_actions_widget = QWidget()
@@ -266,6 +304,61 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.addWidget(backup_bundle_inspection_summary_label)
         backup_layout.addWidget(restore_import_planning_summary_label)
 
+        managed_group = QGroupBox("Cinderleaf-managed folders")
+        managed_group.setObjectName("setup_managed_folders_group")
+        managed_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        managed_layout = QVBoxLayout(managed_group)
+        managed_layout.setContentsMargins(12, 12, 12, 12)
+        managed_layout.setSpacing(8)
+        managed_intro_label = QLabel(
+            "These folders are derived from the game folder. They stay optional for existing users, and the migration action only moves Cinderleaf-managed paths when you choose it."
+        )
+        managed_intro_label.setObjectName("setup_managed_folders_intro_label")
+        managed_intro_label.setWordWrap(True)
+        managed_layout.addWidget(managed_intro_label)
+        managed_layout.addWidget(managed_folders_summary_label)
+        managed_layout.addWidget(
+            _build_read_only_path_row(
+                object_name="setup_managed_sandbox_mods_row",
+                label_text="Managed Sandbox Mods",
+                value_label=managed_sandbox_mods_path_label,
+                open_button=open_managed_sandbox_mods_button,
+            )
+        )
+        managed_layout.addWidget(
+            _build_read_only_path_row(
+                object_name="setup_managed_sandbox_archive_row",
+                label_text="Managed Sandbox Archive",
+                value_label=managed_sandbox_archive_path_label,
+                open_button=open_managed_sandbox_archive_button,
+            )
+        )
+        managed_layout.addWidget(
+            _build_read_only_path_row(
+                object_name="setup_managed_real_archive_row",
+                label_text="Managed Real Mods Archive",
+                value_label=managed_real_archive_path_label,
+                open_button=open_managed_real_archive_button,
+            )
+        )
+        managed_layout.addWidget(
+            _build_read_only_path_row(
+                object_name="setup_managed_real_logs_row",
+                label_text="Managed Logs / Real",
+                value_label=managed_real_logs_path_label,
+                open_button=open_managed_real_logs_button,
+            )
+        )
+        managed_layout.addWidget(
+            _build_read_only_path_row(
+                object_name="setup_managed_sandbox_logs_row",
+                label_text="Managed Logs / Sandbox",
+                value_label=managed_sandbox_logs_path_label,
+                open_button=open_managed_sandbox_logs_button,
+            )
+        )
+        managed_layout.addWidget(migrate_managed_folders_button)
+
         setup_output_group = QGroupBox("Restore and setup details")
         setup_output_group.setObjectName("setup_output_group")
         setup_output_group.setSizePolicy(
@@ -329,6 +422,7 @@ class SetupConfigurationSurface(QScrollArea):
         secondary_intro_label.setWordWrap(True)
         secondary_panel_layout.addWidget(secondary_section_label)
         secondary_panel_layout.addWidget(secondary_intro_label)
+        secondary_panel_layout.addWidget(managed_group)
         secondary_panel_layout.addWidget(backup_group)
         secondary_panel_layout.addWidget(setup_output_group)
 
@@ -353,5 +447,6 @@ class SetupConfigurationSurface(QScrollArea):
         self.secondary_panel = secondary_panel
         self.setup_group = setup_group
         self.advanced_group = advanced_group
+        self.managed_group = managed_group
         self.backup_group = backup_group
         self.setup_output_group = setup_output_group

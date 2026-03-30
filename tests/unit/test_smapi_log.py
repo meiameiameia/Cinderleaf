@@ -6,6 +6,8 @@ import pytest
 
 from sdvmm.domain.models import SmapiMissingDependency
 from sdvmm.services.smapi_log import (
+    capture_cinderleaf_context_log,
+    cinderleaf_smapi_latest_log_path,
     check_smapi_log_troubleshooting,
     locate_smapi_log,
     parse_smapi_log_text,
@@ -60,6 +62,60 @@ def test_check_smapi_log_troubleshooting_reports_not_found_when_no_supported_log
     assert report.state == "not_found"
     assert report.findings == tuple()
     assert report.log_path is None
+
+
+def test_capture_cinderleaf_context_log_creates_owned_latest_and_archive_copies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_path = tmp_path / "Game"
+    source_logs = game_path / "ErrorLogs"
+    source_logs.mkdir(parents=True)
+    source_log = source_logs / "SMAPI-latest.txt"
+    source_log.write_text("sandbox launch log", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+
+    result = capture_cinderleaf_context_log(
+        game_path=game_path,
+        context_label="Sandbox Mods",
+    )
+
+    assert result.captured is True
+    assert result.source_log_path == source_log
+    assert result.latest_log_path == cinderleaf_smapi_latest_log_path(
+        game_path=game_path,
+        context_label="Sandbox Mods",
+    )
+    assert result.latest_log_path is not None
+    assert result.latest_log_path.read_text(encoding="utf-8") == "sandbox launch log"
+    assert result.archived_log_path is not None
+    assert result.archived_log_path.exists()
+    assert result.archived_log_path.read_text(encoding="utf-8") == "sandbox launch log"
+
+
+def test_locate_smapi_log_prefers_cinderleaf_owned_context_log_when_requested(
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    canonical_logs = game_path / "ErrorLogs"
+    canonical_logs.mkdir(parents=True)
+    (canonical_logs / "SMAPI-latest.txt").write_text("shared latest", encoding="utf-8")
+    owned_latest = cinderleaf_smapi_latest_log_path(
+        game_path=game_path,
+        context_label="Sandbox Mods",
+    )
+    owned_latest.parent.mkdir(parents=True, exist_ok=True)
+    owned_latest.write_text("owned sandbox latest", encoding="utf-8")
+
+    located = locate_smapi_log(
+        game_path=game_path,
+        preferred_context_label="Sandbox Mods",
+    )
+
+    assert located == owned_latest
 
 
 def test_parse_smapi_log_text_extracts_key_troubleshooting_findings() -> None:
@@ -150,6 +206,25 @@ def test_parse_smapi_log_text_keeps_dependency_target_and_required_version_separ
             source_text="Pathoschild.ContentPatcher 5.0.8 or later",
         ),
     )
+
+
+def test_parse_smapi_log_text_preserves_mods_path_override_notes_for_context_detection() -> None:
+    sandbox_mods = Path(r"C:\Sandbox\Mods")
+    log_text = "\n".join(
+        (
+            "[SMAPI] SMAPI 4.5.1 with Stardew Valley 1.6.15",
+            f"[SMAPI] Launch arguments: --mods-path \"{sandbox_mods}\" --some-other-flag value",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert f"Detected mods-path override: {sandbox_mods}" in report.notes
 
 
 def test_parse_smapi_log_text_reports_empty_log_as_unable_to_determine() -> None:

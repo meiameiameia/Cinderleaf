@@ -148,6 +148,60 @@ class SmapiLogReport:
 
 
 @dataclass(frozen=True, slots=True)
+class SmapiContextLogCaptureResult:
+    context_label: Literal["Real Mods", "Sandbox Mods"]
+    latest_log_path: Path | None
+    archived_log_path: Path | None = None
+    source_log_path: Path | None = None
+    captured: bool = False
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CinderleafManagedPaths:
+    game_path: Path
+    sandbox_mods_path: Path
+    sandbox_archive_path: Path
+    real_archive_path: Path
+    real_logs_path: Path
+    sandbox_logs_path: Path
+
+
+ManagedMigrationOutcome = Literal["migrated", "skipped", "blocked"]
+
+
+@dataclass(frozen=True, slots=True)
+class CinderleafManagedMigrationEntry:
+    key: Literal["sandbox_mods", "sandbox_archive", "real_archive"]
+    label: str
+    source_path: Path | None
+    target_path: Path
+    outcome: ManagedMigrationOutcome
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class CinderleafManagedMigrationResult:
+    config: AppConfig | None
+    managed_paths: CinderleafManagedPaths
+    entries: tuple[CinderleafManagedMigrationEntry, ...]
+    message: str
+    cleanup_warnings: tuple[str, ...] = tuple()
+
+    @property
+    def migrated_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.outcome == "migrated")
+
+    @property
+    def skipped_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.outcome == "skipped")
+
+    @property
+    def blocked_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.outcome == "blocked")
+
+
+@dataclass(frozen=True, slots=True)
 class PathValidationIssue:
     field: str
     message: str

@@ -81,6 +81,7 @@ from sdvmm.domain.models import RestoreImportPlanningResult
 from sdvmm.domain.models import RecoveryExecutionRecord
 from sdvmm.domain.models import SandboxInstallPlan
 from sdvmm.domain.models import SandboxInstallPlanEntry
+from sdvmm.domain.models import SmapiContextLogCaptureResult
 from sdvmm.domain.models import SmapiLogFinding
 from sdvmm.domain.models import SmapiMissingDependency
 from sdvmm.domain.models import SmapiLogReport
@@ -508,14 +509,8 @@ def test_smapi_log_context_detection_distinguishes_real_sandbox_and_unknown(tmp_
         source="manual",
         log_path=tmp_path / "SMAPI-sandbox.txt",
         game_path=game_path,
-        findings=(
-            SmapiLogFinding(
-                kind="warning",
-                line_number=3,
-                message=f"[SMAPI] Launch arguments: --mods-path {sandbox_mods}",
-            ),
-        ),
-        notes=tuple(),
+        findings=tuple(),
+        notes=(f"Detected mods-path override: {sandbox_mods}",),
         message="Parsed SMAPI log: errors=0, warnings=1, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
     )
     unknown_report = SmapiLogReport(
@@ -523,14 +518,8 @@ def test_smapi_log_context_detection_distinguishes_real_sandbox_and_unknown(tmp_
         source="manual",
         log_path=tmp_path / "SMAPI-unknown.txt",
         game_path=game_path,
-        findings=(
-            SmapiLogFinding(
-                kind="warning",
-                line_number=4,
-                message="[SMAPI] Launch arguments: --mods-path D:/Elsewhere/CustomMods",
-            ),
-        ),
-        notes=tuple(),
+        findings=tuple(),
+        notes=("Detected mods-path override: D:/Elsewhere/CustomMods",),
         message="Parsed SMAPI log: errors=0, warnings=1, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
     )
 
@@ -556,6 +545,213 @@ def test_smapi_log_context_detection_distinguishes_real_sandbox_and_unknown(tmp_
     assert real_label == "Real Mods"
     assert sandbox_label == "Sandbox Mods"
     assert unknown_label == "Unknown"
+
+
+def test_smapi_log_context_detection_uses_session_launch_evidence_for_latest_log(tmp_path: Path) -> None:
+    game_path = tmp_path / "Game"
+    real_mods = game_path / "Mods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    error_logs = game_path / "ErrorLogs"
+    error_logs.mkdir(parents=True)
+    real_mods.mkdir(parents=True)
+    sandbox_mods.mkdir()
+
+    report = SmapiLogReport(
+        state="parsed",
+        source=SMAPI_LOG_SOURCE_AUTO_DETECTED,
+        log_path=error_logs / "SMAPI-latest.txt",
+        game_path=game_path,
+        findings=tuple(),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
+    )
+    report.log_path.write_text("latest", encoding="utf-8")
+
+    label, detail = _smapi_log_context_details(
+        report,
+        configured_game_path_text=str(game_path),
+        configured_real_mods_path_text=str(real_mods),
+        configured_sandbox_mods_path_text=str(sandbox_mods),
+        session_launch_context_label="Sandbox Mods",
+        session_launch_expected_log_path_text=str(report.log_path),
+        session_launch_started_at_epoch=report.log_path.stat().st_mtime,
+    )
+
+    assert label == "Sandbox Mods"
+    assert "latest SMAPI log path and write time" in detail
+
+
+def test_smapi_log_context_detection_prefers_cinderleaf_owned_sandbox_log_path(
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    real_mods = game_path / "Mods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    owned_log_path = game_path / "Cinderleaf" / "Logs" / "Sandbox" / "latest-sandbox-smapi.txt"
+    owned_log_path.parent.mkdir(parents=True)
+    owned_log_path.write_text("owned sandbox log", encoding="utf-8")
+    real_mods.mkdir(parents=True)
+    sandbox_mods.mkdir()
+
+    report = SmapiLogReport(
+        state="parsed",
+        source=SMAPI_LOG_SOURCE_AUTO_DETECTED,
+        log_path=owned_log_path,
+        game_path=game_path,
+        findings=tuple(),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
+    )
+
+    label, detail = _smapi_log_context_details(
+        report,
+        configured_game_path_text=str(game_path),
+        configured_real_mods_path_text=str(real_mods),
+        configured_sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert label == "Sandbox Mods"
+    assert "Cinderleaf-owned sandbox SMAPI log" in detail
+
+
+def test_smapi_log_context_detection_does_not_use_session_launch_evidence_for_stale_latest_log(
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    real_mods = game_path / "Mods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    error_logs = game_path / "ErrorLogs"
+    error_logs.mkdir(parents=True)
+    real_mods.mkdir(parents=True)
+    sandbox_mods.mkdir()
+
+    log_path = error_logs / "SMAPI-latest.txt"
+    log_path.write_text("older", encoding="utf-8")
+    stale_mtime = log_path.stat().st_mtime
+    report = SmapiLogReport(
+        state="parsed",
+        source=SMAPI_LOG_SOURCE_AUTO_DETECTED,
+        log_path=log_path,
+        game_path=game_path,
+        findings=tuple(),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
+    )
+
+    label, _ = _smapi_log_context_details(
+        report,
+        configured_game_path_text=str(game_path),
+        configured_real_mods_path_text=str(real_mods),
+        configured_sandbox_mods_path_text=str(sandbox_mods),
+        session_launch_context_label="Sandbox Mods",
+        session_launch_expected_log_path_text=str(log_path),
+        session_launch_started_at_epoch=stale_mtime + 60,
+    )
+
+    assert label == "Real Mods"
+
+
+def test_main_window_sandbox_launch_captures_owned_smapi_log_context(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods = tmp_path / "RealMods"
+    owned_latest = game_path / "Cinderleaf" / "Logs" / "Sandbox" / "latest-sandbox-smapi.txt"
+    sandbox_mods.mkdir(parents=True)
+    real_mods.mkdir()
+    game_path.mkdir()
+    owned_latest.parent.mkdir(parents=True, exist_ok=True)
+    owned_latest.write_text("captured sandbox log", encoding="utf-8")
+
+    main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "launch_game_sandbox_dev",
+        lambda **_: SimpleNamespace(
+            pid=5150,
+            executable_path=game_path / "StardewModdingAPI.exe",
+            mods_path_override=sandbox_mods,
+            steam_prelaunch_message="",
+        ),
+    )
+    capture_calls: list[tuple[str, str]] = []
+
+    def _fake_capture(**kwargs):
+        capture_calls.append((kwargs["game_path_text"], kwargs["context_label"]))
+        return SmapiContextLogCaptureResult(
+            context_label="Sandbox Mods",
+            latest_log_path=owned_latest,
+            source_log_path=game_path / "ErrorLogs" / "SMAPI-latest.txt",
+            archived_log_path=owned_latest.parent / "sandbox-copy.txt",
+            captured=True,
+            message="captured",
+        )
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "capture_cinderleaf_smapi_context_log",
+        _fake_capture,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", lambda *args: None)
+
+    main_window._on_launch_sandbox_dev()
+
+    assert capture_calls == [(str(game_path), "Sandbox Mods")]
+    assert main_window._last_smapi_launch_context == "Sandbox Mods"
+    assert main_window._last_smapi_launch_expected_log_path == owned_latest
+
+
+def test_main_window_check_smapi_log_passes_preferred_launch_context(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    game_path.mkdir()
+    main_window._game_path_input.setText(str(game_path))
+    main_window._last_smapi_launch_context = "Sandbox Mods"
+    captured: dict[str, object] = {}
+
+    def _fake_check_smapi_log_troubleshooting(**kwargs):
+        captured.update(kwargs)
+        return SmapiLogReport(
+            state="not_found",
+            source="none",
+            log_path=None,
+            game_path=game_path,
+            findings=tuple(),
+            notes=tuple(),
+            message="SMAPI log not found.",
+        )
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+    ) -> None:
+        on_success(task_fn())
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "check_smapi_log_troubleshooting",
+        _fake_check_smapi_log_troubleshooting,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+
+    main_window._on_check_smapi_log()
+
+    assert captured["game_path_text"] == str(game_path)
+    assert captured["preferred_context_label"] == "Sandbox Mods"
 
 
 def test_main_window_smapi_dependency_discover_handoff_populates_query(
@@ -1063,17 +1259,16 @@ def test_main_window_local_detail_groups_start_hidden_until_they_have_useful_tex
 def test_main_window_status_strip_labels_do_not_use_hardcoded_color_stylesheets(
     main_window: MainWindow,
 ) -> None:
-    label_names = (
-        "global_status_current_label",
-        "global_status_blocking_label",
-        "global_status_next_step_label",
-    )
+    label_names = ("global_status_current_label",)
     for name in label_names:
         label = main_window.findChild(QLabel, name)
         assert label is not None
         stylesheet = label.styleSheet().strip().casefold()
         assert "color" not in stylesheet
         assert "#" not in stylesheet
+
+    assert main_window.findChild(QLabel, "global_status_blocking_label") is None
+    assert main_window.findChild(QLabel, "global_status_next_step_label") is None
 
 
 def test_main_window_stylesheet_explicitly_themes_message_boxes(
@@ -2873,6 +3068,7 @@ def test_main_window_setup_surface_group_and_scroll_exist(
     setup_group = main_window.findChild(QGroupBox, "setup_surface_group")
     advanced_group = main_window.findChild(QGroupBox, "setup_advanced_group")
     backup_group = main_window.findChild(QGroupBox, "setup_backup_restore_group")
+    managed_group = main_window.findChild(QGroupBox, "setup_managed_folders_group")
     setup_output_group = main_window.findChild(QGroupBox, "setup_output_group")
     setup_output_box = main_window.findChild(QPlainTextEdit, "setup_output_box")
     setup_scroll = main_window._setup_scroll
@@ -2882,6 +3078,7 @@ def test_main_window_setup_surface_group_and_scroll_exist(
     assert setup_group is not None
     assert advanced_group is not None
     assert backup_group is not None
+    assert managed_group is not None
     assert setup_output_group is not None
     assert setup_output_box is not None
     assert setup_scroll is not None
@@ -2913,6 +3110,7 @@ def test_main_window_setup_surface_group_and_scroll_exist(
     assert quickstart_panel.parentWidget() is main_column
     assert setup_group.parentWidget() is main_column
     assert advanced_group.parentWidget() is main_column
+    assert managed_group.parentWidget() is secondary_panel
     assert backup_group.parentWidget() is secondary_panel
     assert setup_output_group.parentWidget() is secondary_panel
     assert save_button.parentWidget() is primary_actions
@@ -3066,6 +3264,12 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         "setup_open_sandbox_mods_button",
         "setup_open_real_archive_button",
         "setup_open_sandbox_archive_button",
+        "setup_open_managed_sandbox_mods_button",
+        "setup_open_managed_sandbox_archive_button",
+        "setup_open_managed_real_archive_button",
+        "setup_open_managed_real_logs_button",
+        "setup_open_managed_sandbox_logs_button",
+        "setup_migrate_managed_folders_button",
         "setup_open_watched_downloads_button",
         "setup_open_secondary_watched_downloads_button",
     )
@@ -3085,6 +3289,160 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
     steam_checkbox = main_window.findChild(QCheckBox, "setup_steam_auto_start_checkbox")
     assert steam_checkbox is not None
     assert steam_checkbox.isChecked() is True
+
+
+def test_main_window_setup_managed_folders_surface_tracks_game_folder(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    summary_label = main_window.findChild(QLabel, "setup_managed_folders_summary_label")
+    sandbox_mods_label = main_window.findChild(QLabel, "setup_managed_sandbox_mods_path_label")
+    sandbox_logs_label = main_window.findChild(QLabel, "setup_managed_sandbox_logs_path_label")
+    migrate_button = main_window.findChild(QPushButton, "setup_migrate_managed_folders_button")
+
+    assert summary_label is not None
+    assert sandbox_mods_label is not None
+    assert sandbox_logs_label is not None
+    assert migrate_button is not None
+    assert migrate_button.isEnabled() is False
+
+    game_path = tmp_path / "Game"
+    game_path.mkdir()
+    main_window._game_path_input.setText(str(game_path))
+    qapp.processEvents()
+
+    assert "Derived from the game folder" in summary_label.text()
+    assert sandbox_mods_label.text() == str(game_path / "Cinderleaf" / "Sandbox Mods")
+    assert sandbox_logs_label.text() == str(game_path / "Cinderleaf" / "Logs" / "Sandbox")
+    assert migrate_button.isEnabled() is True
+
+
+def test_main_window_managed_folder_migration_moves_paths_and_updates_config(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    real_mods = game_path / "Mods"
+    sandbox_mods = tmp_path / "OldSandboxMods"
+    sandbox_archive = tmp_path / "OldSandboxArchive"
+    real_archive = tmp_path / "OldRealArchive"
+    for path in (game_path, real_mods, sandbox_mods, sandbox_archive, real_archive):
+        path.mkdir(parents=True)
+    (sandbox_mods / "Alpha").mkdir()
+    (sandbox_mods / "Alpha" / "manifest.json").write_text("{}", encoding="utf-8")
+    (sandbox_archive / "SandboxOld.txt").write_text("sandbox archive", encoding="utf-8")
+    (real_archive / "RealOld.txt").write_text("real archive", encoding="utf-8")
+
+    main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._sandbox_archive_path_input.setText(str(sandbox_archive))
+    main_window._real_archive_path_input.setText(str(real_archive))
+    qapp.processEvents()
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        on_failure=None,
+        show_error_dialog: bool = True,
+    ) -> None:
+        try:
+            on_success(task_fn())
+        except Exception as exc:  # pragma: no cover - test helper parity
+            if on_failure is not None:
+                on_failure(str(exc))
+            else:
+                raise
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+
+    main_window._on_migrate_cinderleaf_managed_folders()
+    qapp.processEvents()
+
+    managed_root = game_path / "Cinderleaf"
+    managed_sandbox_mods = managed_root / "Sandbox Mods"
+    managed_sandbox_archive = managed_root / "Sandbox Archive"
+    managed_real_archive = managed_root / "Real Mods Archive"
+
+    assert managed_sandbox_mods.exists()
+    assert managed_sandbox_archive.exists()
+    assert managed_real_archive.exists()
+    assert (managed_sandbox_mods / "Alpha" / "manifest.json").exists()
+    assert (managed_sandbox_archive / "SandboxOld.txt").exists()
+    assert (managed_real_archive / "RealOld.txt").exists()
+    assert sandbox_mods.exists() is False
+    assert sandbox_archive.exists() is False
+    assert real_archive.exists() is False
+    assert main_window._sandbox_mods_path_input.text() == str(managed_sandbox_mods)
+    assert main_window._sandbox_archive_path_input.text() == str(managed_sandbox_archive)
+    assert main_window._real_archive_path_input.text() == str(managed_real_archive)
+    assert main_window._config is not None
+    assert main_window._config.sandbox_mods_path == managed_sandbox_mods
+    assert main_window._config.sandbox_archive_path == managed_sandbox_archive
+    assert main_window._config.real_archive_path == managed_real_archive
+    assert "Moved 3 Cinderleaf-managed folder(s)" in main_window._setup_output_box.toPlainText()
+
+
+def test_main_window_managed_folder_migration_skips_safely_when_target_exists(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    real_mods = game_path / "Mods"
+    sandbox_mods = tmp_path / "OldSandboxMods"
+    managed_target = game_path / "Cinderleaf" / "Sandbox Mods"
+    for path in (game_path, real_mods, sandbox_mods, managed_target):
+        path.mkdir(parents=True)
+    (sandbox_mods / "Alpha").mkdir()
+    (managed_target / "Existing.txt").write_text("existing", encoding="utf-8")
+
+    main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    qapp.processEvents()
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        on_failure=None,
+        show_error_dialog: bool = True,
+    ) -> None:
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+
+    main_window._on_migrate_cinderleaf_managed_folders()
+    qapp.processEvents()
+
+    assert sandbox_mods.exists() is True
+    assert main_window._sandbox_mods_path_input.text() == str(sandbox_mods)
+    assert "Migration did not start" in main_window._setup_output_box.toPlainText()
+    assert "target folder already exists" in main_window._setup_output_box.toPlainText().casefold()
 
 
 def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_actions(
@@ -5789,7 +6147,7 @@ def test_main_window_single_guided_match_auto_selects_detected_package_and_surfa
 
     main_window._on_watch_tick()
 
-    expected_message = "Matched update package ready to review: MatchedPack.zip"
+    expected_message = "Matched update package ready to review against Real Mods: MatchedPack.zip"
     assert main_window._selected_intake_index() == 0
     assert main_window._intake_result_combo.currentData() == 0
     assert "watch intake" in main_window._findings_box.toPlainText()
@@ -5915,7 +6273,11 @@ def test_main_window_no_actionable_guided_match_leaves_selection_and_output_unch
 
     assert main_window._selected_intake_index() == 1
     assert main_window._intake_result_combo.currentData() == 1
-    assert main_window._findings_box.toPlainText() == "Existing intake output"
+    assert main_window._findings_box.toPlainText() == (
+        "Comparison target: Real Mods\n"
+        "Status: Intake summary for SecondPack.zip\n"
+        "Next: Review SecondPack.zip"
+    )
 
 
 def test_main_window_staging_auto_selected_guided_match_switches_to_plan_install(
@@ -8145,6 +8507,177 @@ def test_main_window_stage_update_button_only_appears_for_update_like_detected_p
     assert main_window._stage_update_intake_button.isEnabled() is True
 
 
+def test_main_window_packages_compare_target_switches_truthful_update_state(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    real_mods_path = Path(r"C:\Game\Mods")
+    sandbox_mods_path = Path(r"C:\Sandbox\Mods")
+    intake = _intake_result(
+        "AlphaPack.zip",
+        "update_replace_candidate",
+        "Alpha Mod",
+        "Sample.Alpha",
+        version="1.2.0",
+    )
+
+    main_window._mods_path_input.setText(str(real_mods_path))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_path))
+    main_window._cache_inventory_for_target(
+        SCAN_TARGET_CONFIGURED_REAL_MODS,
+        real_mods_path,
+        _mods_inventory(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=real_mods_path / "AlphaMod",
+                manifest_path=real_mods_path / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    main_window._cache_inventory_for_target(
+        SCAN_TARGET_SANDBOX_MODS,
+        sandbox_mods_path,
+        _mods_inventory(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.3.0",
+                folder_path=sandbox_mods_path / "AlphaMod",
+                manifest_path=sandbox_mods_path / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    main_window._detected_intakes = (intake,)
+
+    real_index = main_window._packages_compare_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    sandbox_index = main_window._packages_compare_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert real_index >= 0
+    assert sandbox_index >= 0
+
+    main_window._packages_compare_target_combo.setCurrentIndex(real_index)
+    main_window._recompute_intake_correlations()
+    qapp.processEvents()
+
+    assert main_window._packages_compare_target_summary_label.text() == (
+        "Status is comparing against Real Mods (1 installed mod(s) cached)."
+    )
+    assert main_window._intake_result_combo.currentText() == (
+        "AlphaPack.zip [newer than installed in Real Mods]"
+    )
+    assert "update_replace_candidate" not in main_window._intake_result_combo.currentText()
+    assert "actionable" not in main_window._intake_result_combo.currentText()
+    assert main_window._stage_update_intake_button.isHidden() is False
+    assert "Review as update for Real Mods" in main_window._selected_intake_correlation().next_step
+    assert "Comparison target: Real Mods" in main_window._packages_output_box.toPlainText()
+
+    main_window._packages_compare_target_combo.setCurrentIndex(sandbox_index)
+    qapp.processEvents()
+
+    assert main_window._packages_compare_target_summary_label.text() == (
+        "Status is comparing against Sandbox Mods (1 installed mod(s) cached)."
+    )
+    assert main_window._intake_result_combo.currentText() == (
+        "AlphaPack.zip [older than installed in Sandbox Mods]"
+    )
+    assert main_window._stage_update_intake_button.isHidden() is True
+    assert "Review as update stays off for older packages" in main_window._selected_intake_correlation().next_step
+    assert "Comparison target: Sandbox Mods" in main_window._packages_output_box.toPlainText()
+
+
+def test_main_window_packages_same_version_does_not_present_update_candidate(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    real_mods_path = Path(r"C:\Game\Mods")
+    intake = _intake_result(
+        "SamePack.zip",
+        "update_replace_candidate",
+        "Same Mod",
+        "Sample.Same",
+        version="1.1.0",
+    )
+
+    main_window._mods_path_input.setText(str(real_mods_path))
+    main_window._cache_inventory_for_target(
+        SCAN_TARGET_CONFIGURED_REAL_MODS,
+        real_mods_path,
+        _mods_inventory(
+            InstalledMod(
+                unique_id="Sample.Same",
+                name="Same Mod",
+                version="1.1.0",
+                folder_path=real_mods_path / "SameMod",
+                manifest_path=real_mods_path / "SameMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    main_window._detected_intakes = (intake,)
+
+    main_window._recompute_intake_correlations()
+    qapp.processEvents()
+
+    assert main_window._intake_result_combo.currentText() == (
+        "SamePack.zip [same version in Real Mods]"
+    )
+    assert "update_replace_candidate" not in main_window._intake_result_combo.currentText()
+    assert "actionable" not in main_window._intake_result_combo.currentText()
+    assert main_window._stage_update_intake_button.isHidden() is True
+    correlation = main_window._selected_intake_correlation()
+    assert correlation is not None
+    assert correlation.comparison_state == "same_version_installed"
+    assert correlation.actionable_as_update is False
+    assert "not a truthful update candidate" in correlation.next_step
+
+
+def test_main_window_packages_not_installed_label_stays_neutral_and_target_specific(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    real_mods_path = Path(r"C:\Game\Mods")
+    intake = _intake_result(
+        "FreshPack.zip",
+        "update_replace_candidate",
+        "Fresh Mod",
+        "Sample.Fresh",
+        version="1.0.0",
+    )
+
+    main_window._mods_path_input.setText(str(real_mods_path))
+    main_window._cache_inventory_for_target(
+        SCAN_TARGET_CONFIGURED_REAL_MODS,
+        real_mods_path,
+        _mods_inventory(
+            InstalledMod(
+                unique_id="Sample.Other",
+                name="Other Mod",
+                version="1.2.0",
+                folder_path=real_mods_path / "OtherMod",
+                manifest_path=real_mods_path / "OtherMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    main_window._detected_intakes = (intake,)
+
+    main_window._recompute_intake_correlations()
+    qapp.processEvents()
+
+    assert main_window._intake_result_combo.currentText() == (
+        "FreshPack.zip [not installed in Real Mods]"
+    )
+    assert "update_replace_candidate" not in main_window._intake_result_combo.currentText()
+    assert "actionable" not in main_window._intake_result_combo.currentText()
+    assert main_window._stage_update_intake_button.isHidden() is True
+    correlation = main_window._selected_intake_correlation()
+    assert correlation is not None
+    assert correlation.comparison_state == "not_installed_in_target"
+
+
 def test_main_window_review_action_hierarchy_leads_with_read_only_step_until_plan_exists(
     main_window: MainWindow,
     qapp: QApplication,
@@ -8618,11 +9151,13 @@ def _intake_result(
     classification: str,
     mod_name: str,
     unique_id: str,
+    *,
+    version: str = "1.0.0",
 ) -> DownloadsIntakeResult:
     mod_entry = PackageModEntry(
         name=mod_name,
         unique_id=unique_id,
-        version="1.0.0",
+        version=version,
         manifest_path=f"/{mod_name}/manifest.json",
     )
     return DownloadsIntakeResult(
@@ -8666,12 +9201,28 @@ def _intake_correlation(
     actionable: bool = True,
     matched_guided_update_unique_ids: tuple[str, ...] = tuple(),
     matched_update_available_unique_ids: tuple[str, ...] = tuple(),
+    comparison_target_kind: str | None = SCAN_TARGET_CONFIGURED_REAL_MODS,
+    comparison_target_label: str = "Real Mods",
+    comparison_state: str | None = None,
+    actionable_as_update: bool | None = None,
 ) -> IntakeUpdateCorrelation:
+    if comparison_state is None:
+        comparison_state = (
+            "newer_than_installed"
+            if matched_guided_update_unique_ids or matched_update_available_unique_ids
+            else "not_installed_in_target"
+        )
+    if actionable_as_update is None:
+        actionable_as_update = actionable and comparison_state == "newer_than_installed"
     return IntakeUpdateCorrelation(
         intake=intake,
         actionable=actionable,
         matched_update_available_unique_ids=matched_update_available_unique_ids,
         matched_guided_update_unique_ids=matched_guided_update_unique_ids,
+        comparison_target_kind=comparison_target_kind,
+        comparison_target_label=comparison_target_label,
+        comparison_state=comparison_state,
+        actionable_as_update=actionable_as_update,
         summary=f"Intake summary for {intake.package_path.name}",
         next_step=next_step,
     )

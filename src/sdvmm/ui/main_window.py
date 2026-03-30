@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
+import time
 import tomllib
 
 from PySide6.QtWidgets import (
@@ -95,6 +96,8 @@ from sdvmm.domain.models import (
     AppConfig,
     AppUpdateStatus,
     BackupBundleInspectionResult,
+    CinderleafManagedMigrationResult,
+    CinderleafManagedPaths,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     GameEnvironmentStatus,
@@ -137,6 +140,7 @@ from sdvmm.domain.smapi_log_codes import (
     SMAPI_LOG_MISSING_DEPENDENCY,
     SMAPI_LOG_NOT_FOUND,
     SMAPI_LOG_RUNTIME_ISSUE,
+    SMAPI_LOG_SOURCE_AUTO_DETECTED,
     SMAPI_LOG_UNABLE_TO_DETERMINE,
     SMAPI_LOG_WARNING,
 )
@@ -229,6 +233,7 @@ class MainWindow(QMainWindow):
         self._known_watched_zip_paths: tuple[Path, ...] = tuple()
         self._detected_intakes: tuple[DownloadsIntakeResult, ...] = tuple()
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
+        self._packages_comparison_target: str = SCAN_TARGET_CONFIGURED_REAL_MODS
         self._selected_zip_package_paths: tuple[Path, ...] = tuple()
         self._package_inspection_batch_result: PackageInspectionBatchResult | None = None
         self._archived_entries: tuple[ArchivedModEntry, ...] = tuple()
@@ -242,6 +247,10 @@ class MainWindow(QMainWindow):
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
         self._last_smapi_log_report: SmapiLogReport | None = None
+        self._last_smapi_launch_context: str | None = None
+        self._last_smapi_launch_expected_log_path: Path | None = None
+        self._last_smapi_launch_started_at_epoch: float | None = None
+        self._last_smapi_log_capture_token = 0
         self._last_smapi_update_status: SmapiUpdateStatus | None = None
         self._last_app_update_status: AppUpdateStatus | None = None
         self._thread_pool = QThreadPool.globalInstance()
@@ -350,6 +359,41 @@ class MainWindow(QMainWindow):
         self._setup_app_update_status_label.setObjectName("setup_app_update_status_label")
         self._setup_app_update_status_label.setWordWrap(True)
         _set_auxiliary_label_style(self._setup_app_update_status_label)
+        self._managed_folders_summary_label = QLabel(
+            "Set the game folder to see the Cinderleaf-managed paths that can live under it."
+        )
+        self._managed_folders_summary_label.setObjectName("setup_managed_folders_summary_label")
+        self._managed_folders_summary_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._managed_folders_summary_label)
+        self._managed_sandbox_mods_path_label = QLabel("<set the game folder first>")
+        self._managed_sandbox_mods_path_label.setObjectName(
+            "setup_managed_sandbox_mods_path_label"
+        )
+        self._managed_sandbox_archive_path_label = QLabel("<set the game folder first>")
+        self._managed_sandbox_archive_path_label.setObjectName(
+            "setup_managed_sandbox_archive_path_label"
+        )
+        self._managed_real_archive_path_label = QLabel("<set the game folder first>")
+        self._managed_real_archive_path_label.setObjectName(
+            "setup_managed_real_archive_path_label"
+        )
+        self._managed_real_logs_path_label = QLabel("<set the game folder first>")
+        self._managed_real_logs_path_label.setObjectName(
+            "setup_managed_real_logs_path_label"
+        )
+        self._managed_sandbox_logs_path_label = QLabel("<set the game folder first>")
+        self._managed_sandbox_logs_path_label.setObjectName(
+            "setup_managed_sandbox_logs_path_label"
+        )
+        for label in (
+            self._managed_sandbox_mods_path_label,
+            self._managed_sandbox_archive_path_label,
+            self._managed_real_archive_path_label,
+            self._managed_real_logs_path_label,
+            self._managed_sandbox_logs_path_label,
+        ):
+            label.setWordWrap(True)
+            _set_auxiliary_label_style(label)
         self._discovery_results_state_label = QLabel(
             "Search by mod name, UniqueID, or author to build a source list."
         )
@@ -565,6 +609,19 @@ class MainWindow(QMainWindow):
         self._scan_target_combo.addItem("Real Mods path (scan only)", SCAN_TARGET_CONFIGURED_REAL_MODS)
         self._scan_target_combo.addItem("Sandbox Mods path (scan only)", SCAN_TARGET_SANDBOX_MODS)
         self._intake_result_combo = QComboBox()
+        self._packages_compare_target_combo = QComboBox()
+        self._packages_compare_target_combo.setObjectName("packages_compare_target_combo")
+        self._packages_compare_target_combo.addItem("Real Mods", SCAN_TARGET_CONFIGURED_REAL_MODS)
+        self._packages_compare_target_combo.addItem("Sandbox Mods", SCAN_TARGET_SANDBOX_MODS)
+        self._packages_compare_target_label = QLabel("Compare against")
+        self._packages_compare_target_summary_label = QLabel(
+            "Package status compares against Real Mods until you choose Sandbox Mods."
+        )
+        self._packages_compare_target_summary_label.setObjectName(
+            "packages_compare_target_summary_label"
+        )
+        self._packages_compare_target_summary_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._packages_compare_target_summary_label)
         self._package_inspection_selector = QComboBox()
         self._package_inspection_selector.setObjectName("packages_intake_inspection_selector")
         _configure_combo_box_readability(
@@ -643,6 +700,7 @@ class MainWindow(QMainWindow):
             self._scan_target_combo,
             self._install_target_combo,
             self._intake_result_combo,
+            self._packages_compare_target_combo,
             self._install_history_combo,
             self._install_history_filter_combo,
         ):
@@ -846,8 +904,6 @@ class MainWindow(QMainWindow):
 
         self._status_strip_group = GlobalStatusStrip()
         self._status_strip_label = self._status_strip_group.current_status_label
-        self._blocking_issues_strip_label = self._status_strip_group.blocking_issues_label
-        self._next_step_strip_label = self._status_strip_group.next_step_label
         self._scan_context_label = QLabel("Not set")
         self._scan_context_label.setObjectName("top_context_scan_source_value")
         self._install_context_label = QLabel("Not set")
@@ -919,19 +975,30 @@ class MainWindow(QMainWindow):
         self._mods_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._game_path_input.textChanged.connect(self._refresh_setup_readiness_state)
+        self._game_path_input.textChanged.connect(self._refresh_cinderleaf_managed_paths_surface)
         self._mods_path_input.textChanged.connect(self._refresh_setup_readiness_state)
+        self._mods_path_input.textChanged.connect(self._refresh_cinderleaf_managed_paths_surface)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_setup_readiness_state)
+        self._sandbox_mods_path_input.textChanged.connect(
+            self._refresh_cinderleaf_managed_paths_surface
+        )
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._real_archive_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_archive_path_input.textChanged.connect(self._refresh_install_safety_panel)
         self._sandbox_archive_path_input.textChanged.connect(self._clear_mods_compare_result)
+        self._sandbox_archive_path_input.textChanged.connect(
+            self._refresh_cinderleaf_managed_paths_surface
+        )
         self._real_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._real_archive_path_input.textChanged.connect(self._refresh_install_safety_panel)
         self._real_archive_path_input.textChanged.connect(self._clear_mods_compare_result)
         self._real_archive_path_input.textChanged.connect(
             self._refresh_inventory_sandbox_sync_action_state
+        )
+        self._real_archive_path_input.textChanged.connect(
+            self._refresh_cinderleaf_managed_paths_surface
         )
         self._overwrite_checkbox.toggled.connect(self._invalidate_pending_plan)
         self._overwrite_checkbox.toggled.connect(self._on_overwrite_checkbox_toggled)
@@ -960,6 +1027,9 @@ class MainWindow(QMainWindow):
         )
         self._nexus_api_key_input.textChanged.connect(self._on_nexus_key_changed)
         self._intake_result_combo.currentIndexChanged.connect(self._on_intake_selection_changed)
+        self._packages_compare_target_combo.currentIndexChanged.connect(
+            self._on_packages_compare_target_changed
+        )
         self._package_inspection_selector.currentIndexChanged.connect(
             self._on_package_inspection_selection_changed
         )
@@ -1378,6 +1448,52 @@ class MainWindow(QMainWindow):
         open_real_archive_button.setObjectName("setup_open_real_archive_button")
         open_real_archive_button.clicked.connect(self._on_open_real_archive_folder)
         _set_utility_button_style(open_real_archive_button)
+        open_managed_sandbox_mods_button = QPushButton("Open folder")
+        open_managed_sandbox_mods_button.setObjectName(
+            "setup_open_managed_sandbox_mods_button"
+        )
+        open_managed_sandbox_mods_button.clicked.connect(
+            self._on_open_managed_sandbox_mods_folder
+        )
+        _set_utility_button_style(open_managed_sandbox_mods_button)
+        open_managed_sandbox_archive_button = QPushButton("Open folder")
+        open_managed_sandbox_archive_button.setObjectName(
+            "setup_open_managed_sandbox_archive_button"
+        )
+        open_managed_sandbox_archive_button.clicked.connect(
+            self._on_open_managed_sandbox_archive_folder
+        )
+        _set_utility_button_style(open_managed_sandbox_archive_button)
+        open_managed_real_archive_button = QPushButton("Open folder")
+        open_managed_real_archive_button.setObjectName(
+            "setup_open_managed_real_archive_button"
+        )
+        open_managed_real_archive_button.clicked.connect(
+            self._on_open_managed_real_archive_folder
+        )
+        _set_utility_button_style(open_managed_real_archive_button)
+        open_managed_real_logs_button = QPushButton("Open folder")
+        open_managed_real_logs_button.setObjectName(
+            "setup_open_managed_real_logs_button"
+        )
+        open_managed_real_logs_button.clicked.connect(self._on_open_managed_real_logs_folder)
+        _set_utility_button_style(open_managed_real_logs_button)
+        open_managed_sandbox_logs_button = QPushButton("Open folder")
+        open_managed_sandbox_logs_button.setObjectName(
+            "setup_open_managed_sandbox_logs_button"
+        )
+        open_managed_sandbox_logs_button.clicked.connect(
+            self._on_open_managed_sandbox_logs_folder
+        )
+        _set_utility_button_style(open_managed_sandbox_logs_button)
+        migrate_managed_folders_button = QPushButton(
+            "Move Cinderleaf-managed folders under game folder"
+        )
+        migrate_managed_folders_button.setObjectName("setup_migrate_managed_folders_button")
+        migrate_managed_folders_button.clicked.connect(
+            self._on_migrate_cinderleaf_managed_folders
+        )
+        _set_secondary_button_style(migrate_managed_folders_button)
         check_nexus_button = QPushButton("Check Nexus connection")
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
         _set_utility_button_style(check_nexus_button)
@@ -1443,12 +1559,31 @@ class MainWindow(QMainWindow):
             active_backup_bundle_label=self._active_backup_bundle_label,
             backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
             restore_import_planning_summary_label=self._restore_import_planning_summary_label,
+            managed_folders_summary_label=self._managed_folders_summary_label,
+            managed_sandbox_mods_path_label=self._managed_sandbox_mods_path_label,
+            open_managed_sandbox_mods_button=open_managed_sandbox_mods_button,
+            managed_sandbox_archive_path_label=self._managed_sandbox_archive_path_label,
+            open_managed_sandbox_archive_button=open_managed_sandbox_archive_button,
+            managed_real_archive_path_label=self._managed_real_archive_path_label,
+            open_managed_real_archive_button=open_managed_real_archive_button,
+            managed_real_logs_path_label=self._managed_real_logs_path_label,
+            open_managed_real_logs_button=open_managed_real_logs_button,
+            managed_sandbox_logs_path_label=self._managed_sandbox_logs_path_label,
+            open_managed_sandbox_logs_button=open_managed_sandbox_logs_button,
+            migrate_managed_folders_button=migrate_managed_folders_button,
             setup_output_box=self._setup_output_box,
         )
         setup_scroll.setObjectName("setup_workspace_tab")
         self._setup_group = setup_scroll.setup_group
         self._setup_output_group = setup_scroll.setup_output_group
         self._setup_output_group.setVisible(False)
+        self._setup_managed_group = setup_scroll.managed_group
+        self._open_managed_sandbox_mods_button = open_managed_sandbox_mods_button
+        self._open_managed_sandbox_archive_button = open_managed_sandbox_archive_button
+        self._open_managed_real_archive_button = open_managed_real_archive_button
+        self._open_managed_real_logs_button = open_managed_real_logs_button
+        self._open_managed_sandbox_logs_button = open_managed_sandbox_logs_button
+        self._migrate_managed_folders_button = migrate_managed_folders_button
 
         inventory_controls_tabs = QTabWidget()
         inventory_controls_tabs.setDocumentMode(True)
@@ -1839,13 +1974,16 @@ class MainWindow(QMainWindow):
         detected_layout.addWidget(self._intake_filter_stats_label, 1, 3)
         detected_layout.addWidget(QLabel("Package to review"), 2, 0)
         detected_layout.addWidget(self._intake_result_combo, 2, 1, 1, 2)
+        detected_layout.addWidget(self._packages_compare_target_label, 3, 0)
+        detected_layout.addWidget(self._packages_compare_target_combo, 3, 1)
+        detected_layout.addWidget(self._packages_compare_target_summary_label, 3, 2, 1, 2)
         review_flow_label = QLabel(
             "Use Open Review to carry the current package into Review. Review stays read-only until you generate the install summary."
         )
         review_flow_label.setObjectName("packages_intake_review_flow_label")
         review_flow_label.setWordWrap(True)
         _set_auxiliary_label_style(review_flow_label)
-        detected_layout.addWidget(review_flow_label, 3, 0, 1, 4)
+        detected_layout.addWidget(review_flow_label, 4, 0, 1, 4)
         self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
         self._stage_update_intake_button.clicked.connect(self._on_stage_selected_intake_update)
         _set_secondary_button_style(self._stage_update_intake_button)
@@ -1856,7 +1994,7 @@ class MainWindow(QMainWindow):
         detected_actions_layout.addStretch(1)
         detected_actions_layout.addWidget(self._plan_selected_intake_button)
         detected_actions_layout.addWidget(self._stage_update_intake_button)
-        detected_layout.addWidget(detected_actions_widget, 4, 0, 1, 4)
+        detected_layout.addWidget(detected_actions_widget, 5, 0, 1, 4)
         intake_layout.addWidget(detected_group)
         packages_output_group = QGroupBox("Packages detail")
         packages_output_group.setObjectName("packages_output_group")
@@ -2246,6 +2384,7 @@ class MainWindow(QMainWindow):
         self._refresh_nexus_status(validated=False)
         self._refresh_sandbox_dev_launch_state()
         self._refresh_inventory_sandbox_sync_action_state()
+        self._refresh_cinderleaf_managed_paths_surface()
         self._refresh_responsive_panel_bounds()
 
     def _current_operational_config_inputs(self) -> dict[str, object]:
@@ -2672,6 +2811,113 @@ class MainWindow(QMainWindow):
         self._set_setup_output_text(f"Opened {field_label}: {folder_path}")
         self._set_status(f"Opened {field_label}: {folder_path}")
 
+    def _refresh_cinderleaf_managed_paths_surface(self) -> None:
+        raw_game_path = self._game_path_input.text().strip()
+        if not raw_game_path:
+            placeholder = "<set the game folder first>"
+            self._managed_folders_summary_label.setText(
+                "Set the game folder to see the Cinderleaf-managed paths that can live under it. Existing users can keep current paths until they explicitly choose migration."
+            )
+            for label in (
+                self._managed_sandbox_mods_path_label,
+                self._managed_sandbox_archive_path_label,
+                self._managed_real_archive_path_label,
+                self._managed_real_logs_path_label,
+                self._managed_sandbox_logs_path_label,
+            ):
+                label.setText(placeholder)
+                label.setToolTip("")
+            for button in (
+                self._open_managed_sandbox_mods_button,
+                self._open_managed_sandbox_archive_button,
+                self._open_managed_real_archive_button,
+                self._open_managed_real_logs_button,
+                self._open_managed_sandbox_logs_button,
+                self._migrate_managed_folders_button,
+            ):
+                button.setEnabled(False)
+            return
+
+        try:
+            managed_paths = self._shell_service.resolve_cinderleaf_managed_paths(
+                game_path_text=raw_game_path,
+                existing_config=self._config,
+            )
+        except AppShellError:
+            placeholder = "<game folder is not ready>"
+            self._managed_folders_summary_label.setText(
+                "The game folder must point to an accessible Stardew Valley install before Cinderleaf-managed folders can be derived."
+            )
+            for label in (
+                self._managed_sandbox_mods_path_label,
+                self._managed_sandbox_archive_path_label,
+                self._managed_real_archive_path_label,
+                self._managed_real_logs_path_label,
+                self._managed_sandbox_logs_path_label,
+            ):
+                label.setText(placeholder)
+                label.setToolTip("")
+            for button in (
+                self._open_managed_sandbox_mods_button,
+                self._open_managed_sandbox_archive_button,
+                self._open_managed_real_archive_button,
+                self._open_managed_real_logs_button,
+                self._open_managed_sandbox_logs_button,
+                self._migrate_managed_folders_button,
+            ):
+                button.setEnabled(False)
+            return
+
+        self._managed_folders_summary_label.setText(
+            "Derived from the game folder and auto-managed by Cinderleaf. Migration is optional: it only moves the configured Sandbox Mods and archive folders if you choose it."
+        )
+        self._managed_sandbox_mods_path_label.setText(str(managed_paths.sandbox_mods_path))
+        self._managed_sandbox_mods_path_label.setToolTip(str(managed_paths.sandbox_mods_path))
+        self._managed_sandbox_archive_path_label.setText(
+            str(managed_paths.sandbox_archive_path)
+        )
+        self._managed_sandbox_archive_path_label.setToolTip(
+            str(managed_paths.sandbox_archive_path)
+        )
+        self._managed_real_archive_path_label.setText(str(managed_paths.real_archive_path))
+        self._managed_real_archive_path_label.setToolTip(str(managed_paths.real_archive_path))
+        self._managed_real_logs_path_label.setText(str(managed_paths.real_logs_path))
+        self._managed_real_logs_path_label.setToolTip(str(managed_paths.real_logs_path))
+        self._managed_sandbox_logs_path_label.setText(str(managed_paths.sandbox_logs_path))
+        self._managed_sandbox_logs_path_label.setToolTip(str(managed_paths.sandbox_logs_path))
+        for button in (
+            self._open_managed_sandbox_mods_button,
+            self._open_managed_sandbox_archive_button,
+            self._open_managed_real_archive_button,
+            self._open_managed_real_logs_button,
+            self._open_managed_sandbox_logs_button,
+            self._migrate_managed_folders_button,
+        ):
+            button.setEnabled(True)
+
+    def _open_cinderleaf_managed_folder(self, *, field_label: str, folder_key: str) -> None:
+        try:
+            folder_path = self._shell_service.prepare_cinderleaf_managed_folder_for_open(
+                game_path_text=self._game_path_input.text(),
+                folder_key=folder_key,
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            QMessageBox.critical(self, "Open folder failed", str(exc))
+            self._set_setup_output_text(str(exc))
+            self._set_status(str(exc))
+            return
+
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
+            message = f"Could not open {field_label}: {folder_path}"
+            QMessageBox.critical(self, "Open folder failed", message)
+            self._set_setup_output_text(message)
+            self._set_status(message)
+            return
+
+        self._set_setup_output_text(f"Opened {field_label}: {folder_path}")
+        self._set_status(f"Opened {field_label}: {folder_path}")
+
     def _on_open_real_mods_folder(self) -> None:
         self._open_configured_folder(
             field_label="Real Mods folder",
@@ -2695,6 +2941,125 @@ class MainWindow(QMainWindow):
             field_label="Sandbox archive folder",
             path_text=self._sandbox_archive_path_input.text(),
         )
+
+    def _on_open_managed_sandbox_mods_folder(self) -> None:
+        self._open_cinderleaf_managed_folder(
+            field_label="Cinderleaf-managed Sandbox Mods folder",
+            folder_key="sandbox_mods",
+        )
+
+    def _on_open_managed_sandbox_archive_folder(self) -> None:
+        self._open_cinderleaf_managed_folder(
+            field_label="Cinderleaf-managed Sandbox Archive folder",
+            folder_key="sandbox_archive",
+        )
+
+    def _on_open_managed_real_archive_folder(self) -> None:
+        self._open_cinderleaf_managed_folder(
+            field_label="Cinderleaf-managed Real Mods Archive folder",
+            folder_key="real_archive",
+        )
+
+    def _on_open_managed_real_logs_folder(self) -> None:
+        self._open_cinderleaf_managed_folder(
+            field_label="Cinderleaf-managed Real SMAPI logs folder",
+            folder_key="real_logs",
+        )
+
+    def _on_open_managed_sandbox_logs_folder(self) -> None:
+        self._open_cinderleaf_managed_folder(
+            field_label="Cinderleaf-managed Sandbox SMAPI logs folder",
+            folder_key="sandbox_logs",
+        )
+
+    def _on_migrate_cinderleaf_managed_folders(self) -> None:
+        try:
+            managed_paths = self._shell_service.resolve_cinderleaf_managed_paths(
+                game_path_text=self._game_path_input.text(),
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            QMessageBox.critical(self, "Migration unavailable", str(exc))
+            self._set_setup_output_text(str(exc))
+            self._set_status(str(exc))
+            return
+
+        confirmation = (
+            "Move configured Cinderleaf-managed folders under the game folder?\n\n"
+            "This optional migration only targets:\n"
+            f"- Sandbox Mods -> {managed_paths.sandbox_mods_path}\n"
+            f"- Sandbox Archive -> {managed_paths.sandbox_archive_path}\n"
+            f"- Real Mods Archive -> {managed_paths.real_archive_path}\n\n"
+            "Canonical real Mods and game paths are not changed.\n"
+            "Config updates happen only after copy verification succeeds."
+        )
+        yes = QMessageBox.question(
+            self,
+            "Move Cinderleaf-managed folders",
+            confirmation,
+        )
+        if yes != QMessageBox.StandardButton.Yes:
+            self._set_status("Managed-folder migration cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Managed-folder migration",
+            running_label="Managed-folder migration",
+            started_status="Moving configured Cinderleaf-managed folders under the game folder...",
+            error_title="Managed-folder migration failed",
+            task_fn=lambda: self._shell_service.migrate_cinderleaf_managed_folders(
+                **self._current_operational_config_inputs()
+            ),
+            on_success=self._on_migrate_cinderleaf_managed_folders_completed,
+            on_failure=self._set_setup_output_text,
+        )
+
+    def _on_migrate_cinderleaf_managed_folders_completed(
+        self,
+        result: CinderleafManagedMigrationResult,
+    ) -> None:
+        if result.config is not None:
+            self._config = result.config
+
+        migrated_by_key = {
+            entry.key: entry for entry in result.entries if entry.outcome == "migrated"
+        }
+        if "sandbox_mods" in migrated_by_key:
+            self._set_programmatic_line_edit_text(
+                self._sandbox_mods_path_input,
+                str(migrated_by_key["sandbox_mods"].target_path),
+            )
+        if "sandbox_archive" in migrated_by_key:
+            self._set_programmatic_line_edit_text(
+                self._sandbox_archive_path_input,
+                str(migrated_by_key["sandbox_archive"].target_path),
+            )
+        if "real_archive" in migrated_by_key:
+            self._set_programmatic_line_edit_text(
+                self._real_archive_path_input,
+                str(migrated_by_key["real_archive"].target_path),
+            )
+
+        self._refresh_cinderleaf_managed_paths_surface()
+        self._refresh_inventory_sandbox_sync_action_state()
+        self._refresh_sandbox_dev_launch_state()
+
+        lines = [result.message, ""]
+        for entry in result.entries:
+            source_text = str(entry.source_path) if entry.source_path is not None else "<not configured>"
+            lines.append(
+                f"{entry.label}: {entry.outcome}\n"
+                f"  Source: {source_text}\n"
+                f"  Target: {entry.target_path}\n"
+                f"  Detail: {entry.detail}"
+            )
+        if result.cleanup_warnings:
+            lines.append("")
+            lines.append("Cleanup follow-up:")
+            for warning in result.cleanup_warnings:
+                lines.append(f"- {warning}")
+        self._set_setup_output_text("\n".join(lines))
+        self._set_status(result.message)
 
     def _on_open_watched_downloads_folder(self) -> None:
         self._open_configured_folder(
@@ -2722,6 +3087,7 @@ class MainWindow(QMainWindow):
         self._refresh_nexus_status(validated=False)
         self._refresh_sandbox_dev_launch_state()
         self._refresh_inventory_sandbox_sync_action_state()
+        self._refresh_cinderleaf_managed_paths_surface()
         self._set_setup_output_text(self._build_setup_config_summary_text())
         self._set_status(f"Saved config to {self._shell_service.state_file}")
 
@@ -3030,6 +3396,8 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
+        self._record_smapi_launch_context("Real Mods")
+        self._schedule_cinderleaf_smapi_log_capture("Real Mods")
         self._set_status(
             self._format_launch_status_message(
                 f"SMAPI launch started (PID {result.pid}): {result.executable_path}",
@@ -3062,6 +3430,8 @@ class MainWindow(QMainWindow):
             f"{result.mods_path_override}."
         )
         launch_message = self._format_launch_status_message(launch_message, result)
+        self._record_smapi_launch_context("Sandbox Mods")
+        self._schedule_cinderleaf_smapi_log_capture("Sandbox Mods")
         self._sandbox_launch_status_label.setText("Started")
         self._sandbox_launch_status_label.setToolTip(launch_message)
         self._set_status(launch_message)
@@ -3071,6 +3441,63 @@ class MainWindow(QMainWindow):
         if not steam_message:
             return base_message
         return f"{base_message} {steam_message}"
+
+    def _record_smapi_launch_context(self, context_label: str) -> None:
+        self._last_smapi_launch_context = context_label
+        raw_game_path = self._game_path_input.text().strip()
+        self._last_smapi_launch_expected_log_path = (
+            Path(raw_game_path).expanduser() / "ErrorLogs" / "SMAPI-latest.txt"
+            if raw_game_path
+            else None
+        )
+        self._last_smapi_launch_started_at_epoch = time.time()
+        self._last_smapi_log_capture_token += 1
+
+    def _schedule_cinderleaf_smapi_log_capture(self, context_label: str) -> None:
+        if not self._game_path_input.text().strip():
+            return
+        capture_token = self._last_smapi_log_capture_token
+        self._attempt_cinderleaf_smapi_log_capture(
+            context_label=context_label,
+            capture_token=capture_token,
+            attempts_remaining=5,
+        )
+
+    def _attempt_cinderleaf_smapi_log_capture(
+        self,
+        *,
+        context_label: str,
+        capture_token: int,
+        attempts_remaining: int,
+    ) -> None:
+        if capture_token != self._last_smapi_log_capture_token:
+            return
+        if context_label != self._last_smapi_launch_context:
+            return
+        if attempts_remaining <= 0:
+            return
+
+        try:
+            capture = self._shell_service.capture_cinderleaf_smapi_context_log(
+                game_path_text=self._game_path_input.text(),
+                context_label=context_label,
+                existing_config=self._config,
+            )
+        except AppShellError:
+            capture = None
+
+        if capture is not None and capture.captured and capture.latest_log_path is not None:
+            self._last_smapi_launch_expected_log_path = capture.latest_log_path
+            return
+
+        QTimer.singleShot(
+            1500,
+            lambda _context_label=context_label, _capture_token=capture_token, _attempts_remaining=attempts_remaining - 1: self._attempt_cinderleaf_smapi_log_capture(
+                context_label=_context_label,
+                capture_token=_capture_token,
+                attempts_remaining=_attempts_remaining,
+            ),
+        )
 
     def _on_scan(self) -> None:
         self._run_background_operation(
@@ -3691,6 +4118,7 @@ class MainWindow(QMainWindow):
             task_fn=lambda: self._shell_service.check_smapi_log_troubleshooting(
                 game_path_text=self._game_path_input.text(),
                 existing_config=self._config,
+                preferred_context_label=self._last_smapi_launch_context,
             ),
             on_success=self._on_check_smapi_log_completed,
         )
@@ -3725,6 +4153,11 @@ class MainWindow(QMainWindow):
             configured_game_path_text=self._game_path_input.text(),
             configured_real_mods_path_text=self._mods_path_input.text(),
             configured_sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+            session_launch_context_label=self._last_smapi_launch_context,
+            session_launch_expected_log_path_text=str(
+                self._last_smapi_launch_expected_log_path or ""
+            ),
+            session_launch_started_at_epoch=self._last_smapi_launch_started_at_epoch,
         )
         summary = _smapi_log_summary_label(report, context_label=context_label)
         self._smapi_log_status_label.setText(summary)
@@ -3814,6 +4247,11 @@ class MainWindow(QMainWindow):
             configured_game_path_text=self._game_path_input.text(),
             configured_real_mods_path_text=self._mods_path_input.text(),
             configured_sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+            session_launch_context_label=self._last_smapi_launch_context,
+            session_launch_expected_log_path_text=str(
+                self._last_smapi_launch_expected_log_path or ""
+            ),
+            session_launch_started_at_epoch=self._last_smapi_launch_started_at_epoch,
         )
         if report.missing_dependencies:
             _set_feedback_label_state(
@@ -5274,6 +5712,7 @@ class MainWindow(QMainWindow):
         has_detected_intakes = bool(self._detected_intakes)
         has_inspection = self._package_inspection_batch_result is not None
         watch_active = self._watch_timer.isActive()
+        target_label = self._packages_comparison_target_label_text()
         if watch_active and not has_detected_intakes and not has_inspection:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
@@ -5289,10 +5728,17 @@ class MainWindow(QMainWindow):
             )
             return
         if has_detected_intakes:
+            target_inventory = self._packages_comparison_inventory()
+            if target_inventory is None:
+                target_note = f"Compare against is set to {target_label}, but that inventory has not been scanned yet."
+            else:
+                target_note = f"Statuses below are comparing against {target_label}."
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Detected packages are ready. Choose a review target, then use Open Review. Review as update stays available when the package clearly matches an installed mod.",
+                "Detected packages are ready. Choose a review target, then use Open Review. "
+                + target_note
+                + " Review as update only appears when the package is newer than the selected target.",
             )
             return
         if selected_count > 0:
@@ -5502,11 +5948,6 @@ class MainWindow(QMainWindow):
 
     def _set_details_text(self, text: str) -> None:
         self._findings_box.setPlainText(text)
-        blocking_issue, next_step = _summarize_details_text(text)
-        self._blocking_issues_strip_label.setText(blocking_issue)
-        self._next_step_strip_label.setText(next_step)
-        self._blocking_issues_strip_label.setToolTip(blocking_issue)
-        self._next_step_strip_label.setToolTip(next_step)
 
     @staticmethod
     def _set_local_detail_group_visibility(group: QGroupBox | None, text: str) -> None:
@@ -6207,7 +6648,12 @@ class MainWindow(QMainWindow):
 
     def _on_intake_selection_changed(self, *_: object) -> None:
         self._sync_review_target_from_selected_intake()
+        self._refresh_selected_intake_output()
         self._refresh_stage_package_action_state()
+
+    def _on_packages_compare_target_changed(self, *_: object) -> None:
+        self._packages_comparison_target = self._packages_comparison_target_kind()
+        self._recompute_intake_correlations()
 
     def _on_package_inspection_selection_changed(self, *_: object) -> None:
         selected_index = self._selected_package_inspection_index()
@@ -6989,6 +7435,7 @@ class MainWindow(QMainWindow):
     def _refresh_intake_selector(self, *_: object) -> None:
         selected_before = self._selected_intake_index()
         self._intake_result_combo.clear()
+        self._refresh_packages_compare_target_summary()
 
         if not self._detected_intakes:
             self._intake_result_combo.addItem("<no detected packages>", -1)
@@ -7007,20 +7454,7 @@ class MainWindow(QMainWindow):
         visible_count = 0
         for idx, intake in enumerate(self._detected_intakes):
             correlation = self._intake_correlations[idx] if idx < len(self._intake_correlations) else None
-            actionable = (
-                "actionable"
-                if self._shell_service.is_actionable_intake_result(intake)
-                else "non-actionable"
-            )
-            flow_tag = ""
-            if correlation is not None and correlation.matched_guided_update_unique_ids:
-                flow_tag = ", guided-update-match"
-            elif correlation is not None and correlation.matched_update_available_unique_ids:
-                flow_tag = ", update-available-match"
-            label = (
-                f"{intake.package_path.name} "
-                f"[{intake.classification}, {actionable}{flow_tag}]"
-            )
+            label = _packages_review_target_label(intake, correlation)
             search_values = (
                 intake.package_path.name,
                 intake.classification,
@@ -7052,6 +7486,7 @@ class MainWindow(QMainWindow):
         else:
             self._intake_result_combo.setCurrentIndex(self._intake_result_combo.count() - 1)
         self._refresh_stage_package_action_state()
+        self._refresh_selected_intake_output()
         self._set_filter_stats(
             self._intake_filter_stats_label,
             shown_count=visible_count,
@@ -7065,11 +7500,74 @@ class MainWindow(QMainWindow):
             return value
         return -1
 
+    def _packages_comparison_target_kind(self) -> str:
+        value = self._packages_compare_target_combo.currentData()
+        if value in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
+            return str(value)
+        return self._packages_comparison_target
+
+    def _packages_comparison_target_label_text(self) -> str:
+        return (
+            "Sandbox Mods"
+            if self._packages_comparison_target_kind() == SCAN_TARGET_SANDBOX_MODS
+            else "Real Mods"
+        )
+
+    def _packages_comparison_inventory(self) -> ModsInventory | None:
+        target = self._packages_comparison_target_kind()
+        cached_result = self._cached_scan_result_for_target(target)
+        if cached_result is not None:
+            return cached_result.inventory
+        if self._current_inventory is not None and self._current_scan_target() == target:
+            return self._current_inventory
+        return None
+
+    def _packages_update_report_for_selected_target(self) -> ModUpdateReport | None:
+        if self._current_scan_target() != self._packages_comparison_target_kind():
+            return None
+        return self._current_update_report
+
     def _selected_intake_correlation(self) -> IntakeUpdateCorrelation | None:
         idx = self._selected_intake_index()
         if idx < 0 or idx >= len(self._intake_correlations):
             return None
         return self._intake_correlations[idx]
+
+    def _refresh_packages_compare_target_summary(self) -> None:
+        target_label = self._packages_comparison_target_label_text()
+        inventory = self._packages_comparison_inventory()
+        if inventory is None:
+            text = (
+                f"Status will compare against {target_label} after that inventory is scanned in this session."
+            )
+        else:
+            text = (
+                f"Status is comparing against {target_label} "
+                f"({len(inventory.mods)} installed mod(s) cached)."
+            )
+        self._packages_compare_target_summary_label.setText(text)
+        self._packages_compare_target_summary_label.setToolTip(text)
+
+    def _selected_intake_detail_text(self) -> str:
+        correlation = self._selected_intake_correlation()
+        if correlation is None:
+            target_label = self._packages_comparison_target_label_text()
+            return (
+                f"Choose a detected package to compare against {target_label}. "
+                "Open Review still stages the selected package without writing anything."
+            )
+
+        lines = [
+            f"Comparison target: {correlation.comparison_target_label}",
+            f"Status: {correlation.summary}",
+            f"Next: {correlation.next_step}",
+        ]
+        return "\n".join(lines)
+
+    def _refresh_selected_intake_output(self) -> None:
+        if not self._detected_intakes:
+            return
+        self._set_intake_output_text(self._selected_intake_detail_text())
 
     def _selected_package_inspection_index(self) -> int:
         value = self._package_inspection_selector.currentData()
@@ -7144,13 +7642,14 @@ class MainWindow(QMainWindow):
         self._stage_update_intake_button.setVisible(update_like_selection)
         self._stage_update_intake_button.setEnabled(update_like_selection)
         if update_like_selection:
+            target_label = self._packages_comparison_target_label_text()
             self._stage_update_intake_button.setToolTip(
-                "Review this detected package as an update and preselect archive-aware replace."
+                f"Review this detected package as an update against {target_label} and preselect archive-aware replace."
             )
             self._refresh_workflow_surface_states()
             return
         self._stage_update_intake_button.setToolTip(
-            "Select a detected package that clearly replaces an installed mod to review it as an update."
+            "Review as update only appears when the selected package is newer than the currently selected comparison target."
         )
         self._refresh_workflow_surface_states()
 
@@ -7286,7 +7785,9 @@ class MainWindow(QMainWindow):
     def _recompute_intake_correlations(self) -> None:
         self._intake_correlations = self._shell_service.correlate_intakes_with_updates(
             intakes=self._detected_intakes,
-            update_report=self._current_update_report,
+            inventory=self._packages_comparison_inventory(),
+            comparison_target_kind=self._packages_comparison_target_kind(),
+            update_report=self._packages_update_report_for_selected_target(),
             guided_update_unique_ids=self._guided_update_unique_ids,
         )
         self._refresh_intake_selector()
@@ -7334,7 +7835,11 @@ class MainWindow(QMainWindow):
                 if allow_auto_select:
                     self._intake_result_combo.setCurrentIndex(combo_index)
                 package_name = self._detected_intakes[match_index].package_path.name
-                message = f"Matched update package ready to review: {package_name}"
+                correlation = self._intake_correlations[match_index]
+                message = (
+                    f"Matched update package ready to review against "
+                    f"{correlation.comparison_target_label}: {package_name}"
+                )
             else:
                 message = (
                     "Matched update package found in detected packages, but the current filter hides it. "
@@ -7354,7 +7859,7 @@ class MainWindow(QMainWindow):
         return [
             index
             for index, correlation in enumerate(self._intake_correlations)
-            if correlation.actionable and correlation.matched_guided_update_unique_ids
+            if correlation.actionable_as_update and correlation.matched_guided_update_unique_ids
         ]
 
     def _refresh_detected_intakes_for_current_inventory(self) -> None:
@@ -7373,11 +7878,7 @@ class MainWindow(QMainWindow):
         correlation = self._selected_intake_correlation()
         if correlation is None or not correlation.actionable:
             return False
-        return bool(
-            correlation.matched_guided_update_unique_ids
-            or correlation.matched_update_available_unique_ids
-            or correlation.intake.classification == "update_replace_candidate"
-        )
+        return correlation.actionable_as_update
 
     @staticmethod
     def _scan_target_label(target: str) -> str:
@@ -8264,13 +8765,52 @@ def _smapi_log_context_short_label(context_label: str) -> str:
     return "Unknown log"
 
 
+def _packages_comparison_badge_text(correlation: IntakeUpdateCorrelation) -> str:
+    target_label = correlation.comparison_target_label
+    if correlation.comparison_state == "newer_than_installed":
+        return f"newer than installed in {target_label}"
+    if correlation.comparison_state == "same_version_installed":
+        return f"same version in {target_label}"
+    if correlation.comparison_state == "older_than_installed":
+        return f"older than installed in {target_label}"
+    if correlation.comparison_state == "not_installed_in_target":
+        return f"not installed in {target_label}"
+    if correlation.comparison_state == "version_comparison_unavailable":
+        return f"version compare unavailable in {target_label}"
+    if correlation.comparison_state == "mixed_version_state":
+        return f"mixed version state in {target_label}"
+    if correlation.comparison_state == "target_inventory_unavailable":
+        return f"{target_label} not scanned yet"
+    return f"review against {target_label}"
+
+
+def _packages_review_target_label(
+    intake: DownloadsIntakeResult,
+    correlation: IntakeUpdateCorrelation | None,
+) -> str:
+    package_name = intake.package_path.name
+    if correlation is None:
+        return package_name
+    if not correlation.actionable:
+        return f"{package_name} [not reviewable]"
+    return f"{package_name} [{_packages_comparison_badge_text(correlation)}]"
+
+
 def _smapi_log_context_details(
     report: SmapiLogReport,
     *,
     configured_game_path_text: str,
     configured_real_mods_path_text: str,
     configured_sandbox_mods_path_text: str,
+    session_launch_context_label: str | None = None,
+    session_launch_expected_log_path_text: str = "",
+    session_launch_started_at_epoch: float | None = None,
 ) -> tuple[str, str]:
+    detected_override_paths = tuple(
+        _normalized_path_text(note.partition(":")[2])
+        for note in report.notes
+        if note.casefold().startswith("detected mods-path override:")
+    )
     haystack_parts = [
         report.message or "",
         str(report.log_path or ""),
@@ -8283,6 +8823,49 @@ def _smapi_log_context_details(
     sandbox_path = _normalized_path_text(configured_sandbox_mods_path_text)
     real_mods_path = _normalized_path_text(configured_real_mods_path_text)
     game_path = _normalized_path_text(configured_game_path_text)
+    session_expected_log_path = _normalized_path_text(session_launch_expected_log_path_text)
+    report_log_path = _normalized_path_text(str(report.log_path or ""))
+    owned_real_log_root = (
+        _normalized_path_text(str(Path(configured_game_path_text).expanduser() / "Cinderleaf" / "Logs" / "Real"))
+        if configured_game_path_text.strip()
+        else ""
+    )
+    owned_sandbox_log_root = (
+        _normalized_path_text(str(Path(configured_game_path_text).expanduser() / "Cinderleaf" / "Logs" / "Sandbox"))
+        if configured_game_path_text.strip()
+        else ""
+    )
+
+    if owned_sandbox_log_root and report_log_path and report_log_path.startswith(
+        owned_sandbox_log_root + "/"
+    ):
+        return (
+            "Sandbox Mods",
+            "Using the Cinderleaf-owned sandbox SMAPI log captured under the game folder.",
+        )
+    if owned_real_log_root and report_log_path and report_log_path.startswith(
+        owned_real_log_root + "/"
+    ):
+        return (
+            "Real Mods",
+            "Using the Cinderleaf-owned real Mods SMAPI log captured under the game folder.",
+        )
+
+    if sandbox_path and sandbox_path in detected_override_paths:
+        return (
+            "Sandbox Mods",
+            "Detected a --mods-path override matching the configured sandbox Mods path.",
+        )
+    if real_mods_path and real_mods_path in detected_override_paths:
+        return (
+            "Real Mods",
+            "Detected a --mods-path override matching the configured real Mods path.",
+        )
+    if detected_override_paths:
+        return (
+            "Unknown",
+            "The log included a custom --mods-path override, but it did not match the configured real or sandbox Mods paths.",
+        )
 
     if sandbox_path and sandbox_path in haystack:
         return (
@@ -8298,6 +8881,32 @@ def _smapi_log_context_details(
         return (
             "Unknown",
             "The log references a custom mods-path override, but it did not match the configured real or sandbox Mods paths.",
+        )
+
+    latest_log_matches_session = False
+    if (
+        report_log_path
+        and session_expected_log_path
+        and report_log_path == session_expected_log_path
+    ):
+        latest_log_matches_session = True
+        if report.log_path is not None and session_launch_started_at_epoch is not None:
+            try:
+                latest_log_matches_session = (
+                    report.log_path.stat().st_mtime + 5 >= session_launch_started_at_epoch
+                )
+            except OSError:
+                latest_log_matches_session = True
+
+    if session_launch_context_label == "Sandbox Mods" and latest_log_matches_session:
+        return (
+            "Sandbox Mods",
+            "Matched the latest SMAPI log path and write time to a sandbox launch started from this Cinderleaf session.",
+        )
+    if session_launch_context_label == "Real Mods" and latest_log_matches_session:
+        return (
+            "Real Mods",
+            "Matched the latest SMAPI log path and write time to a real Mods SMAPI launch started from this Cinderleaf session.",
         )
 
     if report.log_path is not None and report.game_path is not None:

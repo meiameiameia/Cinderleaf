@@ -25,6 +25,9 @@ from sdvmm.domain.models import (
     AppUpdateStatus,
     BackupBundleInspectionItem,
     BackupBundleInspectionResult,
+    CinderleafManagedMigrationEntry,
+    CinderleafManagedMigrationResult,
+    CinderleafManagedPaths,
     RestoreImportExecutionReview,
     RestoreImportExecutionResult,
     RestoreImportPlanningConfigEntry,
@@ -76,6 +79,7 @@ from sdvmm.domain.models import (
     SandboxInstallPlan,
     SandboxInstallPlanEntry,
     SandboxInstallResult,
+    SmapiContextLogCaptureResult,
 )
 from sdvmm.domain.nexus_codes import (
     NEXUS_CONFIGURED,
@@ -163,8 +167,12 @@ from sdvmm.services.smapi_update import (
     check_smapi_update_status as check_smapi_update_status_service,
     default_smapi_update_page_url,
 )
+from sdvmm.services.update_metadata import compare_versions
 from sdvmm.services.smapi_log import (
+    capture_cinderleaf_context_log as capture_cinderleaf_context_log_service,
     check_smapi_log_troubleshooting as check_smapi_log_troubleshooting_service,
+    cinderleaf_smapi_context_directory,
+    cinderleaf_smapi_latest_log_path as cinderleaf_smapi_latest_log_path_service,
 )
 
 
@@ -313,8 +321,31 @@ class IntakeUpdateCorrelation:
     actionable: bool
     matched_update_available_unique_ids: tuple[str, ...]
     matched_guided_update_unique_ids: tuple[str, ...]
+    comparison_target_kind: ScanTargetKind | None
+    comparison_target_label: str
+    comparison_state: Literal[
+        "target_inventory_unavailable",
+        "not_installed_in_target",
+        "newer_than_installed",
+        "same_version_installed",
+        "older_than_installed",
+        "version_comparison_unavailable",
+        "mixed_version_state",
+    ]
+    actionable_as_update: bool
     summary: str
     next_step: str
+
+
+@dataclass(frozen=True, slots=True)
+class IntakeVersionComparison:
+    package_name: str
+    package_unique_id: str
+    package_version: str
+    installed_name: str | None
+    installed_unique_id: str | None
+    installed_version: str | None
+    state: Literal["not_installed", "newer", "same", "older", "unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1588,6 +1619,365 @@ class AppShellService:
             steam_prelaunch_message=steam_prelaunch.message,
         )
 
+    def cinderleaf_smapi_log_directory(
+        self,
+        *,
+        game_path_text: str,
+        context_label: str,
+        existing_config: AppConfig | None = None,
+    ) -> Path:
+        game_path = self._resolve_game_path(game_path_text, existing_config)
+        return cinderleaf_smapi_context_directory(
+            game_path=game_path,
+            context_label=context_label,
+        )
+
+    def cinderleaf_smapi_latest_log_path(
+        self,
+        *,
+        game_path_text: str,
+        context_label: str,
+        existing_config: AppConfig | None = None,
+    ) -> Path:
+        game_path = self._resolve_game_path(game_path_text, existing_config)
+        return cinderleaf_smapi_latest_log_path_service(
+            game_path=game_path,
+            context_label=context_label,
+        )
+
+    def capture_cinderleaf_smapi_context_log(
+        self,
+        *,
+        game_path_text: str,
+        context_label: str,
+        existing_config: AppConfig | None = None,
+    ) -> SmapiContextLogCaptureResult:
+        game_path = self._resolve_game_path(game_path_text, existing_config)
+        return capture_cinderleaf_context_log_service(
+            game_path=game_path,
+            context_label=context_label,
+        )
+
+    def resolve_cinderleaf_managed_paths(
+        self,
+        *,
+        game_path_text: str,
+        existing_config: AppConfig | None = None,
+    ) -> CinderleafManagedPaths:
+        game_path = self._resolve_game_path(game_path_text, existing_config)
+        root = game_path / "Cinderleaf"
+        return CinderleafManagedPaths(
+            game_path=game_path,
+            sandbox_mods_path=root / "Sandbox Mods",
+            sandbox_archive_path=root / "Sandbox Archive",
+            real_archive_path=root / "Real Mods Archive",
+            real_logs_path=root / "Logs" / "Real",
+            sandbox_logs_path=root / "Logs" / "Sandbox",
+        )
+
+    def prepare_cinderleaf_managed_folder_for_open(
+        self,
+        *,
+        game_path_text: str,
+        folder_key: Literal[
+            "sandbox_mods",
+            "sandbox_archive",
+            "real_archive",
+            "real_logs",
+            "sandbox_logs",
+        ],
+        existing_config: AppConfig | None = None,
+    ) -> Path:
+        managed_paths = self.resolve_cinderleaf_managed_paths(
+            game_path_text=game_path_text,
+            existing_config=existing_config,
+        )
+        target_path = {
+            "sandbox_mods": managed_paths.sandbox_mods_path,
+            "sandbox_archive": managed_paths.sandbox_archive_path,
+            "real_archive": managed_paths.real_archive_path,
+            "real_logs": managed_paths.real_logs_path,
+            "sandbox_logs": managed_paths.sandbox_logs_path,
+        }[folder_key]
+        try:
+            target_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise AppShellError(
+                f"Could not prepare managed folder for opening: {target_path} ({exc})"
+            ) from exc
+        if not target_path.exists() or not target_path.is_dir():
+            raise AppShellError(f"Managed folder is not accessible: {target_path}")
+        return target_path
+
+    def migrate_cinderleaf_managed_folders(
+        self,
+        *,
+        game_path_text: str,
+        mods_dir_text: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str,
+        watched_downloads_path_text: str,
+        secondary_watched_downloads_path_text: str = "",
+        real_archive_path_text: str = "",
+        nexus_api_key_text: str = "",
+        scan_target: ScanTargetKind,
+        install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
+        steam_auto_start_enabled: bool = True,
+        existing_config: AppConfig | None,
+    ) -> CinderleafManagedMigrationResult:
+        managed_paths = self.resolve_cinderleaf_managed_paths(
+            game_path_text=game_path_text,
+            existing_config=existing_config,
+        )
+        resolved_game_path = managed_paths.game_path
+        resolved_mods_path = self._resolve_mods_path(mods_dir_text, resolved_game_path)
+
+        path_specs = (
+            (
+                "sandbox_mods",
+                "Sandbox Mods",
+                self._effective_optional_path_text(
+                    sandbox_mods_path_text,
+                    existing_config.sandbox_mods_path if existing_config is not None else None,
+                ),
+                managed_paths.sandbox_mods_path,
+            ),
+            (
+                "sandbox_archive",
+                "Sandbox Archive",
+                self._effective_optional_path_text(
+                    sandbox_archive_path_text,
+                    existing_config.sandbox_archive_path if existing_config is not None else None,
+                ),
+                managed_paths.sandbox_archive_path,
+            ),
+            (
+                "real_archive",
+                "Real Mods Archive",
+                self._effective_optional_path_text(
+                    real_archive_path_text,
+                    existing_config.real_archive_path if existing_config is not None else None,
+                ),
+                managed_paths.real_archive_path,
+            ),
+        )
+
+        entries: list[CinderleafManagedMigrationEntry] = []
+        planned_moves: list[tuple[str, str, Path, Path]] = []
+        blocked_entries: list[CinderleafManagedMigrationEntry] = []
+
+        for key, label, source_text, target_path in path_specs:
+            source_path = Path(source_text).expanduser() if source_text else None
+            if source_path is None:
+                entries.append(
+                    CinderleafManagedMigrationEntry(
+                        key=key,
+                        label=label,
+                        source_path=None,
+                        target_path=target_path,
+                        outcome="skipped",
+                        detail="Not configured, so there is nothing to migrate.",
+                    )
+                )
+                continue
+
+            if source_path.resolve(strict=False) == target_path.resolve(strict=False):
+                entries.append(
+                    CinderleafManagedMigrationEntry(
+                        key=key,
+                        label=label,
+                        source_path=source_path,
+                        target_path=target_path,
+                        outcome="skipped",
+                        detail="Already using the Cinderleaf-managed path.",
+                    )
+                )
+                continue
+
+            if not source_path.exists():
+                entries.append(
+                    CinderleafManagedMigrationEntry(
+                        key=key,
+                        label=label,
+                        source_path=source_path,
+                        target_path=target_path,
+                        outcome="skipped",
+                        detail="Configured source folder does not exist, so migration was skipped.",
+                    )
+                )
+                continue
+
+            if not source_path.is_dir():
+                blocked_entry = CinderleafManagedMigrationEntry(
+                    key=key,
+                    label=label,
+                    source_path=source_path,
+                    target_path=target_path,
+                    outcome="blocked",
+                    detail="Configured source path is not a folder.",
+                )
+                entries.append(blocked_entry)
+                blocked_entries.append(blocked_entry)
+                continue
+
+            if _is_path_within_or_equal(target_path, source_path) or _is_path_within_or_equal(
+                source_path,
+                target_path,
+            ):
+                blocked_entry = CinderleafManagedMigrationEntry(
+                    key=key,
+                    label=label,
+                    source_path=source_path,
+                    target_path=target_path,
+                    outcome="blocked",
+                    detail="Source and target overlap, so migration was not started.",
+                )
+                entries.append(blocked_entry)
+                blocked_entries.append(blocked_entry)
+                continue
+
+            if target_path.exists():
+                blocked_entry = CinderleafManagedMigrationEntry(
+                    key=key,
+                    label=label,
+                    source_path=source_path,
+                    target_path=target_path,
+                    outcome="blocked",
+                    detail="Target folder already exists, so migration was not started.",
+                )
+                entries.append(blocked_entry)
+                blocked_entries.append(blocked_entry)
+                continue
+
+            planned_moves.append((key, label, source_path, target_path))
+
+        if blocked_entries:
+            return CinderleafManagedMigrationResult(
+                config=existing_config,
+                managed_paths=managed_paths,
+                entries=tuple(entries),
+                message="Migration did not start because one or more target folders need attention first.",
+            )
+
+        if not planned_moves:
+            return CinderleafManagedMigrationResult(
+                config=existing_config,
+                managed_paths=managed_paths,
+                entries=tuple(entries),
+                message="No configured Cinderleaf-managed folders needed migration.",
+            )
+
+        created_targets: list[Path] = []
+        migrated_entries_by_key: dict[str, CinderleafManagedMigrationEntry] = {}
+        try:
+            for key, label, source_path, target_path in planned_moves:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source_path, target_path)
+                created_targets.append(target_path)
+                if not self._copied_directory_matches(source_path, target_path):
+                    raise AppShellError(
+                        f"Migration verification failed for {label}: {source_path} -> {target_path}"
+                    )
+                migrated_entries_by_key[key] = CinderleafManagedMigrationEntry(
+                    key=key,
+                    label=label,
+                    source_path=source_path,
+                    target_path=target_path,
+                    outcome="migrated",
+                    detail=f"Copied into {target_path} and verified before config update.",
+                )
+
+            effective_game_path_text = self._effective_required_path_text(
+                game_path_text,
+                resolved_game_path,
+            )
+            effective_mods_path_text = self._effective_required_path_text(
+                mods_dir_text,
+                resolved_mods_path,
+            )
+            migrated_config = self.save_operational_config(
+                game_path_text=effective_game_path_text,
+                mods_dir_text=effective_mods_path_text,
+                sandbox_mods_path_text=(
+                    str(managed_paths.sandbox_mods_path)
+                    if "sandbox_mods" in migrated_entries_by_key
+                    else self._effective_optional_path_text(
+                        sandbox_mods_path_text,
+                        existing_config.sandbox_mods_path
+                        if existing_config is not None
+                        else None,
+                    )
+                ),
+                sandbox_archive_path_text=(
+                    str(managed_paths.sandbox_archive_path)
+                    if "sandbox_archive" in migrated_entries_by_key
+                    else self._effective_optional_path_text(
+                        sandbox_archive_path_text,
+                        existing_config.sandbox_archive_path
+                        if existing_config is not None
+                        else None,
+                    )
+                ),
+                watched_downloads_path_text=self._effective_optional_path_text(
+                    watched_downloads_path_text,
+                    existing_config.watched_downloads_path if existing_config is not None else None,
+                ),
+                secondary_watched_downloads_path_text=self._effective_optional_path_text(
+                    secondary_watched_downloads_path_text,
+                    existing_config.secondary_watched_downloads_path
+                    if existing_config is not None
+                    else None,
+                ),
+                real_archive_path_text=(
+                    str(managed_paths.real_archive_path)
+                    if "real_archive" in migrated_entries_by_key
+                    else self._effective_optional_path_text(
+                        real_archive_path_text,
+                        existing_config.real_archive_path if existing_config is not None else None,
+                    )
+                ),
+                nexus_api_key_text=nexus_api_key_text,
+                scan_target=scan_target,
+                install_target=install_target,
+                steam_auto_start_enabled=steam_auto_start_enabled,
+                existing_config=existing_config,
+            )
+        except Exception:
+            for target_path in reversed(created_targets):
+                if target_path.exists():
+                    shutil.rmtree(target_path, ignore_errors=True)
+            raise
+
+        cleanup_warnings: list[str] = []
+        existing_entries_by_key = {entry.key: entry for entry in entries}
+        final_entries: list[CinderleafManagedMigrationEntry] = []
+        for key, label, _source_text, _target_path in path_specs:
+            entry = migrated_entries_by_key.get(key) or existing_entries_by_key.get(key)
+            if entry is not None:
+                final_entries.append(entry)
+        for key, label, source_path, target_path in planned_moves:
+            if key not in migrated_entries_by_key:
+                continue
+            try:
+                shutil.rmtree(source_path)
+            except OSError as exc:
+                cleanup_warnings.append(
+                    f"{label}: copied and config updated, but old source folder could not be removed ({exc})."
+                )
+
+        message = (
+            f"Moved {len(migrated_entries_by_key)} Cinderleaf-managed folder(s) under {managed_paths.game_path / 'Cinderleaf'}."
+        )
+        if cleanup_warnings:
+            message += " Old source cleanup needs manual follow-up for at least one folder."
+        return CinderleafManagedMigrationResult(
+            config=migrated_config,
+            managed_paths=managed_paths,
+            entries=tuple(final_entries),
+            message=message,
+            cleanup_warnings=tuple(cleanup_warnings),
+        )
+
     def _resolve_steam_auto_start_enabled(
         self,
         *,
@@ -2023,6 +2413,7 @@ class AppShellService:
         game_path_text: str,
         log_path_text: str = "",
         existing_config: AppConfig | None = None,
+        preferred_context_label: str | None = None,
     ) -> SmapiLogReport:
         manual_log_path: Path | None = None
         raw_log_path = log_path_text.strip()
@@ -2044,10 +2435,13 @@ class AppShellService:
             resolved_game_path = self._parse_and_validate_game_path(game_path_text)
 
         try:
-            return check_smapi_log_troubleshooting_service(
-                game_path=resolved_game_path,
-                manual_log_path=manual_log_path,
-            )
+            service_kwargs = {
+                "game_path": resolved_game_path,
+                "manual_log_path": manual_log_path,
+            }
+            if preferred_context_label is not None:
+                service_kwargs["preferred_context_label"] = preferred_context_label
+            return check_smapi_log_troubleshooting_service(**service_kwargs)
         except OSError as exc:
             raise AppShellError(f"Could not inspect SMAPI log: {exc}") from exc
 
@@ -2584,12 +2978,16 @@ class AppShellService:
         self,
         *,
         intakes: tuple[DownloadsIntakeResult, ...],
+        inventory: ModsInventory | None = None,
+        comparison_target_kind: ScanTargetKind | None = None,
         update_report: ModUpdateReport | None,
         guided_update_unique_ids: tuple[str, ...] = tuple(),
     ) -> tuple[IntakeUpdateCorrelation, ...]:
         return tuple(
             self.correlate_intake_with_updates(
                 intake=intake,
+                inventory=inventory,
+                comparison_target_kind=comparison_target_kind,
                 update_report=update_report,
                 guided_update_unique_ids=guided_update_unique_ids,
             )
@@ -2600,10 +2998,39 @@ class AppShellService:
         self,
         *,
         intake: DownloadsIntakeResult,
+        inventory: ModsInventory | None = None,
+        comparison_target_kind: ScanTargetKind | None = None,
         update_report: ModUpdateReport | None,
         guided_update_unique_ids: tuple[str, ...] = tuple(),
     ) -> IntakeUpdateCorrelation:
         actionable = self.is_actionable_intake_result(intake)
+        legacy_mode = inventory is None and comparison_target_kind is None
+        comparison_target_label = _packages_comparison_target_label(comparison_target_kind)
+        version_comparisons = (
+            tuple()
+            if legacy_mode
+            else _compare_intake_against_inventory(
+                intake=intake,
+                inventory=inventory,
+            )
+        )
+        comparison_state = (
+            "not_installed_in_target"
+            if legacy_mode
+            else _resolve_package_comparison_state(
+                inventory=inventory,
+                comparisons=version_comparisons,
+            )
+        )
+        update_candidate_unique_ids = (
+            intake.matched_installed_unique_ids
+            if legacy_mode
+            else tuple(
+                comparison.installed_unique_id
+                for comparison in version_comparisons
+                if comparison.state == "newer" and comparison.installed_unique_id
+            )
+        )
 
         update_available_keys: dict[str, str] = {}
         if update_report is not None:
@@ -2616,28 +3043,44 @@ class AppShellService:
 
         matched_update_available = _sorted_unique_ids(
             unique_id
-            for unique_id in intake.matched_installed_unique_ids
+            for unique_id in update_candidate_unique_ids
             if canonicalize_unique_id(unique_id) in update_available_keys
         )
         guided_keys = {canonicalize_unique_id(value) for value in guided_update_unique_ids}
         matched_guided = _sorted_unique_ids(
             unique_id
-            for unique_id in intake.matched_installed_unique_ids
+            for unique_id in update_candidate_unique_ids
             if canonicalize_unique_id(unique_id) in guided_keys
         )
+        actionable_as_update = actionable and comparison_state == "newer_than_installed"
 
-        summary, next_step = _build_intake_flow_messages(
-            intake=intake,
-            actionable=actionable,
-            matched_update_available=matched_update_available,
-            matched_guided=matched_guided,
-        )
+        if legacy_mode:
+            summary, next_step = _build_legacy_intake_flow_messages(
+                intake=intake,
+                actionable=actionable,
+                matched_update_available=matched_update_available,
+                matched_guided=matched_guided,
+            )
+        else:
+            summary, next_step = _build_intake_flow_messages(
+                intake=intake,
+                actionable=actionable,
+                comparison_target_label=comparison_target_label,
+                comparison_state=comparison_state,
+                version_comparisons=version_comparisons,
+                matched_update_available=matched_update_available,
+                matched_guided=matched_guided,
+            )
 
         return IntakeUpdateCorrelation(
             intake=intake,
             actionable=actionable,
             matched_update_available_unique_ids=matched_update_available,
             matched_guided_update_unique_ids=matched_guided,
+            comparison_target_kind=comparison_target_kind,
+            comparison_target_label=comparison_target_label,
+            comparison_state=comparison_state,
+            actionable_as_update=actionable_as_update,
             summary=summary,
             next_step=next_step,
         )
@@ -4228,6 +4671,26 @@ class AppShellService:
             raise AppShellError(f"Path is not a directory: {path}")
 
         return path
+
+    @staticmethod
+    def _effective_required_path_text(raw_text: str, fallback_path: Path) -> str:
+        text = raw_text.strip()
+        if text:
+            return text
+        return str(fallback_path)
+
+    @staticmethod
+    def _effective_optional_path_text(raw_text: str, fallback_path: Path | None) -> str:
+        text = raw_text.strip()
+        if text:
+            return text
+        if fallback_path is None:
+            return ""
+        return str(fallback_path)
+
+    @staticmethod
+    def _copied_directory_matches(source_path: Path, target_path: Path) -> bool:
+        return _directory_copy_signature(source_path) == _directory_copy_signature(target_path)
 
     @staticmethod
     def _parse_optional_archive_directory(path_text: str) -> Path | None:
@@ -6577,6 +7040,28 @@ def _is_path_within_or_equal(candidate: Path, container: Path) -> bool:
         return False
 
 
+def _directory_copy_signature(root: Path) -> tuple[tuple[str, str, int | str], ...]:
+    root_resolved = root.expanduser().resolve(strict=False)
+    entries: list[tuple[str, str, int | str]] = []
+    for path in sorted(root_resolved.rglob("*"), key=lambda candidate: candidate.as_posix().casefold()):
+        relative_text = path.relative_to(root_resolved).as_posix()
+        if path.is_dir():
+            entries.append(("dir", relative_text, 0))
+            continue
+        if not path.is_file():
+            entries.append(("other", relative_text, 0))
+            continue
+        digest = hashlib.sha256()
+        with path.open("rb") as source_file:
+            while True:
+                chunk = source_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        entries.append(("file", relative_text, f"{path.stat().st_size}:{digest.hexdigest()}"))
+    return tuple(entries)
+
+
 def _promotion_history_source_marker(
     *,
     sandbox_mods_path: Path,
@@ -7398,6 +7883,89 @@ def _build_intake_flow_messages(
     *,
     intake: DownloadsIntakeResult,
     actionable: bool,
+    comparison_target_label: str,
+    comparison_state: str,
+    version_comparisons: tuple[IntakeVersionComparison, ...],
+    matched_update_available: tuple[str, ...],
+    matched_guided: tuple[str, ...],
+) -> tuple[str, str]:
+    if not actionable:
+        return (
+            "Detected package is unusable for install planning.",
+            "Fix or replace this package before planning (non-actionable).",
+        )
+
+    if comparison_state == "target_inventory_unavailable":
+        return (
+            f"Packages are set to compare against {comparison_target_label}, but that inventory has not been scanned in this session yet.",
+            f"Scan {comparison_target_label} if you want truthful version comparison, or use Open Review for a manual review now.",
+        )
+
+    if comparison_state == "newer_than_installed":
+        detail = _first_version_comparison_detail(version_comparisons)
+        if matched_guided:
+            joined = ", ".join(matched_guided)
+            return (
+                f"Package is newer than the installed version in {comparison_target_label}. {detail} Guided target match: {joined}.",
+                f"Use Review as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+            )
+        if matched_update_available:
+            joined = ", ".join(matched_update_available)
+            return (
+                f"Package is newer than the installed version in {comparison_target_label}. {detail} Update-available match: {joined}.",
+                f"Use Review as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+            )
+        return (
+            f"Package is newer than the installed version in {comparison_target_label}. {detail}",
+            f"Use Review as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+        )
+
+    if comparison_state == "same_version_installed":
+        return (
+            f"Same version is already installed in {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
+            "Open Review stays available for inspection, but this package is not a truthful update candidate.",
+        )
+
+    if comparison_state == "older_than_installed":
+        return (
+            f"Installed version in {comparison_target_label} is newer than this package. {_first_version_comparison_detail(version_comparisons)}",
+            "Open Review if you still need a manual check, but Review as update stays off for older packages.",
+        )
+
+    if comparison_state == "not_installed_in_target":
+        return (
+            f"This package is not installed in {comparison_target_label} yet.",
+            f"Use Open Review to plan it as a new install against {comparison_target_label}.",
+        )
+
+    if comparison_state == "version_comparison_unavailable":
+        return (
+            f"Version comparison against {comparison_target_label} is unavailable for this package. {_first_version_comparison_detail(version_comparisons)}",
+            "Open Review if you need manual inspection. Review as update stays off until the version comparison is clear.",
+        )
+
+    if comparison_state == "mixed_version_state":
+        return (
+            f"This package has mixed install/update state against {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
+            "Open Review for a manual review. Review as update stays off because the package is not a clear newer-than-installed update.",
+        )
+
+    if intake.classification == "multi_mod_package":
+        return (
+            f"Detected package contains multiple mods for {comparison_target_label}.",
+            "Open Review and inspect the per-entry plan before any write action.",
+        )
+
+    return (
+        f"Detected package is ready to review against {comparison_target_label}.",
+        "Use Open Review to continue into the read-only install review.",
+    )
+
+
+def _build_legacy_intake_flow_messages(
+    *,
+    intake: DownloadsIntakeResult,
+    actionable: bool,
     matched_update_available: tuple[str, ...],
     matched_guided: tuple[str, ...],
 ) -> tuple[str, str]:
@@ -7410,32 +7978,141 @@ def _build_intake_flow_messages(
     if matched_guided:
         joined = ", ".join(matched_guided)
         return (
-            f"Detected package likely matches guided update target(s): {joined}.",
-            "Select this package and click 'Stage update', then review plan warnings.",
+            f"Detected package matches a guided update target: {joined}.",
+            "Stage update for archive-aware review before install.",
         )
 
     if matched_update_available:
         joined = ", ".join(matched_update_available)
         return (
-            f"Detected package likely matches mod(s) with update available: {joined}.",
-            "Select this package and click 'Stage update'.",
+            f"Detected package matches an installed mod with an update available: {joined}.",
+            "Stage update for archive-aware review before install.",
         )
 
-    if intake.classification == "update_replace_candidate":
+    if intake.classification == "new_install_candidate":
         return (
-            "Detected package matches an installed mod by UniqueID.",
-            "Select this package and click 'Stage update' to carry archive-aware replace into planning.",
+            "Detected package is a new install candidate.",
+            "Open Review to plan install and inspect the read-only summary.",
         )
 
     if intake.classification == "multi_mod_package":
         return (
             "Detected package contains multiple mods.",
-            "Select package and review all sandbox plan entries before execution.",
+            "Open Review to inspect the per-entry install plan before any write action.",
         )
 
     return (
-        "Detected package appears to be a new install candidate.",
-        "Select package and plan install.",
+        "Detected package is ready to review.",
+        "Open Review to continue into the read-only install review.",
+    )
+
+
+def _packages_comparison_target_label(target: ScanTargetKind | None) -> str:
+    if target == SCAN_TARGET_SANDBOX_MODS:
+        return "Sandbox Mods"
+    return "Real Mods"
+
+
+def _compare_intake_against_inventory(
+    *,
+    intake: DownloadsIntakeResult,
+    inventory: ModsInventory | None,
+) -> tuple[IntakeVersionComparison, ...]:
+    if inventory is None:
+        return tuple()
+
+    installed_by_unique_id = {
+        canonicalize_unique_id(mod.unique_id): mod
+        for mod in inventory.mods
+    }
+    comparisons: list[IntakeVersionComparison] = []
+    for package_mod in intake.mods:
+        installed = installed_by_unique_id.get(canonicalize_unique_id(package_mod.unique_id))
+        if installed is None:
+            comparisons.append(
+                IntakeVersionComparison(
+                    package_name=package_mod.name,
+                    package_unique_id=package_mod.unique_id,
+                    package_version=package_mod.version,
+                    installed_name=None,
+                    installed_unique_id=None,
+                    installed_version=None,
+                    state="not_installed",
+                )
+            )
+            continue
+
+        comparison = compare_versions(installed.version, package_mod.version)
+        if comparison is None:
+            comparison_state = "unavailable"
+        elif comparison < 0:
+            comparison_state = "newer"
+        elif comparison == 0:
+            comparison_state = "same"
+        else:
+            comparison_state = "older"
+        comparisons.append(
+            IntakeVersionComparison(
+                package_name=package_mod.name,
+                package_unique_id=package_mod.unique_id,
+                package_version=package_mod.version,
+                installed_name=installed.name,
+                installed_unique_id=installed.unique_id,
+                installed_version=installed.version,
+                state=comparison_state,
+            )
+        )
+    return tuple(comparisons)
+
+
+def _resolve_package_comparison_state(
+    *,
+    inventory: ModsInventory | None,
+    comparisons: tuple[IntakeVersionComparison, ...],
+) -> str:
+    if inventory is None:
+        return "target_inventory_unavailable"
+    if not comparisons:
+        return "not_installed_in_target"
+
+    states = {entry.state for entry in comparisons}
+    if states == {"not_installed"}:
+        return "not_installed_in_target"
+    if states == {"newer"}:
+        return "newer_than_installed"
+    if states == {"same"}:
+        return "same_version_installed"
+    if states == {"older"}:
+        return "older_than_installed"
+    if "unavailable" in states:
+        return "version_comparison_unavailable"
+    return "mixed_version_state"
+
+
+def _first_version_comparison_detail(
+    comparisons: tuple[IntakeVersionComparison, ...],
+) -> str:
+    if not comparisons:
+        return "No installed comparison details are available yet."
+    entry = comparisons[0]
+    target_label = entry.installed_unique_id or entry.package_unique_id
+    if entry.state == "not_installed":
+        return f"{target_label} is not installed yet."
+    if entry.state == "newer":
+        return (
+            f"{target_label}: installed {entry.installed_version or 'unknown'} -> "
+            f"package {entry.package_version or 'unknown'}."
+        )
+    if entry.state == "same":
+        return f"{target_label}: installed {entry.installed_version or 'unknown'} matches the package version."
+    if entry.state == "older":
+        return (
+            f"{target_label}: installed {entry.installed_version or 'unknown'} is newer than "
+            f"package {entry.package_version or 'unknown'}."
+        )
+    return (
+        f"{target_label}: package {entry.package_version or 'unknown'} could not be compared against "
+        f"installed {entry.installed_version or 'unknown'}."
     )
 
 

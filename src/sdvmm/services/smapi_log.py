@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Iterable
 
-from sdvmm.domain.models import SmapiLogFinding, SmapiLogReport, SmapiMissingDependency
+from sdvmm.domain.models import (
+    SmapiContextLogCaptureResult,
+    SmapiLogFinding,
+    SmapiLogReport,
+    SmapiMissingDependency,
+)
 from sdvmm.domain.smapi_log_codes import (
     SMAPI_LOG_ERROR,
     SMAPI_LOG_FAILED_MOD,
@@ -60,6 +67,10 @@ _MISSING_DEPENDENCY_COLON_RE = re.compile(
     r"\b(?:missing dependencies|requires these mods)\b\s*:?\s*(?P<content>.+)$",
     re.IGNORECASE,
 )
+_MODS_PATH_OVERRIDE_RE = re.compile(
+    r"--mods-path(?:=|\s+)(?:\"(?P<quoted>[^\"]+)\"|(?P<unquoted>.+?))(?=\s--[A-Za-z0-9_-]+|\s+\|\s*|$)",
+    re.IGNORECASE,
+)
 _MOD_IDENTITY_RE = re.compile(
     r"^(?P<name>.+?)\s+\((?P<unique_id>(?=[A-Za-z0-9_.-]*[A-Za-z])[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)\)$"
 )
@@ -74,6 +85,7 @@ def check_smapi_log_troubleshooting(
     *,
     game_path: Path | None,
     manual_log_path: Path | None = None,
+    preferred_context_label: str | None = None,
 ) -> SmapiLogReport:
     if manual_log_path is not None:
         return parse_smapi_log_file(
@@ -82,7 +94,16 @@ def check_smapi_log_troubleshooting(
             game_path=game_path,
         )
 
-    auto_path = locate_smapi_log(game_path=game_path)
+    if preferred_context_label and game_path is not None:
+        capture_cinderleaf_context_log(
+            game_path=game_path,
+            context_label=preferred_context_label,
+        )
+
+    auto_path = locate_smapi_log(
+        game_path=game_path,
+        preferred_context_label=preferred_context_label,
+    )
     if auto_path is None:
         return SmapiLogReport(
             state=SMAPI_LOG_NOT_FOUND,
@@ -104,7 +125,18 @@ def check_smapi_log_troubleshooting(
     )
 
 
-def locate_smapi_log(*, game_path: Path | None) -> Path | None:
+def locate_smapi_log(
+    *,
+    game_path: Path | None,
+    preferred_context_label: str | None = None,
+) -> Path | None:
+    cinderleaf_log = _locate_cinderleaf_smapi_log(
+        game_path=game_path,
+        preferred_context_label=preferred_context_label,
+    )
+    if cinderleaf_log is not None:
+        return cinderleaf_log
+
     directories = _candidate_log_directories(game_path=game_path)
     for directory in directories:
         expected = _find_expected_log(directory)
@@ -131,6 +163,79 @@ def locate_smapi_log(*, game_path: Path | None) -> Path | None:
         reverse=True,
     )
     return candidates[0]
+
+
+def cinderleaf_smapi_logs_root(*, game_path: Path) -> Path:
+    return game_path / "Cinderleaf" / "Logs"
+
+
+def cinderleaf_smapi_context_directory(*, game_path: Path, context_label: str) -> Path:
+    return cinderleaf_smapi_logs_root(game_path=game_path) / _context_log_folder_name(context_label)
+
+
+def cinderleaf_smapi_latest_log_path(*, game_path: Path, context_label: str) -> Path:
+    return cinderleaf_smapi_context_directory(
+        game_path=game_path,
+        context_label=context_label,
+    ) / _context_latest_log_filename(context_label)
+
+
+def capture_cinderleaf_context_log(
+    *,
+    game_path: Path,
+    context_label: str,
+    source_log_path: Path | None = None,
+) -> SmapiContextLogCaptureResult:
+    latest_log_path = cinderleaf_smapi_latest_log_path(
+        game_path=game_path,
+        context_label=context_label,
+    )
+    context_directory = latest_log_path.parent
+
+    try:
+        context_directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return SmapiContextLogCaptureResult(
+            context_label=context_label,
+            latest_log_path=latest_log_path,
+            captured=False,
+            message=f"Could not create Cinderleaf SMAPI log directory: {exc}",
+        )
+
+    source_path = source_log_path or _locate_standard_smapi_log(game_path=game_path)
+    if source_path is None:
+        return SmapiContextLogCaptureResult(
+            context_label=context_label,
+            latest_log_path=latest_log_path,
+            captured=False,
+            message="No source SMAPI log was available to capture yet.",
+        )
+
+    archived_log_path = _unique_context_capture_path(
+        context_directory=context_directory,
+        context_label=context_label,
+    )
+    try:
+        shutil.copy2(source_path, archived_log_path)
+        shutil.copy2(source_path, latest_log_path)
+    except OSError as exc:
+        return SmapiContextLogCaptureResult(
+            context_label=context_label,
+            latest_log_path=latest_log_path,
+            archived_log_path=archived_log_path,
+            source_log_path=source_path,
+            captured=False,
+            message=f"Could not capture SMAPI log copy: {exc}",
+        )
+
+    return SmapiContextLogCaptureResult(
+        context_label=context_label,
+        latest_log_path=latest_log_path,
+        archived_log_path=archived_log_path,
+        source_log_path=source_path,
+        captured=True,
+        message=f"Captured SMAPI log into {latest_log_path}",
+    )
 
 
 def parse_smapi_log_file(
@@ -184,6 +289,8 @@ def parse_smapi_log_text(
     missing_dependencies: list[SmapiMissingDependency] = []
     missing_dependency_ids: set[str] = set()
     seen_missing_dependency_entries: set[tuple[str | None, str | None, str | None, str | None]] = set()
+    detected_mods_path_overrides: list[str] = []
+    seen_mods_path_overrides: set[str] = set()
     in_skipped_mods_block = False
 
     for line_number, raw_line in enumerate(lines, start=1):
@@ -191,6 +298,13 @@ def parse_smapi_log_text(
         if not line:
             in_skipped_mods_block = False
             continue
+
+        for override in _extract_mods_path_overrides_from_line(raw_line):
+            key = override.casefold()
+            if key in seen_mods_path_overrides:
+                continue
+            seen_mods_path_overrides.add(key)
+            detected_mods_path_overrides.append(override)
 
         lowered = line.casefold()
 
@@ -286,6 +400,8 @@ def parse_smapi_log_text(
         notes.append(
             "No clear errors/warnings/issues were parsed from this log. That does not guarantee the run was healthy."
         )
+    for override in detected_mods_path_overrides:
+        notes.append(f"Detected mods-path override: {override}")
 
     summary = _build_summary_message(
         findings,
@@ -335,6 +451,71 @@ def _candidate_log_directories(*, game_path: Path | None) -> tuple[Path, ...]:
     return tuple(deduped)
 
 
+def _locate_standard_smapi_log(*, game_path: Path | None) -> Path | None:
+    directories = _candidate_log_directories(game_path=game_path)
+    for directory in directories:
+        expected = _find_expected_log(directory)
+        if expected is not None:
+            return expected
+
+    candidates: list[Path] = []
+    for directory in directories:
+        if not directory.exists() or not directory.is_dir():
+            continue
+        for child in directory.iterdir():
+            if not child.is_file():
+                continue
+            name = child.name.casefold()
+            if "smapi" not in name or not name.endswith(".txt"):
+                continue
+            candidates.append(child)
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda path: (path.stat().st_mtime, path.name.casefold()),
+        reverse=True,
+    )
+    return candidates[0]
+
+
+def _locate_cinderleaf_smapi_log(
+    *,
+    game_path: Path | None,
+    preferred_context_label: str | None,
+) -> Path | None:
+    if game_path is None:
+        return None
+
+    preferred_latest = None
+    if preferred_context_label:
+        preferred_latest = cinderleaf_smapi_latest_log_path(
+            game_path=game_path,
+            context_label=preferred_context_label,
+        )
+        if preferred_latest.exists() and preferred_latest.is_file():
+            return preferred_latest
+
+    candidates = []
+    for context_label in ("Real Mods", "Sandbox Mods"):
+        latest_path = cinderleaf_smapi_latest_log_path(
+            game_path=game_path,
+            context_label=context_label,
+        )
+        if latest_path.exists() and latest_path.is_file():
+            candidates.append(latest_path)
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda path: (path.stat().st_mtime, path.name.casefold()),
+        reverse=True,
+    )
+    return candidates[0]
+
+
 def _find_expected_log(directory: Path) -> Path | None:
     if not directory.exists() or not directory.is_dir():
         return None
@@ -345,6 +526,29 @@ def _find_expected_log(directory: Path) -> Path | None:
         if match is not None:
             return match
     return None
+
+
+def _context_log_folder_name(context_label: str) -> str:
+    if context_label == "Sandbox Mods":
+        return "Sandbox"
+    return "Real"
+
+
+def _context_latest_log_filename(context_label: str) -> str:
+    if context_label == "Sandbox Mods":
+        return "latest-sandbox-smapi.txt"
+    return "latest-real-smapi.txt"
+
+
+def _unique_context_capture_path(*, context_directory: Path, context_label: str) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    suffix = "sandbox" if context_label == "Sandbox Mods" else "real"
+    candidate = context_directory / f"{stamp}-{suffix}-smapi.txt"
+    counter = 2
+    while candidate.exists():
+        candidate = context_directory / f"{stamp}-{suffix}-smapi-{counter}.txt"
+        counter += 1
+    return candidate
 
 
 def _append_missing_dependency_from_line(
@@ -405,6 +609,16 @@ def _extract_dependency_ids(line: str) -> tuple[str, ...]:
     if not ids:
         return tuple()
     return tuple(sorted(ids, key=str.casefold))
+
+
+def _extract_mods_path_overrides_from_line(line: str) -> tuple[str, ...]:
+    overrides: list[str] = []
+    for match in _MODS_PATH_OVERRIDE_RE.finditer(line):
+        value = (match.group("quoted") or match.group("unquoted") or "").strip().strip(",;")
+        if not value:
+            continue
+        overrides.append(value)
+    return tuple(overrides)
 
 
 def _extract_missing_dependencies_from_line(

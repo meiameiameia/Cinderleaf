@@ -24,16 +24,6 @@ class GlobalStatusStrip(QGroupBox):
         self.current_status_label.setWordWrap(True)
         _set_status_label_style(self.current_status_label)
 
-        self.blocking_issues_label = QLabel("No blocking issues detected.")
-        self.blocking_issues_label.setObjectName("global_status_blocking_label")
-        self.blocking_issues_label.setWordWrap(True)
-        _set_status_label_style(self.blocking_issues_label, bold=True)
-
-        self.next_step_label = QLabel("Run Scan to refresh installed inventory.")
-        self.next_step_label.setObjectName("global_status_next_step_label")
-        self.next_step_label.setWordWrap(True)
-        _set_status_label_style(self.next_step_label, bold=True)
-
         summary_label = QLabel("Workflow")
         summary_label.setObjectName("global_status_summary_label")
         _set_status_label_style(summary_label, bold=True)
@@ -46,14 +36,6 @@ class GlobalStatusStrip(QGroupBox):
         status_strip_layout.addWidget(summary_label, 0)
         status_strip_layout.addWidget(
             _build_status_panel("Current", self.current_status_label),
-            1,
-        )
-        status_strip_layout.addWidget(
-            _build_status_panel("Blocking", self.blocking_issues_label),
-            1,
-        )
-        status_strip_layout.addWidget(
-            _build_status_panel("Next step", self.next_step_label),
             1,
         )
 
