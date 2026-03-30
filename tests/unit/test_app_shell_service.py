@@ -14,6 +14,7 @@ import sdvmm.services.sandbox_installer as sandbox_installer_module
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
     ARCHIVE_SOURCE_SANDBOX,
+    ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
     INSTALL_TARGET_CONFIGURED_REAL_MODS,
     INSTALL_TARGET_SANDBOX_MODS,
     SCAN_TARGET_CONFIGURED_REAL_MODS,
@@ -3817,6 +3818,111 @@ def test_list_archived_entries_includes_sandbox_archive_entries(tmp_path: Path) 
     assert item.version == "1.2.3"
 
 
+def test_list_archived_entries_marks_only_older_versions_as_cleanup_candidates(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    for index in range(1, 5):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    entries = service.list_archived_entries(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+    )
+
+    cleanup_candidates = tuple(entry for entry in entries if entry.retention_cleanup_candidate)
+    kept_entries = tuple(entry for entry in entries if not entry.retention_cleanup_candidate)
+
+    assert len(cleanup_candidates) == 1
+    assert cleanup_candidates[0].archived_folder_name == "SampleMod__sdvmm_archive_001"
+    assert cleanup_candidates[0].retention_keep_limit == ARCHIVE_RETENTION_KEEP_LATEST_COUNT
+    assert cleanup_candidates[0].retention_position == 4
+    assert cleanup_candidates[0].retention_total == 4
+    assert {entry.archived_folder_name for entry in kept_entries} == {
+        "SampleMod__sdvmm_archive_002",
+        "SampleMod__sdvmm_archive_003",
+        "SampleMod__sdvmm_archive_004",
+    }
+
+
+def test_build_archive_cleanup_plan_targets_only_older_versions_per_mod(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    sandbox_archive = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    sandbox_archive.mkdir()
+    for index in range(1, 5):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+    for index in range(1, 3):
+        _create_archived_entry(
+            sandbox_archive / f"OtherMod__sdvmm_archive_{index:03d}",
+            unique_id="Other.Mod",
+            version=f"2.0.{index}",
+        )
+
+    plan = service.build_archive_cleanup_plan(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text=str(sandbox_archive),
+    )
+
+    assert plan.retention_keep_limit == ARCHIVE_RETENTION_KEEP_LATEST_COUNT
+    assert {entry.archived_folder_name for entry in plan.entries_to_delete} == {
+        "SampleMod__sdvmm_archive_001"
+    }
+    assert len(plan.groups) == 1
+    assert plan.groups[0].target_folder_name == "SampleMod"
+    assert plan.groups[0].cleanup_candidate_count == 1
+    assert plan.groups[0].kept_entry_count == ARCHIVE_RETENTION_KEEP_LATEST_COUNT
+
+
+def test_build_archive_cleanup_plan_rejects_when_everything_is_within_retention(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    for index in range(1, ARCHIVE_RETENTION_KEEP_LATEST_COUNT + 1):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    with pytest.raises(AppShellError, match="No archive cleanup candidates found"):
+        service.build_archive_cleanup_plan(
+            configured_mods_path_text=str(real_mods),
+            sandbox_mods_path_text=str(sandbox_mods),
+            real_archive_path_text=str(real_archive),
+            sandbox_archive_path_text="",
+        )
+
+
 def test_execute_archive_restore_requires_explicit_confirmation(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     real_mods = tmp_path / "RealMods"
@@ -4003,6 +4109,73 @@ def test_execute_archive_delete_permanently_removes_sandbox_archive_entry(tmp_pa
 
     assert result.deleted_path == archived
     assert not archived.exists()
+
+
+def test_execute_archive_cleanup_requires_explicit_confirmation(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    for index in range(1, 5):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    plan = service.build_archive_cleanup_plan(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+    )
+
+    with pytest.raises(AppShellError, match="Explicit confirmation is required"):
+        service.execute_archive_cleanup(plan, confirm_cleanup=False)
+
+
+def test_execute_archive_cleanup_deletes_only_older_entries_and_keeps_latest_three(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    for index in range(1, 6):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    plan = service.build_archive_cleanup_plan(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+    )
+    result = service.execute_archive_cleanup(plan, confirm_cleanup=True)
+
+    assert {path.name for path in result.deleted_paths} == {
+        "SampleMod__sdvmm_archive_001",
+        "SampleMod__sdvmm_archive_002",
+    }
+    remaining = {
+        path.name
+        for path in real_archive.iterdir()
+        if path.is_dir()
+    }
+    assert remaining == {
+        "SampleMod__sdvmm_archive_003",
+        "SampleMod__sdvmm_archive_004",
+        "SampleMod__sdvmm_archive_005",
+    }
 
 
 def test_archive_listing_reflects_permanent_delete_after_execution(tmp_path: Path) -> None:
@@ -4200,6 +4373,7 @@ def test_list_mod_rollback_candidates_matches_real_destination_by_unique_id_and_
 
     assert len(candidates) == 1
     assert candidates[0].archived_path == real_archive / "SampleMod__sdvmm_archive_001"
+    assert candidates[0].archived_path == real_archive / "SampleMod__sdvmm_archive_001"
 
 
 def test_list_mod_rollback_candidates_matches_sandbox_destination_by_unique_id_and_folder(
@@ -4244,7 +4418,50 @@ def test_list_mod_rollback_candidates_matches_sandbox_destination_by_unique_id_a
     )
 
     assert len(candidates) == 1
-    assert candidates[0].archived_path == sandbox_archive / "SampleMod__sdvmm_archive_001"
+
+
+def test_archive_cleanup_reduces_rollback_candidate_clutter_to_retained_versions(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_archive = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    sandbox_archive.mkdir()
+
+    _create_mod(sandbox_mods, "SampleMod", "Sample.Mod")
+    for index in range(1, 6):
+        _create_archived_entry(
+            sandbox_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    cleanup_plan = service.build_archive_cleanup_plan(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(sandbox_archive),
+    )
+    service.execute_archive_cleanup(cleanup_plan, confirm_cleanup=True)
+
+    candidates = service.list_mod_rollback_candidates(
+        scan_target=SCAN_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(sandbox_archive),
+        mod_folder_path_text=str(sandbox_mods / "SampleMod"),
+        mod_unique_id_text="Sample.Mod",
+    )
+
+    assert [entry.archived_folder_name for entry in candidates] == [
+        "SampleMod__sdvmm_archive_005",
+        "SampleMod__sdvmm_archive_004",
+        "SampleMod__sdvmm_archive_003",
+    ]
 
 
 def test_execute_mod_rollback_requires_explicit_confirmation(tmp_path: Path) -> None:

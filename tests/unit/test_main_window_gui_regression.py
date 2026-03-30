@@ -971,12 +971,14 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     qapp: QApplication,
 ) -> None:
     archive_refresh_button = main_window.findChild(QPushButton, "archive_refresh_button")
+    archive_cleanup_button = main_window.findChild(QPushButton, "archive_cleanup_button")
     archive_restore_button = main_window.findChild(QPushButton, "archive_restore_button")
     archive_delete_button = main_window.findChild(QPushButton, "archive_delete_button")
     discovery_search_button = main_window.findChild(QPushButton, "discovery_search_button")
     launch_smapi_button = main_window._launch_smapi_button
 
     assert archive_refresh_button is not None
+    assert archive_cleanup_button is not None
     assert archive_restore_button is not None
     assert archive_delete_button is not None
     assert discovery_search_button is not None
@@ -985,6 +987,7 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     qapp.processEvents()
 
     assert 18 <= archive_refresh_button.height() <= 25
+    assert 18 <= archive_cleanup_button.height() <= 25
     assert 18 <= archive_restore_button.height() <= 25
     assert 18 <= archive_delete_button.height() <= 25
     assert 18 <= discovery_search_button.height() <= 25
@@ -5563,6 +5566,7 @@ def test_main_window_key_actions_keep_clear_button_roles(main_window: MainWindow
     assert main_window._compare_real_vs_sandbox_button.property("buttonRole") == "primary"
     assert main_window._compare_copy_identity_button.property("buttonRole") == "utility"
     assert main_window._refresh_archives_button.property("buttonRole") == "primary"
+    assert main_window._cleanup_archives_button.property("buttonRole") == "danger"
     assert main_window._restore_archived_button.property("buttonRole") == "secondary"
     assert main_window._delete_archived_button.property("buttonRole") == "danger"
     assert review_install_button is not None
@@ -8116,18 +8120,21 @@ def test_main_window_archive_surface_key_controls_exist(
     archive_filter_input = main_window.findChild(QLineEdit, "archive_filter_input")
     archive_table = main_window.findChild(QTableWidget, "archive_results_table")
     refresh_button = main_window.findChild(QPushButton, "archive_refresh_button")
+    cleanup_button = main_window.findChild(QPushButton, "archive_cleanup_button")
     restore_button = main_window.findChild(QPushButton, "archive_restore_button")
     delete_button = main_window.findChild(QPushButton, "archive_delete_button")
 
     assert archive_filter_input is not None
     assert archive_table is not None
     assert refresh_button is not None
+    assert cleanup_button is not None
     assert restore_button is not None
     assert delete_button is not None
 
     assert main_window._archive_filter_input is archive_filter_input
     assert main_window._archive_table is archive_table
     assert main_window._refresh_archives_button is refresh_button
+    assert main_window._cleanup_archives_button is cleanup_button
     assert main_window._restore_archived_button is restore_button
     assert main_window._delete_archived_button is delete_button
 
@@ -8186,9 +8193,11 @@ def test_main_window_archive_buttons_toggle_with_row_selection(
 ) -> None:
     restore_button = main_window._restore_archived_button
     delete_button = main_window._delete_archived_button
+    cleanup_button = main_window._cleanup_archives_button
 
     assert restore_button.isEnabled() is False
     assert delete_button.isEnabled() is False
+    assert cleanup_button.isEnabled() is False
 
     entries = (
         _archived_entry("AlphaMod", "mods/AlphaMod"),
@@ -8202,6 +8211,7 @@ def test_main_window_archive_buttons_toggle_with_row_selection(
     qapp.processEvents()
     assert restore_button.isEnabled() is True
     assert delete_button.isEnabled() is True
+    assert cleanup_button.isEnabled() is False
 
     main_window._archive_table.clearSelection()
     main_window._archive_table.setCurrentCell(-1, -1)
@@ -8209,6 +8219,120 @@ def test_main_window_archive_buttons_toggle_with_row_selection(
     qapp.processEvents()
     assert restore_button.isEnabled() is False
     assert delete_button.isEnabled() is False
+    assert cleanup_button.isEnabled() is False
+
+
+def test_main_window_archive_cleanup_button_and_retention_column_follow_candidates(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    cleanup_button = main_window._cleanup_archives_button
+    entries = (
+        replace(
+            _archived_entry("AlphaMod__sdvmm_archive_004", "AlphaMod"),
+            retention_position=1,
+            retention_total=4,
+            retention_keep_limit=3,
+            retention_cleanup_candidate=False,
+        ),
+        replace(
+            _archived_entry("AlphaMod__sdvmm_archive_003", "AlphaMod"),
+            retention_position=2,
+            retention_total=4,
+            retention_keep_limit=3,
+            retention_cleanup_candidate=False,
+        ),
+        replace(
+            _archived_entry("AlphaMod__sdvmm_archive_002", "AlphaMod"),
+            retention_position=3,
+            retention_total=4,
+            retention_keep_limit=3,
+            retention_cleanup_candidate=False,
+        ),
+        replace(
+            _archived_entry("AlphaMod__sdvmm_archive_001", "AlphaMod"),
+            retention_position=4,
+            retention_total=4,
+            retention_keep_limit=3,
+            retention_cleanup_candidate=True,
+        ),
+    )
+
+    main_window._archived_entries = entries
+    main_window._render_archive_entries(entries)
+    qapp.processEvents()
+
+    assert cleanup_button.isEnabled() is True
+    assert main_window._archive_table.columnCount() == 7
+    assert main_window._archive_table.item(0, 6).text() == "Keep latest (1/4)"
+    assert main_window._archive_table.item(3, 6).text() == "Cleanup candidate (4/4)"
+    assert "exceed retention" in main_window._archive_state_hint_label.text()
+
+
+def test_main_window_archive_cleanup_runs_explicit_retention_flow(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archived_root = Path(r"C:\ArchiveRoot")
+    cleanup_entry = replace(
+        _archived_entry("AlphaMod__sdvmm_archive_001", "AlphaMod"),
+        archive_root=archived_root,
+        archived_path=archived_root / "AlphaMod__sdvmm_archive_001",
+        source_kind="sandbox_archive",
+        retention_position=4,
+        retention_total=4,
+        retention_keep_limit=3,
+        retention_cleanup_candidate=True,
+    )
+    plan = SimpleNamespace(
+        retention_keep_limit=3,
+        entries_to_delete=(cleanup_entry,),
+        groups=(
+            SimpleNamespace(
+                source_kind="sandbox_archive",
+                target_folder_name="AlphaMod",
+                mod_name="AlphaMod",
+                unique_id="Sample.AlphaMod",
+                total_entries=4,
+                kept_entry_count=3,
+                cleanup_candidate_count=1,
+            ),
+        ),
+    )
+    result = SimpleNamespace(
+        plan=plan,
+        deleted_paths=(cleanup_entry.archived_path,),
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "build_archive_cleanup_plan",
+        lambda **_: plan,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_archive_cleanup",
+        lambda cleanup_plan, *, confirm_cleanup: (
+            result if cleanup_plan is plan and confirm_cleanup is True else None
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    main_window._on_cleanup_archives()
+
+    assert captured["operation_names"] == ["Archive cleanup"]
+    assert "Archive cleanup completed." in main_window._archive_output_box.toPlainText()
+    assert "deleted 1 older entr(y/ies)" in main_window._status_strip_label.text()
 
 
 def test_main_window_archive_filter_updates_stats_label(

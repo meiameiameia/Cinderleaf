@@ -50,6 +50,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtGui import QPalette
 
 from sdvmm.app.inventory_presenter import (
+    build_archive_cleanup_result_text,
     build_archive_listing_text,
     build_archive_delete_result_text,
     build_archive_restore_result_text,
@@ -73,6 +74,7 @@ from sdvmm.app.table_filters import row_matches_filter
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
     ARCHIVE_SOURCE_SANDBOX,
+    ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
     BackupBundleExportResult,
     DiscoveryContextCorrelation,
     INSTALL_TARGET_CONFIGURED_REAL_MODS,
@@ -108,6 +110,7 @@ from sdvmm.domain.models import (
     ModDiscoveryResult,
     ModsCompareResult,
     ArchiveRestoreResult,
+    ArchiveCleanupResult,
     ArchiveDeleteResult,
     ArchivedModEntry,
     ModRemovalResult,
@@ -748,10 +751,18 @@ class MainWindow(QMainWindow):
             initial_widths=(220, 220, 150, 110, 130, 180, 170, 180),
         )
 
-        self._archive_table = QTableWidget(0, 6)
+        self._archive_table = QTableWidget(0, 7)
         self._archive_table.setObjectName("archive_results_table")
         self._archive_table.setHorizontalHeaderLabels(
-            ["Archive source", "Archived folder", "Restore target", "Mod name", "UniqueID", "Version"]
+            [
+                "Archive source",
+                "Archived folder",
+                "Restore target",
+                "Mod name",
+                "UniqueID",
+                "Version",
+                "Retention",
+            ]
         )
         self._archive_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._archive_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -765,7 +776,7 @@ class MainWindow(QMainWindow):
             self._archive_table,
             minimum_visible_rows=7,
             minimum_section_size=64,
-            initial_widths=(120, 190, 180, 220, 190, 96),
+            initial_widths=(120, 190, 180, 220, 190, 96, 170),
         )
 
         self._inventory_output_box = QPlainTextEdit()
@@ -2026,6 +2037,15 @@ class MainWindow(QMainWindow):
         self._refresh_archives_button.setObjectName("archive_refresh_button")
         self._refresh_archives_button.clicked.connect(self._on_refresh_archives)
         _set_primary_button_style(self._refresh_archives_button)
+        self._cleanup_archives_button = QPushButton("Cleanup older archives")
+        self._cleanup_archives_button.setObjectName("archive_cleanup_button")
+        self._cleanup_archives_button.clicked.connect(self._on_cleanup_archives)
+        self._cleanup_archives_button.setToolTip(
+            f"Keep latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} archived copies per mod and "
+            "permanently delete older copies after confirmation."
+        )
+        _set_danger_button_style(self._cleanup_archives_button)
+        self._cleanup_archives_button.setEnabled(False)
         self._restore_archived_button = QPushButton("Restore archived copy")
         self._restore_archived_button.setObjectName("archive_restore_button")
         self._restore_archived_button.clicked.connect(self._on_restore_selected_archive)
@@ -2042,6 +2062,7 @@ class MainWindow(QMainWindow):
             archive_state_hint_label=self._archive_state_hint_label,
             archive_table=self._archive_table,
             refresh_archives_button=self._refresh_archives_button,
+            cleanup_archives_button=self._cleanup_archives_button,
             restore_archived_button=self._restore_archived_button,
             delete_archived_button=self._delete_archived_button,
         )
@@ -2287,6 +2308,7 @@ class MainWindow(QMainWindow):
             self._remove_mod_button,
             self._rollback_mod_button,
             self._refresh_archives_button,
+            self._cleanup_archives_button,
             self._restore_archived_button,
             self._delete_archived_button,
             self._compare_real_vs_sandbox_button,
@@ -4775,7 +4797,77 @@ class MainWindow(QMainWindow):
         self._archived_entries = entries
         self._render_archive_entries(entries)
         self._set_archive_output_text(build_archive_listing_text(entries))
+        cleanup_candidate_count = len(_archive_cleanup_candidate_entries(entries))
+        if cleanup_candidate_count:
+            self._set_status(
+                "Archive refresh complete: "
+                f"{len(entries)} entr(y/ies), {cleanup_candidate_count} cleanup candidate(s)"
+            )
+            return
         self._set_status(f"Archive refresh complete: {len(entries)} entr(y/ies)")
+
+    def _on_cleanup_archives(self) -> None:
+        try:
+            plan = self._shell_service.build_archive_cleanup_plan(
+                configured_mods_path_text=self._mods_path_input.text(),
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                real_archive_path_text=self._real_archive_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            QMessageBox.information(self, "No archive cleanup candidates", str(exc))
+            self._set_status(str(exc))
+            return
+
+        group_lines = [
+            (
+                f"- [{_archive_source_summary_label(group.source_kind)}] "
+                f"{_archive_retention_group_display_name(group.mod_name, group.target_folder_name)} | "
+                f"UniqueID: {group.unique_id or '<unknown>'} | "
+                f"keep {group.kept_entry_count}, delete older {group.cleanup_candidate_count}"
+            )
+            for group in plan.groups[:8]
+        ]
+        if len(plan.groups) > 8:
+            group_lines.append(f"- ...and {len(plan.groups) - 8} more mod group(s)")
+        yes = QMessageBox.question(
+            self,
+            "Confirm archive cleanup",
+            (
+                "Cleanup older archived copies now?\n\n"
+                f"Retention rule: keep latest {plan.retention_keep_limit} archived copies per mod.\n"
+                f"Older archived folders to delete: {len(plan.entries_to_delete)}\n"
+                f"Affected mod groups: {len(plan.groups)}\n\n"
+                "This action permanently deletes only the older archived copies listed below. "
+                "The latest retained copies stay untouched.\n\n"
+                + "\n".join(group_lines)
+            ),
+        )
+        if yes != QMessageBox.StandardButton.Yes:
+            self._set_status("Archive cleanup cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Archive cleanup",
+            running_label="Archive cleanup",
+            started_status="Cleaning up older archived copies...",
+            error_title="Archive cleanup failed",
+            task_fn=lambda _plan=plan: self._shell_service.execute_archive_cleanup(
+                _plan,
+                confirm_cleanup=True,
+            ),
+            on_success=self._on_cleanup_archives_completed,
+        )
+
+    def _on_cleanup_archives_completed(self, result: ArchiveCleanupResult) -> None:
+        self._set_archive_output_text(build_archive_cleanup_result_text(result))
+        self._refresh_archived_entries_after_change()
+        self._set_status(
+            "Archive cleanup complete: "
+            f"deleted {len(result.deleted_paths)} older entr(y/ies), "
+            f"kept latest {result.plan.retention_keep_limit} per mod"
+        )
 
     def _on_restore_selected_archive(self) -> None:
         entry = self._selected_archive_entry()
@@ -4915,8 +5007,10 @@ class MainWindow(QMainWindow):
 
     def _on_archive_selection_changed(self) -> None:
         has_selection = self._selected_archive_entry() is not None
+        has_cleanup_candidates = bool(_archive_cleanup_candidate_entries(self._archived_entries))
         self._restore_archived_button.setEnabled(has_selection)
         self._delete_archived_button.setEnabled(has_selection)
+        self._cleanup_archives_button.setEnabled(has_cleanup_candidates)
         self._refresh_workflow_surface_states()
 
     def _refresh_archived_entries_after_change(self) -> None:
@@ -5336,6 +5430,8 @@ class MainWindow(QMainWindow):
             self._archive_table.setItem(row, 3, QTableWidgetItem(entry.mod_name or "-"))
             self._archive_table.setItem(row, 4, QTableWidgetItem(entry.unique_id or "-"))
             self._archive_table.setItem(row, 5, QTableWidgetItem(entry.version or "-"))
+            retention_item = QTableWidgetItem(_archive_retention_status_label(entry))
+            self._archive_table.setItem(row, 6, retention_item)
             if entry.source_kind == ARCHIVE_SOURCE_REAL:
                 _set_table_row_visual(
                     self._archive_table,
@@ -5354,6 +5450,10 @@ class MainWindow(QMainWindow):
                     bold_columns=(0, 3),
                     column_foregrounds={0: "#aed7a3"},
                 )
+            if entry.retention_cleanup_candidate:
+                retention_item.setForeground(QBrush(QColor("#ffb17a")))
+            elif entry.retention_total > 1:
+                retention_item.setForeground(QBrush(QColor("#d9d1a8")))
 
         self._archive_table.setSortingEnabled(was_sorting)
         self._apply_archive_filter()
@@ -5812,6 +5912,13 @@ class MainWindow(QMainWindow):
                 "Restore and delete stay unavailable until the refreshed list lands and you select an entry.",
             )
             return
+        if self._active_operation_name == "Archive cleanup":
+            _set_feedback_label_state(
+                self._archive_state_hint_label,
+                "active",
+                "Cleaning up older archived copies with the explicit retention rule. Restore and delete stay paused until the refreshed list returns.",
+            )
+            return
         if not self._archived_entries:
             _set_feedback_label_state(
                 self._archive_empty_state_label,
@@ -5824,17 +5931,36 @@ class MainWindow(QMainWindow):
                 "Archived entries will appear here after archive, recovery, or restore-safe actions.",
             )
             return
+        cleanup_candidate_count = len(_archive_cleanup_candidate_entries(self._archived_entries))
         if self._selected_archive_entry() is None:
-            _set_feedback_label_state(
-                self._archive_state_hint_label,
-                "muted",
-                "Archive list is ready. Select an entry to restore it to its target or delete the archived copy explicitly.",
-            )
+            if cleanup_candidate_count:
+                _set_feedback_label_state(
+                    self._archive_state_hint_label,
+                    "ready",
+                    "Archive list is ready. "
+                    f"{cleanup_candidate_count} older archived cop{'y' if cleanup_candidate_count == 1 else 'ies'} "
+                    f"exceed retention; Cleanup older archives keeps the latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} per mod.",
+                )
+            else:
+                _set_feedback_label_state(
+                    self._archive_state_hint_label,
+                    "muted",
+                    "Archive list is ready. Select an entry to restore it to its target or delete the archived copy explicitly.",
+                )
             return
+        selected_message = (
+            "Archive entry selected. Restore returns it to its target, while delete permanently removes the archived copy."
+        )
+        if cleanup_candidate_count:
+            selected_message += (
+                f" Cleanup older archives can also trim {cleanup_candidate_count} older cop"
+                f"{'y' if cleanup_candidate_count == 1 else 'ies'} beyond the latest "
+                f"{ARCHIVE_RETENTION_KEEP_LATEST_COUNT} per mod."
+            )
         _set_feedback_label_state(
             self._archive_state_hint_label,
             "ready",
-            "Archive entry selected. Restore returns it to its target, while delete permanently removes the archived copy.",
+            selected_message,
         )
 
     def _run_background_operation(
@@ -8997,6 +9123,32 @@ def _archive_source_summary_label(source_kind: str) -> str:
     if source_kind == ARCHIVE_SOURCE_SANDBOX:
         return "Sandbox archive"
     return source_kind.replace("_", " ").title()
+
+
+def _archive_retention_status_label(entry: ArchivedModEntry) -> str:
+    if entry.retention_keep_limit is None:
+        return "Keep"
+    position_text = f"{entry.retention_position}/{entry.retention_total}"
+    if entry.retention_cleanup_candidate:
+        return f"Cleanup candidate ({position_text})"
+    if entry.retention_total > entry.retention_keep_limit:
+        return f"Keep latest ({position_text})"
+    return "Keep"
+
+
+def _archive_cleanup_candidate_entries(
+    entries: tuple[ArchivedModEntry, ...],
+) -> tuple[ArchivedModEntry, ...]:
+    return tuple(entry for entry in entries if entry.retention_cleanup_candidate)
+
+
+def _archive_retention_group_display_name(
+    mod_name: str | None,
+    target_folder_name: str,
+) -> str:
+    if mod_name is not None and mod_name.strip():
+        return mod_name
+    return target_folder_name
 
 
 def _mods_compare_state_label(state: str) -> str:

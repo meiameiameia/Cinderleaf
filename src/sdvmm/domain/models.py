@@ -898,6 +898,21 @@ class ArchivedModEntry:
     unique_id: str | None = None
     version: str | None = None
     note: str | None = None
+    retention_position: int = 1
+    retention_total: int = 1
+    retention_keep_limit: int | None = None
+    retention_cleanup_candidate: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveRetentionGroup:
+    source_kind: str
+    target_folder_name: str
+    mod_name: str | None
+    unique_id: str | None
+    total_entries: int
+    kept_entry_count: int
+    cleanup_candidate_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -927,6 +942,19 @@ class ArchiveDeletePlan:
 class ArchiveDeleteResult:
     plan: ArchiveDeletePlan
     deleted_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveCleanupPlan:
+    retention_keep_limit: int
+    entries_to_delete: tuple[ArchivedModEntry, ...]
+    groups: tuple[ArchiveRetentionGroup, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveCleanupResult:
+    plan: ArchiveCleanupPlan
+    deleted_paths: tuple[Path, ...]
 
 
 @dataclass(frozen=True, slots=True)

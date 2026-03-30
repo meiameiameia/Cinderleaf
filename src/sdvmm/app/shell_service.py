@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath
 from collections.abc import Iterable
 from collections import Counter
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,8 +18,11 @@ import zipfile
 
 from sdvmm.domain.models import (
     ArchivedModEntry,
+    ArchiveCleanupPlan,
+    ArchiveCleanupResult,
     ArchiveDeletePlan,
     ArchiveDeleteResult,
+    ArchiveRetentionGroup,
     ArchiveRestorePlan,
     ArchiveRestoreResult,
     AppConfig,
@@ -209,6 +213,7 @@ _LEGACY_ARCHIVE_DIRNAME = ".sdvmm-archive"
 ArchiveSourceKind = Literal["real_archive", "sandbox_archive"]
 ARCHIVE_SOURCE_REAL: ArchiveSourceKind = "real_archive"
 ARCHIVE_SOURCE_SANDBOX: ArchiveSourceKind = "sandbox_archive"
+ARCHIVE_RETENTION_KEEP_LATEST_COUNT = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,6 +458,7 @@ _ACTIONABLE_INTAKE_CLASSIFICATIONS = {
     "update_replace_candidate",
     "multi_mod_package",
 }
+_ARCHIVE_SUFFIX_SEQUENCE_PATTERN = re.compile(r"^(?P<target>.+)__sdvmm_archive_(?P<sequence>[0-9]{3,})$")
 
 
 class AppShellService:
@@ -3380,7 +3386,10 @@ class AppShellService:
                 entry.archived_folder_name.casefold(),
             )
         )
-        return tuple(entries)
+        return _annotate_archive_retention_entries(
+            tuple(entries),
+            keep_latest_count=ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
+        )
 
     def build_archive_restore_plan(
         self,
@@ -3524,6 +3533,88 @@ class AppShellService:
         return ArchiveDeleteResult(
             plan=plan,
             deleted_path=deleted_path,
+        )
+
+    def build_archive_cleanup_plan(
+        self,
+        *,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        existing_config: AppConfig | None = None,
+        keep_latest_count: int = ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
+    ) -> ArchiveCleanupPlan:
+        if keep_latest_count < 1:
+            raise AppShellError("Archive retention keep count must be at least 1.")
+
+        entries = self.list_archived_entries(
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+        entries = _annotate_archive_retention_entries(
+            entries,
+            keep_latest_count=keep_latest_count,
+        )
+        cleanup_entries = tuple(
+            entry for entry in entries if entry.retention_cleanup_candidate
+        )
+        if not cleanup_entries:
+            raise AppShellError(
+                f"No archive cleanup candidates found. Keep latest {keep_latest_count} per mod is already satisfied."
+            )
+
+        groups = _build_archive_retention_groups(
+            entries,
+            keep_latest_count=keep_latest_count,
+            only_cleanup_groups=True,
+        )
+        return ArchiveCleanupPlan(
+            retention_keep_limit=keep_latest_count,
+            entries_to_delete=cleanup_entries,
+            groups=groups,
+        )
+
+    def execute_archive_cleanup(
+        self,
+        plan: ArchiveCleanupPlan,
+        *,
+        confirm_cleanup: bool = False,
+    ) -> ArchiveCleanupResult:
+        if not confirm_cleanup:
+            raise AppShellError("Explicit confirmation is required before archive cleanup.")
+
+        deleted_paths: list[Path] = []
+        for entry in plan.entries_to_delete:
+            try:
+                deleted_path = delete_archived_mod_entry(
+                    archive_root=entry.archive_root,
+                    archived_path=entry.archived_path,
+                )
+            except ArchiveManagerError as exc:
+                if deleted_paths:
+                    raise AppShellError(
+                        "Archive cleanup partially completed before failing on "
+                        f"{entry.archived_path}: {exc}. Older copies already deleted: "
+                        f"{len(deleted_paths)}."
+                    ) from exc
+                raise AppShellError(str(exc)) from exc
+            except OSError as exc:
+                if deleted_paths:
+                    raise AppShellError(
+                        "Archive cleanup partially completed before failing on "
+                        f"{entry.archived_path}: {exc}. Older copies already deleted: "
+                        f"{len(deleted_paths)}."
+                    ) from exc
+                raise AppShellError(f"Archive cleanup failed: {exc}") from exc
+            deleted_paths.append(deleted_path)
+
+        return ArchiveCleanupResult(
+            plan=plan,
+            deleted_paths=tuple(deleted_paths),
         )
 
     def list_mod_rollback_candidates(
@@ -7873,6 +7964,137 @@ def _remove_recovery_target(target_path: Path) -> None:
         shutil.rmtree(target_path)
         return
     target_path.unlink()
+
+
+def _annotate_archive_retention_entries(
+    entries: tuple[ArchivedModEntry, ...],
+    *,
+    keep_latest_count: int,
+) -> tuple[ArchivedModEntry, ...]:
+    if not entries:
+        return tuple()
+
+    grouped_entries: dict[tuple[str, str, str], list[ArchivedModEntry]] = {}
+    for entry in entries:
+        grouped_entries.setdefault(_archive_retention_group_key(entry), []).append(entry)
+
+    annotated_entries: list[ArchivedModEntry] = []
+    for group_entries in grouped_entries.values():
+        sorted_group = sorted(
+            group_entries,
+            key=_archive_retention_sort_key,
+            reverse=True,
+        )
+        total_entries = len(sorted_group)
+        for position, entry in enumerate(sorted_group, start=1):
+            annotated_entries.append(
+                replace(
+                    entry,
+                    retention_position=position,
+                    retention_total=total_entries,
+                    retention_keep_limit=keep_latest_count,
+                    retention_cleanup_candidate=position > keep_latest_count,
+                )
+            )
+
+    annotated_entries.sort(
+        key=lambda entry: (
+            0 if entry.source_kind == ARCHIVE_SOURCE_REAL else 1,
+            entry.target_folder_name.casefold(),
+            entry.retention_cleanup_candidate,
+            entry.retention_position,
+            entry.archived_folder_name.casefold(),
+        )
+    )
+    return tuple(annotated_entries)
+
+
+def _build_archive_retention_groups(
+    entries: tuple[ArchivedModEntry, ...],
+    *,
+    keep_latest_count: int,
+    only_cleanup_groups: bool,
+) -> tuple[ArchiveRetentionGroup, ...]:
+    grouped_entries: dict[tuple[str, str, str], list[ArchivedModEntry]] = {}
+    for entry in entries:
+        grouped_entries.setdefault(_archive_retention_group_key(entry), []).append(entry)
+
+    groups: list[ArchiveRetentionGroup] = []
+    for group_entries in grouped_entries.values():
+        sorted_group = sorted(
+            group_entries,
+            key=_archive_retention_sort_key,
+            reverse=True,
+        )
+        cleanup_candidate_count = sum(
+            1 for entry in sorted_group if entry.retention_cleanup_candidate
+        )
+        if only_cleanup_groups and cleanup_candidate_count == 0:
+            continue
+
+        first_entry = sorted_group[0]
+        groups.append(
+            ArchiveRetentionGroup(
+                source_kind=first_entry.source_kind,
+                target_folder_name=first_entry.target_folder_name,
+                mod_name=first_entry.mod_name,
+                unique_id=first_entry.unique_id,
+                total_entries=len(sorted_group),
+                kept_entry_count=min(len(sorted_group), keep_latest_count),
+                cleanup_candidate_count=max(len(sorted_group) - keep_latest_count, 0),
+            )
+        )
+
+    groups.sort(
+        key=lambda group: (
+            0 if group.source_kind == ARCHIVE_SOURCE_REAL else 1,
+            group.target_folder_name.casefold(),
+            (group.mod_name or "").casefold(),
+            (group.unique_id or "").casefold(),
+        )
+    )
+    return tuple(groups)
+
+
+def _archive_retention_group_key(entry: ArchivedModEntry) -> tuple[str, str, str]:
+    unique_id = entry.unique_id.strip() if entry.unique_id else ""
+    identity_key = (
+        canonicalize_unique_id(unique_id)
+        if unique_id
+        else f"folder:{entry.target_folder_name.casefold()}"
+    )
+    return (
+        entry.source_kind,
+        identity_key,
+        entry.target_folder_name.casefold(),
+    )
+
+
+def _archive_retention_sort_key(entry: ArchivedModEntry) -> tuple[int, int, float, str]:
+    sequence_number = _archive_sequence_number(entry.archived_folder_name)
+    return (
+        1 if sequence_number is not None else 0,
+        sequence_number or -1,
+        _safe_path_mtime(entry.archived_path),
+        entry.archived_folder_name.casefold(),
+    )
+
+
+def _archive_sequence_number(archived_folder_name: str) -> int | None:
+    match = _ARCHIVE_SUFFIX_SEQUENCE_PATTERN.match(archived_folder_name)
+    if match is None:
+        return None
+    try:
+        return int(match.group("sequence"))
+    except ValueError:
+        return None
+
+
+def _safe_path_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return -1.0
 
 
 def _new_operation_id(prefix: str) -> str:

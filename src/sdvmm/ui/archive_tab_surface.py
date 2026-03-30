@@ -20,6 +20,7 @@ class ArchiveTabSurface(QWidget):
         archive_state_hint_label: QLabel,
         archive_table: QTableWidget,
         refresh_archives_button: QPushButton,
+        cleanup_archives_button: QPushButton,
         restore_archived_button: QPushButton,
         delete_archived_button: QPushButton,
     ) -> None:
@@ -59,9 +60,10 @@ class ArchiveTabSurface(QWidget):
         archive_actions_row_layout.setHorizontalSpacing(8)
         archive_actions_row_layout.setVerticalSpacing(0)
         archive_actions_row_layout.addWidget(refresh_archives_button, 0, 0)
-        archive_actions_row_layout.addWidget(restore_archived_button, 0, 1)
-        archive_actions_row_layout.addWidget(delete_archived_button, 0, 2)
-        archive_actions_row_layout.setColumnStretch(3, 1)
+        archive_actions_row_layout.addWidget(cleanup_archives_button, 0, 1)
+        archive_actions_row_layout.addWidget(restore_archived_button, 0, 2)
+        archive_actions_row_layout.addWidget(delete_archived_button, 0, 3)
+        archive_actions_row_layout.setColumnStretch(4, 1)
         archive_controls_layout.addWidget(archive_actions_row)
 
         archive_empty_state_label = QLabel(

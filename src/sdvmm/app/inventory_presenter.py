@@ -16,6 +16,7 @@ from sdvmm.domain.environment_codes import (
 )
 from sdvmm.domain.models import (
     ArchivedModEntry,
+    ArchiveCleanupResult,
     ArchiveDeleteResult,
     ArchiveRestoreResult,
     DependencyPreflightFinding,
@@ -556,10 +557,23 @@ def build_archive_listing_text(entries: tuple[ArchivedModEntry, ...]) -> str:
     lines: list[str] = []
     real_count = sum(1 for entry in entries if entry.source_kind == "real_archive")
     sandbox_count = sum(1 for entry in entries if entry.source_kind == "sandbox_archive")
+    retention_keep_limit = next(
+        (entry.retention_keep_limit for entry in entries if entry.retention_keep_limit is not None),
+        None,
+    )
+    cleanup_candidate_count = sum(
+        1 for entry in entries if entry.retention_cleanup_candidate
+    )
+    overflow_groups = _archive_retention_overflow_groups(entries)
     lines.append("Archive Browser")
     lines.append(f"- Archived entries: {len(entries)}")
     lines.append(f"- Real archive entries: {real_count}")
     lines.append(f"- Sandbox archive entries: {sandbox_count}")
+    if retention_keep_limit is not None:
+        lines.append(
+            f"- Retention rule: keep latest {retention_keep_limit} archived copies per mod"
+        )
+        lines.append(f"- Cleanup candidates: {cleanup_candidate_count}")
     lines.append("")
 
     if not entries:
@@ -584,10 +598,22 @@ def build_archive_listing_text(entries: tuple[ArchivedModEntry, ...]) -> str:
             lines.append(f"  path: {entry.archived_path}")
             if entry.note:
                 lines.append(f"  note: {entry.note}")
+            if entry.retention_keep_limit is not None:
+                lines.append(f"  retention: {_archive_retention_status_label(entry)}")
+
+    if overflow_groups:
+        lines.append("")
+        lines.append("Retention buildup:")
+        for group_text in overflow_groups:
+            lines.append(f"- {group_text}")
 
     lines.append("")
     lines.append("Recommended next step:")
-    if entries:
+    if overflow_groups and retention_keep_limit is not None:
+        lines.append(
+            f"- Use Cleanup older archives to keep the latest {retention_keep_limit} copies per mod."
+        )
+    elif entries:
         lines.append("- Select an archived entry, choose destination context, then restore explicitly.")
     else:
         lines.append("- Use remove/update overwrite flows to generate archived entries first.")
@@ -619,6 +645,37 @@ def build_archive_delete_result_text(result: ArchiveDeleteResult) -> str:
     lines.append("")
     lines.append("Recommended next step:")
     lines.append("- Refresh archives and continue restore/rollback planning with remaining entries if needed.")
+    return "\n".join(lines)
+
+
+def build_archive_cleanup_result_text(result: ArchiveCleanupResult) -> str:
+    lines: list[str] = []
+    lines.append("Archive cleanup completed.")
+    lines.append(
+        f"- Retention rule: kept latest {result.plan.retention_keep_limit} archived copies per mod"
+    )
+    lines.append(f"- Older archived folders deleted: {len(result.deleted_paths)}")
+    lines.append(f"- Affected mod groups: {len(result.plan.groups)}")
+    if result.plan.groups:
+        lines.append("")
+        lines.append("Trimmed groups:")
+        for group in result.plan.groups:
+            lines.append(
+                "- "
+                f"[{_archive_source_label(group.source_kind)}] "
+                f"{_archive_group_display_name(group.mod_name, group.target_folder_name)} | "
+                f"UniqueID: {group.unique_id or '<unknown>'} | "
+                f"Total: {group.total_entries} | "
+                f"Kept: {group.kept_entry_count} | "
+                f"Deleted older copies: {group.cleanup_candidate_count}"
+            )
+    if result.deleted_paths:
+        lines.append("")
+        lines.append("Deleted archived folders:")
+        lines.extend(f"- {path}" for path in result.deleted_paths)
+    lines.append("")
+    lines.append("Recommended next step:")
+    lines.append("- Refresh rollback choices or restore planning if you were cleaning up archive clutter first.")
     return "\n".join(lines)
 
 
@@ -1149,6 +1206,61 @@ def _archive_source_label(source_kind: str) -> str:
         "sandbox_archive": "Sandbox archive",
     }
     return labels.get(source_kind, source_kind.replace("_", " ").title())
+
+
+def _archive_retention_status_label(entry: ArchivedModEntry) -> str:
+    if entry.retention_keep_limit is None:
+        return "Keep"
+    position_text = f"{entry.retention_position}/{entry.retention_total}"
+    if entry.retention_cleanup_candidate:
+        return f"Cleanup candidate ({position_text})"
+    if entry.retention_total > entry.retention_keep_limit:
+        return f"Keep latest ({position_text})"
+    return "Keep"
+
+
+def _archive_retention_overflow_groups(entries: tuple[ArchivedModEntry, ...]) -> tuple[str, ...]:
+    grouped_entries: dict[tuple[str, str, str], list[ArchivedModEntry]] = {}
+    for entry in entries:
+        if not entry.retention_cleanup_candidate:
+            continue
+        grouped_entries.setdefault(_archive_retention_group_key(entry), []).append(entry)
+
+    summaries: list[str] = []
+    for group_entries in grouped_entries.values():
+        first_entry = sorted(
+            group_entries,
+            key=lambda item: item.archived_folder_name.casefold(),
+        )[0]
+        keep_limit = first_entry.retention_keep_limit or 0
+        mod_name = _archive_group_display_name(
+            first_entry.mod_name,
+            first_entry.target_folder_name,
+        )
+        summaries.append(
+            f"[{_archive_source_label(first_entry.source_kind)}] "
+            f"{mod_name} | UniqueID: {first_entry.unique_id or '<unknown>'} | "
+            f"{first_entry.retention_total} archived copies, "
+            f"{len(group_entries)} older cleanup candidate(s), "
+            f"keep latest {keep_limit}"
+        )
+
+    return tuple(sorted(summaries, key=str.casefold))
+
+
+def _archive_retention_group_key(entry: ArchivedModEntry) -> tuple[str, str, str]:
+    unique_id_key = entry.unique_id.casefold() if entry.unique_id else ""
+    return (
+        entry.source_kind,
+        unique_id_key or f"folder:{entry.target_folder_name.casefold()}",
+        entry.target_folder_name.casefold(),
+    )
+
+
+def _archive_group_display_name(mod_name: str | None, target_folder_name: str) -> str:
+    if mod_name and mod_name.strip():
+        return mod_name
+    return target_folder_name
 
 
 def _intake_classification_label(classification: str) -> str:
