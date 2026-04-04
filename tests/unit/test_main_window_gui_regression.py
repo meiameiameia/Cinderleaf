@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QItemSelectionModel, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -89,6 +89,7 @@ from sdvmm.domain.models import RestoreImportExecutionResult
 from sdvmm.domain.models import RestoreImportPlanningModEntry
 from sdvmm.domain.models import RestoreImportPlanningResult
 from sdvmm.domain.models import RecoveryExecutionRecord
+from sdvmm.domain.models import RemoteModLink
 from sdvmm.domain.models import SandboxModProfile
 from sdvmm.domain.models import SandboxModProfileCatalog
 from sdvmm.domain.models import SandboxInstallPlan
@@ -2434,12 +2435,79 @@ def test_main_window_inventory_selected_row_guidance_shows_actionable_message(
         QPushButton, "inventory_open_remote_page_button"
     )
     assert (
-        "Alpha Mod: update available. Next step: use Open remote page for this selected row."
+        "Alpha Mod: update available. Next step: use Open update page for this selected row. "
+        "Cinderleaf will start intake watch if needed."
         == guidance_text
     )
     assert open_remote_button is not None
     assert open_remote_button.isEnabled() is True
     assert "Alpha Mod" in open_remote_button.toolTip()
+
+
+def test_main_window_inventory_multi_select_actionable_updates_enables_prepare_button(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _mods_inventory(
+        _installed_mod_for_update_ui(name="Alpha Mod", unique_id="Sample.Alpha", folder_name="AlphaMod"),
+        _installed_mod_for_update_ui(name="Gamma Mod", unique_id="Sample.Gamma", folder_name="GammaMod"),
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                folder_path=Path(r"C:\Mods\AlphaMod"),
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+            ModUpdateStatus(
+                unique_id="Sample.Gamma",
+                name="Gamma Mod",
+                folder_path=Path(r"C:\Mods\GammaMod"),
+                installed_version="1.0.0",
+                remote_version="1.2.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    gamma_row = _find_mod_row(main_window._mods_table, "Gamma Mod")
+    assert alpha_row >= 0
+    assert gamma_row >= 0
+
+    selection_model = main_window._mods_table.selectionModel()
+    assert selection_model is not None
+    selection_model.select(
+        main_window._mods_table.model().index(alpha_row, 0),
+        QItemSelectionModel.SelectionFlag.ClearAndSelect
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+    selection_model.select(
+        main_window._mods_table.model().index(gamma_row, 0),
+        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+    )
+    selection_model.setCurrentIndex(
+        main_window._mods_table.model().index(gamma_row, 0),
+        QItemSelectionModel.SelectionFlag.Current,
+    )
+    qapp.processEvents()
+
+    prepare_button = main_window.findChild(
+        QPushButton, "inventory_prepare_selected_updates_button"
+    )
+    assert prepare_button is not None
+    assert prepare_button.isVisible() is True
+    assert prepare_button.isEnabled() is True
+    assert "Open update pages for 2 selected update targets" in prepare_button.toolTip()
 
 
 def test_main_window_inventory_selected_row_guidance_shows_blocked_reason(
@@ -10734,6 +10802,200 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
     assert captured["allow_overwrite"] is True
     assert main_window._pending_install_plan is not None
     assert main_window._pending_install_plan.entries[0].action == OVERWRITE_WITH_ARCHIVE
+
+
+def test_main_window_open_selected_update_pages_guides_packages_and_stages_detected_matches(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_mods_path = Path(r"C:\Game\Mods")
+    inventory = _mods_inventory(
+        InstalledMod(
+            unique_id="Sample.Alpha",
+            name="Alpha Mod",
+            version="1.0.0",
+            folder_path=real_mods_path / "AlphaMod",
+            manifest_path=real_mods_path / "AlphaMod" / "manifest.json",
+            dependencies=tuple(),
+        ),
+        InstalledMod(
+            unique_id="Sample.Gamma",
+            name="Gamma Mod",
+            version="1.0.0",
+            folder_path=real_mods_path / "GammaMod",
+            manifest_path=real_mods_path / "GammaMod" / "manifest.json",
+            dependencies=tuple(),
+        ),
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                folder_path=real_mods_path / "AlphaMod",
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=RemoteModLink(
+                    provider="json",
+                    key="alpha",
+                    page_url="https://example.test/alpha",
+                    metadata_url=None,
+                ),
+                message="Update available.",
+            ),
+            ModUpdateStatus(
+                unique_id="Sample.Gamma",
+                name="Gamma Mod",
+                folder_path=real_mods_path / "GammaMod",
+                installed_version="1.0.0",
+                remote_version="1.2.0",
+                state="update_available",
+                remote_link=RemoteModLink(
+                    provider="json",
+                    key="gamma",
+                    page_url="https://example.test/gamma",
+                    metadata_url=None,
+                ),
+                message="Update available.",
+            ),
+        )
+    )
+    alpha_intake = replace(
+        _intake_result(
+            "AlphaPack.zip",
+            "update_replace_candidate",
+            "Alpha Mod",
+            "Sample.Alpha",
+            version="1.1.0",
+        ),
+        matched_installed_unique_ids=("Sample.Alpha",),
+    )
+    gamma_intake = replace(
+        _intake_result(
+            "GammaPack.zip",
+            "update_replace_candidate",
+            "Gamma Mod",
+            "Sample.Gamma",
+            version="1.2.0",
+        ),
+        matched_installed_unique_ids=("Sample.Gamma",),
+    )
+
+    main_window._mods_path_input.setText(str(real_mods_path))
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    main_window._detected_intakes = (alpha_intake, gamma_intake)
+    main_window._recompute_intake_correlations()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    gamma_row = _find_mod_row(main_window._mods_table, "Gamma Mod")
+    assert alpha_row >= 0
+    assert gamma_row >= 0
+
+    selection_model = main_window._mods_table.selectionModel()
+    assert selection_model is not None
+    selection_model.select(
+        main_window._mods_table.model().index(alpha_row, 0),
+        QItemSelectionModel.SelectionFlag.ClearAndSelect
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+    selection_model.select(
+        main_window._mods_table.model().index(gamma_row, 0),
+        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+    )
+    selection_model.setCurrentIndex(
+        main_window._mods_table.model().index(gamma_row, 0),
+        QItemSelectionModel.SelectionFlag.Current,
+    )
+    qapp.processEvents()
+
+    opened_urls: list[str] = []
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QDesktopServices.openUrl",
+        lambda url: opened_urls.append(url.toString()) or True,
+    )
+
+    main_window._on_open_selected_update_pages()
+
+    assert main_window._guided_update_unique_ids == ("Sample.Alpha", "Sample.Gamma")
+    assert main_window._context_tabs.currentWidget() is main_window._packages_page
+    assert sorted(opened_urls) == [
+        "https://example.test/alpha",
+        "https://example.test/gamma",
+    ]
+    assert main_window._selected_zip_package_paths == (
+        alpha_intake.package_path,
+        gamma_intake.package_path,
+    )
+    assert main_window._overwrite_checkbox.isChecked() is True
+    assert "Opened 2 update page(s) for Real Mods" in (
+        main_window._packages_output_box.toPlainText()
+    )
+    assert "2 matching watched package(s) are already queued in Packages." in (
+        main_window._packages_output_box.toPlainText()
+    )
+
+
+def test_main_window_open_remote_page_starts_watch_for_guided_update_when_paths_are_configured(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                folder_path=Path(r"C:\Mods\AlphaMod"),
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=RemoteModLink(
+                    provider="json",
+                    key="alpha",
+                    page_url="https://example.test/alpha",
+                    metadata_url=None,
+                ),
+                message="Update available.",
+            ),
+        )
+    )
+    main_window._watched_downloads_path_input.setText(r"C:\Downloads")
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QDesktopServices.openUrl",
+        lambda url: captured.setdefault("opened_urls", []).append(url.toString()) or True,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_start_watch_for_guided_updates",
+        lambda actionable_targets, *, busy_button: captured.setdefault(
+            "guided_watch_start",
+            {
+                "targets": actionable_targets,
+                "busy_button": busy_button,
+            },
+        ),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    actionable_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert actionable_row >= 0
+    main_window._mods_table.setCurrentCell(actionable_row, 0)
+    qapp.processEvents()
+
+    main_window._on_open_remote_page()
+
+    assert captured["opened_urls"] == ["https://example.test/alpha"]
+    assert captured["guided_watch_start"] == {
+        "targets": (("Sample.Alpha", "Alpha Mod"),),
+        "busy_button": main_window._open_remote_page_button,
+    }
 
 
 def test_main_window_normal_staging_does_not_inherit_auto_overwrite_from_stage_update(

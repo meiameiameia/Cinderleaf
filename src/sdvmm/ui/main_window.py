@@ -283,6 +283,7 @@ class MainWindow(QMainWindow):
         self._active_backup_bundle_path: Path | None = None
         self._active_backup_bundle_context_label_text = "none yet"
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
+        self._auto_overwrite_package_paths: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
         self._last_smapi_log_report: SmapiLogReport | None = None
         self._last_smapi_launch_context: str | None = None
@@ -385,6 +386,12 @@ class MainWindow(QMainWindow):
             "inventory_update_guidance_label"
         )
         self._inventory_update_guidance_label.setWordWrap(True)
+        self._prepare_selected_updates_button = QPushButton("Open update pages for selected")
+        self._prepare_selected_updates_button.setObjectName(
+            "inventory_prepare_selected_updates_button"
+        )
+        self._prepare_selected_updates_button.setVisible(False)
+        _set_secondary_button_style(self._prepare_selected_updates_button)
         self._mods_inventory_state_label = QLabel(
             "No library loaded yet. Scan the selected Library source to populate the table."
         )
@@ -1200,6 +1207,7 @@ class MainWindow(QMainWindow):
             self._on_set_selected_mod_manual_source_intent
         )
         self._clear_source_intent_button.clicked.connect(self._on_clear_selected_mod_source_intent)
+        self._prepare_selected_updates_button.clicked.connect(self._on_open_selected_update_pages)
         self._sync_selected_to_sandbox_button.clicked.connect(
             self._on_sync_selected_mods_to_sandbox
         )
@@ -1509,6 +1517,7 @@ class MainWindow(QMainWindow):
         selection_summary_layout.addWidget(inspector_intro)
         selection_summary_layout.addWidget(self._inventory_update_guidance_label)
         selection_summary_layout.addWidget(self._inventory_blocked_detail_label)
+        selection_summary_layout.addWidget(self._prepare_selected_updates_button, 0)
 
         selected_actions_card = QGroupBox("Actions")
         selected_actions_card.setObjectName("mods_selected_actions_group")
@@ -4931,28 +4940,26 @@ class MainWindow(QMainWindow):
 
         status = row_item.data(_ROLE_MOD_UPDATE_STATUS)
         if isinstance(status, ModUpdateStatus) and status.state == "update_available":
-            self._guided_update_unique_ids = self._add_guided_unique_id(
-                self._guided_update_unique_ids,
-                status.unique_id,
+            actionable_targets = (
+                (status.unique_id, status.name or row_item.text().strip() or status.unique_id),
             )
-            self._recompute_intake_correlations()
-            hint = self._shell_service.build_manual_update_flow_hint(
-                unique_id=status.unique_id,
-                watched_downloads_path_text=self._watched_downloads_path_input.text(),
-                secondary_watched_downloads_path_text=(
-                    self._secondary_watched_downloads_path_input.text()
-                ),
-                watcher_running=self._watch_timer.isActive(),
-            )
-            self._set_discovery_output_text(hint)
-            self._set_status(
-                f"Opened remote page for update target {status.unique_id}. Follow guided steps."
-            )
-            self._sync_guided_update_intake_handoff(
-                allow_auto_select=False,
-                update_output=False,
-                update_status=True,
-            )
+            if self._watch_timer.isActive():
+                self._show_guided_update_packages_flow(
+                    actionable_targets,
+                    watcher_started=False,
+                    watcher_ready=True,
+                )
+            elif self._configured_watch_path_texts():
+                self._start_watch_for_guided_updates(
+                    actionable_targets,
+                    busy_button=self._open_remote_page_button,
+                )
+            else:
+                self._show_guided_update_packages_flow(
+                    actionable_targets,
+                    watcher_started=False,
+                    watcher_ready=False,
+                )
             return
 
         self._set_status(f"Opened remote page: {url}")
@@ -6827,6 +6834,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_mods_workspace_state(self) -> None:
         self._refresh_smapi_troubleshooting_surface()
+        self._refresh_prepare_selected_updates_action_state()
         visible_count = _visible_table_row_count(self._mods_table)
         total_count = self._mods_table.rowCount()
         active_count = len(self._current_inventory.mods) if self._current_inventory is not None else 0
@@ -8333,6 +8341,7 @@ class MainWindow(QMainWindow):
         self._set_status(f"Real profile mod {'enabled' if enabled else 'disabled'}: {mod_name}")
 
     def _refresh_selected_mod_update_guidance(self) -> None:
+        actionable_targets = self._selected_actionable_update_targets()
         row = self._mods_table.currentRow()
         has_selected_items = bool(self._mods_table.selectedItems())
         if row < 0 or self._mods_table.isRowHidden(row) or not has_selected_items:
@@ -8352,6 +8361,7 @@ class MainWindow(QMainWindow):
             )
             self._inventory_update_guidance_label.setText(message)
             self._inventory_update_guidance_label.setToolTip(message)
+            self._refresh_prepare_selected_updates_action_state(actionable_targets)
             self._refresh_inventory_sandbox_sync_action_state()
             self._refresh_mods_troubleshooting_density()
             return
@@ -8373,6 +8383,7 @@ class MainWindow(QMainWindow):
             )
             self._inventory_update_guidance_label.setText(message)
             self._inventory_update_guidance_label.setToolTip(message)
+            self._refresh_prepare_selected_updates_action_state(actionable_targets)
             self._refresh_inventory_sandbox_sync_action_state()
             self._refresh_mods_troubleshooting_density()
             return
@@ -8418,14 +8429,21 @@ class MainWindow(QMainWindow):
                 tooltip="Run Check updates and select an actionable row first.",
             )
         elif is_actionable:
-            message = (
-                f"{mod_name}: update available. "
-                "Next step: use Open remote page for this selected row."
-            )
+            if len(actionable_targets) > 1:
+                target_count = len(actionable_targets)
+                message = (
+                    f"{target_count} actionable updates selected. "
+                    "Next step: use Open update pages for selected. Cinderleaf will start intake watch if needed."
+                )
+            else:
+                message = (
+                    f"{mod_name}: update available. "
+                    "Next step: use Open update page for this selected row. Cinderleaf will start intake watch if needed."
+                )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=True,
-                tooltip=f"Open remote page for selected mod: {mod_name}.",
+                tooltip=f"Open update page for selected mod: {mod_name}. Cinderleaf will start intake watch if needed.",
             )
         elif overlay_intent is not None:
             message, detail_text, tooltip = _inventory_guidance_for_update_source_intent(
@@ -8467,6 +8485,7 @@ class MainWindow(QMainWindow):
         )
         self._inventory_update_guidance_label.setText(message)
         self._inventory_update_guidance_label.setToolTip(message)
+        self._refresh_prepare_selected_updates_action_state(actionable_targets)
         self._refresh_inventory_sandbox_sync_action_state()
         self._refresh_mods_troubleshooting_density()
 
@@ -8477,6 +8496,207 @@ class MainWindow(QMainWindow):
             return self._shell_service.get_update_source_intent(unique_id)
         except AppShellError:
             return None
+
+    def _refresh_prepare_selected_updates_action_state(
+        self,
+        actionable_targets: tuple[tuple[str, str], ...] | None = None,
+    ) -> None:
+        button = self._prepare_selected_updates_button
+        if actionable_targets is None:
+            actionable_targets = self._selected_actionable_update_targets()
+        count = len(actionable_targets)
+        if count < 2:
+            button.setVisible(False)
+            button.setEnabled(False)
+            button.setToolTip("Select two or more actionable update rows after Check for updates.")
+            return
+
+        button.setVisible(True)
+        if self._active_operation_name is not None:
+            button.setEnabled(False)
+            button.setToolTip("Wait for the active operation to finish before opening selected update pages.")
+            return
+
+        button.setEnabled(True)
+        button.setToolTip(
+            f"Open update pages for {count} selected update targets and start intake watch if needed."
+        )
+
+    def _prime_guided_update_targets(
+        self,
+        actionable_targets: tuple[tuple[str, str], ...],
+    ) -> None:
+        selected_unique_ids = tuple(unique_id for unique_id, _ in actionable_targets)
+        self._guided_update_unique_ids = tuple(
+            sorted(
+                {unique_id for unique_id in selected_unique_ids},
+                key=str.casefold,
+            )
+        )
+
+        current_target = self._current_scan_target()
+        packages_compare_index = self._packages_compare_target_combo.findData(current_target)
+        if packages_compare_index >= 0:
+            self._packages_compare_target_combo.setCurrentIndex(packages_compare_index)
+
+        self._recompute_intake_correlations()
+
+    def _guided_update_target_names_summary(
+        self,
+        actionable_targets: tuple[tuple[str, str], ...],
+    ) -> str:
+        names = [mod_name for _, mod_name in actionable_targets]
+        if len(names) <= 3:
+            return ", ".join(names)
+        preview = ", ".join(names[:3])
+        return f"{preview}, +{len(names) - 3} more"
+
+    def _show_guided_update_packages_flow(
+        self,
+        actionable_targets: tuple[tuple[str, str], ...],
+        *,
+        watcher_started: bool,
+        watcher_ready: bool,
+    ) -> None:
+        self._prime_guided_update_targets(actionable_targets)
+
+        matched_indexes = self._guided_actionable_intake_indexes()
+        matched_paths: tuple[Path, ...] = tuple(
+            self._detected_intakes[index].package_path
+            for index in matched_indexes
+        )
+        if matched_paths:
+            self._set_selected_zip_package_paths(
+                matched_paths,
+                current_path=matched_paths[0],
+            )
+            self._apply_auto_overwrite_intent_for_package_paths(matched_paths)
+            matched_message = (
+                f"{len(matched_paths)} matching watched package(s) are already queued in Packages. "
+                "Open Install when the batch looks right."
+            )
+        else:
+            self._set_selected_zip_package_paths(tuple())
+            if watcher_ready:
+                matched_message = (
+                    "Download the selected updates into the watched folder(s). "
+                    "Matching packages will appear here automatically."
+                )
+            else:
+                matched_message = (
+                    "No watched downloads path is configured yet. Add Watched downloads path 1 in Setup, "
+                    "then download the selected updates and start intake watch."
+                )
+
+        count = len(actionable_targets)
+        selected_names = self._guided_update_target_names_summary(actionable_targets)
+        package_target_label = self._packages_comparison_target_label_text()
+        if watcher_started:
+            watch_clause = "Downloads watcher started. "
+        elif watcher_ready:
+            watch_clause = "Watcher is already running. "
+        else:
+            watch_clause = ""
+        message = (
+            f"Opened {count} update page(s) for {package_target_label}: {selected_names}. "
+            f"{watch_clause}{matched_message}"
+        )
+        self._set_intake_output_text(message)
+        self._context_tabs.setCurrentWidget(self._packages_page)
+        self._set_status(message)
+
+    def _start_watch_for_guided_updates(
+        self,
+        actionable_targets: tuple[tuple[str, str], ...],
+        *,
+        busy_button: QWidget | None,
+    ) -> None:
+        watched_downloads_path_text = self._watched_downloads_path_input.text()
+        secondary_watched_downloads_path_text = (
+            self._secondary_watched_downloads_path_input.text()
+        )
+        self._run_background_operation(
+            operation_name="Downloads watcher",
+            running_label="Downloads watcher",
+            started_status="Starting intake watch for selected updates...",
+            error_title="Watch start failed",
+            task_fn=lambda: SimpleNamespace(
+                watched_downloads_path_text=watched_downloads_path_text,
+                secondary_watched_downloads_path_text=secondary_watched_downloads_path_text,
+                baseline_known_zip_paths=self._shell_service.initialize_downloads_watch(
+                    watched_downloads_path_text,
+                    secondary_watched_downloads_path_text,
+                ),
+                initial_result=self._shell_service.poll_downloads_watch(
+                    watched_downloads_path_text=watched_downloads_path_text,
+                    secondary_watched_downloads_path_text=secondary_watched_downloads_path_text,
+                    known_zip_paths=tuple(),
+                    inventory=self._current_inventory_or_empty(),
+                    nexus_api_key_text=self._nexus_api_key_input.text(),
+                    existing_config=self._config,
+                ),
+            ),
+            on_success=lambda result, _targets=actionable_targets: self._on_start_watch_for_guided_updates_completed(
+                result,
+                _targets,
+            ),
+            busy_button=busy_button,
+            busy_button_text="Starting watch...",
+        )
+
+    def _on_start_watch_for_guided_updates_completed(
+        self,
+        result: SimpleNamespace,
+        actionable_targets: tuple[tuple[str, str], ...],
+    ) -> None:
+        self._on_start_watch_completed(result)
+        self._show_guided_update_packages_flow(
+            actionable_targets,
+            watcher_started=True,
+            watcher_ready=True,
+        )
+
+    def _on_open_selected_update_pages(self) -> None:
+        actionable_targets = self._selected_actionable_update_targets()
+        if not actionable_targets:
+            message = "Select one or more actionable update rows first."
+            self._set_status(message)
+            return
+
+        page_targets = self._selected_actionable_update_page_targets()
+        if len(page_targets) != len(actionable_targets):
+            message = "One or more selected update rows do not have an openable remote page yet."
+            QMessageBox.information(self, "Missing remote link", message)
+            self._set_status(message)
+            return
+
+        for _, _, url in page_targets:
+            if not QDesktopServices.openUrl(QUrl(url)):
+                message = f"Could not open remote page: {url}"
+                QMessageBox.critical(self, "Open failed", message)
+                self._set_status(message)
+                return
+
+        if self._watch_timer.isActive():
+            self._show_guided_update_packages_flow(
+                actionable_targets,
+                watcher_started=False,
+                watcher_ready=True,
+            )
+            return
+
+        if not self._configured_watch_path_texts():
+            self._show_guided_update_packages_flow(
+                actionable_targets,
+                watcher_started=False,
+                watcher_ready=False,
+            )
+            return
+
+        self._start_watch_for_guided_updates(
+            actionable_targets,
+            busy_button=self._prepare_selected_updates_button,
+        )
 
     def _set_inventory_blocked_detail_text(self, text: str | None) -> None:
         has_text = bool(text and text.strip())
@@ -8614,6 +8834,77 @@ class MainWindow(QMainWindow):
             seen.add(normalized)
             folder_paths.append(folder_path)
         return tuple(folder_paths)
+
+    def _selected_actionable_update_targets(self) -> tuple[tuple[str, str], ...]:
+        selection_model = self._mods_table.selectionModel()
+        if selection_model is None:
+            return tuple()
+
+        selected_rows = sorted(
+            selection_model.selectedRows(0),
+            key=lambda index: index.row(),
+        )
+        actionable_targets: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for model_index in selected_rows:
+            row = model_index.row()
+            if row < 0 or self._mods_table.isRowHidden(row):
+                continue
+            name_item = self._mods_table.item(row, 0)
+            unique_id_item = self._mods_table.item(row, 1)
+            if name_item is None or unique_id_item is None:
+                continue
+            if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
+                continue
+            if name_item.data(_ROLE_UPDATE_ACTIONABLE) is not True:
+                continue
+            unique_id = unique_id_item.text().strip()
+            if not unique_id:
+                continue
+            canonical_unique_id = canonicalize_unique_id(unique_id)
+            if canonical_unique_id in seen:
+                continue
+            seen.add(canonical_unique_id)
+            mod_name = name_item.text().strip() or unique_id
+            actionable_targets.append((unique_id, mod_name))
+        return tuple(actionable_targets)
+
+    def _selected_actionable_update_page_targets(self) -> tuple[tuple[str, str, str], ...]:
+        selection_model = self._mods_table.selectionModel()
+        if selection_model is None:
+            return tuple()
+
+        selected_rows = sorted(
+            selection_model.selectedRows(0),
+            key=lambda index: index.row(),
+        )
+        actionable_targets: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for model_index in selected_rows:
+            row = model_index.row()
+            if row < 0 or self._mods_table.isRowHidden(row):
+                continue
+            name_item = self._mods_table.item(row, 0)
+            unique_id_item = self._mods_table.item(row, 1)
+            if name_item is None or unique_id_item is None:
+                continue
+            if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
+                continue
+            if name_item.data(_ROLE_UPDATE_ACTIONABLE) is not True:
+                continue
+            unique_id = unique_id_item.text().strip()
+            if not unique_id:
+                continue
+            remote_link = name_item.data(_ROLE_REMOTE_LINK)
+            if not isinstance(remote_link, str) or not remote_link.strip():
+                continue
+            canonical_unique_id = canonicalize_unique_id(unique_id)
+            if canonical_unique_id in seen:
+                continue
+            seen.add(canonical_unique_id)
+            mod_name = name_item.text().strip() or unique_id
+            actionable_targets.append((unique_id, mod_name, remote_link.strip()))
+        return tuple(actionable_targets)
 
     def _refresh_inventory_sandbox_sync_action_state(self, *_: object) -> None:
         selected_mod_folder_paths = self._selected_inventory_mod_folder_paths()
@@ -9443,12 +9734,47 @@ class MainWindow(QMainWindow):
         if self._syncing_auto_overwrite_checkbox:
             return
         self._auto_overwrite_package_path = None
+        self._auto_overwrite_package_paths = tuple()
 
     def _apply_auto_overwrite_intent_for_package(self, package_path: str) -> None:
+        self._auto_overwrite_package_paths = tuple()
         self._auto_overwrite_package_path = self._normalized_package_path_text(package_path)
         self._set_overwrite_checkbox_checked(True)
 
+    def _apply_auto_overwrite_intent_for_package_paths(
+        self,
+        package_paths: tuple[Path, ...],
+    ) -> None:
+        normalized_paths = tuple(
+            sorted(
+                {
+                    self._normalized_package_path_text(str(path))
+                    for path in package_paths
+                    if self._normalized_package_path_text(str(path))
+                }
+            )
+        )
+        self._auto_overwrite_package_path = None
+        self._auto_overwrite_package_paths = normalized_paths
+        self._set_overwrite_checkbox_checked(bool(normalized_paths))
+
     def _sync_auto_overwrite_intent_with_staged_package(self, package_path: str) -> None:
+        if self._auto_overwrite_package_paths:
+            normalized_selected_paths = tuple(
+                sorted(
+                    {
+                        self._normalized_package_path_text(str(path))
+                        for path in self._selected_zip_package_paths
+                        if self._normalized_package_path_text(str(path))
+                    }
+                )
+            )
+            if normalized_selected_paths and normalized_selected_paths == self._auto_overwrite_package_paths:
+                return
+            self._auto_overwrite_package_paths = tuple()
+            self._set_overwrite_checkbox_checked(False)
+            return
+
         if self._auto_overwrite_package_path is None:
             return
         normalized_path = self._normalized_package_path_text(package_path)
