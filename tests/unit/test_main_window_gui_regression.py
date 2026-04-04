@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QPoint, QItemSelectionModel, Qt
+from PySide6.QtCore import QPoint, QPointF, QItemSelectionModel, Qt
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -58,7 +59,11 @@ from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.package_codes import INVALID_MANIFEST_PACKAGE
 from sdvmm.domain.smapi_codes import SMAPI_UP_TO_DATE
 from sdvmm.domain.smapi_log_codes import SMAPI_LOG_NOT_FOUND, SMAPI_LOG_SOURCE_AUTO_DETECTED
-from sdvmm.domain.update_codes import MISSING_UPDATE_KEY, UNSUPPORTED_UPDATE_KEY_FORMAT
+from sdvmm.domain.update_codes import (
+    MISSING_UPDATE_KEY,
+    REMOTE_METADATA_LOOKUP_FAILED,
+    UNSUPPORTED_UPDATE_KEY_FORMAT,
+)
 from sdvmm.domain.models import ArchivedModEntry
 from sdvmm.domain.models import AppConfig
 from sdvmm.domain.models import AppUpdateStatus
@@ -70,8 +75,10 @@ from sdvmm.domain.models import GameEnvironmentStatus
 from sdvmm.domain.models import InstalledMod
 from sdvmm.domain.models import InstallOperationEntryRecord
 from sdvmm.domain.models import InstallOperationRecord
+from sdvmm.domain.models import ManifestDependency
 from sdvmm.domain.models import ModDiscoveryEntry
 from sdvmm.domain.models import ModDiscoveryResult
+from sdvmm.domain.models import ModRemovalPlan
 from sdvmm.domain.models import ModsCompareEntry
 from sdvmm.domain.models import ModsCompareResult
 from sdvmm.domain.models import ModUpdateReport
@@ -101,7 +108,10 @@ from sdvmm.domain.models import SmapiLogReport
 from sdvmm.domain.models import SmapiUpdateStatus
 from sdvmm.domain.models import ScanEntryFinding
 from sdvmm.ui.main_window import MainWindow
+from sdvmm.ui.main_window import _ComboBoxWheelGuard
 from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
+from sdvmm.ui.main_window import _ROLE_MOD_IS_GROUPED
+from sdvmm.ui.main_window import _ROLE_MOD_MEMBER_FOLDER_PATHS
 from sdvmm.ui.main_window import _ROLE_MOD_TOGGLEABLE
 from sdvmm.ui.main_window import _ROLE_MOD_UPDATE_STATUS
 from sdvmm.ui.main_window import _smapi_log_context_details
@@ -118,6 +128,46 @@ def qapp(monkeypatch: pytest.MonkeyPatch) -> QApplication:
     if app is None:
         app = QApplication([])
     return app
+
+
+class _FocusOverrideComboBox(QComboBox):
+    def __init__(self, *, has_focus: bool) -> None:
+        super().__init__()
+        self._forced_focus = has_focus
+
+    def hasFocus(self) -> bool:  # noqa: N802 - Qt naming
+        return self._forced_focus
+
+
+def _test_wheel_event() -> QWheelEvent:
+    return QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+
+
+def test_main_window_combo_box_wheel_guard_blocks_unfocused_combo(
+    qapp: QApplication,
+) -> None:
+    combo = _FocusOverrideComboBox(has_focus=False)
+    guard = _ComboBoxWheelGuard(combo)
+
+    assert guard.eventFilter(combo, _test_wheel_event()) is True
+
+
+def test_main_window_combo_box_wheel_guard_allows_focused_combo(
+    qapp: QApplication,
+) -> None:
+    combo = _FocusOverrideComboBox(has_focus=True)
+    guard = _ComboBoxWheelGuard(combo)
+
+    assert guard.eventFilter(combo, _test_wheel_event()) is False
 
 
 @pytest.fixture
@@ -2533,14 +2583,18 @@ def test_main_window_inventory_selected_row_guidance_shows_blocked_reason(
     )
     assert (
         guidance_text
-        == "Beta Mod: No remote link available. Open remote page is unavailable for this row."
+        == "Beta Mod: No update source is declared or saved for this mod yet. "
+        "Open remote page is unavailable for this row."
     )
     assert blocked_detail_label is not None
     assert blocked_detail_label.isVisible() is True
-    assert blocked_detail_label.text() == "Update source diagnostics: missing update key."
+    assert (
+        blocked_detail_label.text()
+        == "Source fix: no update source is declared or saved for this mod yet."
+    )
     assert open_remote_button is not None
     assert open_remote_button.isEnabled() is False
-    assert "No remote link available." in open_remote_button.toolTip()
+    assert "No update source is declared or saved" in open_remote_button.toolTip()
 
 
 def test_main_window_inventory_diagnostics_hides_when_blocked_reason_is_generic(
@@ -2606,7 +2660,8 @@ def test_main_window_inventory_diagnostics_shows_update_key_issue_category(
     assert blocked_detail_label.isVisible() is True
     assert (
         blocked_detail_label.text()
-        == "Update source diagnostics: unsupported update key format."
+        == "Source fix: the declared update key format is not supported yet. "
+        "Add a manual source association if you know the correct page."
     )
 
 
@@ -2642,8 +2697,119 @@ def test_main_window_inventory_diagnostics_use_typed_field_not_block_reason_text
 
     assert (
         blocked_detail_label.text()
-        == "Update source diagnostics: missing update key."
+        == "Source fix: no update source is declared or saved for this mod yet."
     )
+
+
+def test_main_window_inventory_missing_source_enables_find_source_hint_action(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    find_source_hint_button = main_window.findChild(
+        QPushButton, "inventory_find_source_hint_button"
+    )
+    assert find_source_hint_button is not None
+    assert find_source_hint_button.isEnabled() is True
+    assert "SMAPI compatibility" in find_source_hint_button.toolTip()
+
+
+def test_main_window_find_source_hint_moves_blocked_row_into_discover_and_starts_search(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    captured: dict[str, object] = {}
+
+    def fake_run_background_operation(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    find_source_hint_button = main_window.findChild(
+        QPushButton, "inventory_find_source_hint_button"
+    )
+    assert find_source_hint_button is not None
+
+    find_source_hint_button.click()
+    qapp.processEvents()
+
+    assert main_window._discovery_query_input.text() == "Sample.Beta"
+    assert main_window._context_tabs.currentWidget() is main_window._discovery_page
+    assert captured["operation_name"] == "Discovery search"
+    assert captured["started_status"] == "Searching discovery index..."
+    assert main_window._status_strip_label.text() == (
+        "Searching Discover for source hints for Sample.Beta. "
+        "SMAPI compatibility suggestions will land in Discover."
+    )
+
+
+def test_main_window_inventory_diagnostics_surface_missing_nexus_api_key(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _mods_inventory(
+        _installed_mod_for_update_ui(
+            name="Better Crafting",
+            unique_id="leclair.bettercrafting",
+            folder_name="BetterCrafting",
+        )
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="leclair.bettercrafting",
+                name="Better Crafting",
+                folder_path=Path(r"C:\Mods\BetterCrafting"),
+                installed_version="2.18.0",
+                remote_version=None,
+                state="metadata_unavailable",
+                remote_link=RemoteModLink(
+                    provider="nexus",
+                    key="11115",
+                    page_url="https://www.nexusmods.com/stardewvalley/mods/11115",
+                    metadata_url="https://api.nexusmods.com/v1/games/stardewvalley/mods/11115.json",
+                ),
+                update_source_diagnostic=REMOTE_METADATA_LOOKUP_FAILED,
+                message="[missing_api_key] nexus: Nexus metadata requires a configured API key.",
+            ),
+        )
+    )
+    blocked_detail_label = main_window.findChild(
+        QLabel, "inventory_update_blocked_detail_label"
+    )
+    assert blocked_detail_label is not None
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    row = _find_mod_row(main_window._mods_table, "Better Crafting")
+    assert row >= 0
+    status_item = main_window._mods_table.item(row, 4)
+    assert status_item is not None
+    assert status_item.text() == "Needs API key"
+    main_window._mods_table.setCurrentCell(row, 0)
+    qapp.processEvents()
+
+    assert "Nexus API key is required" in blocked_detail_label.text()
+    assert "configured Nexus API key" in main_window._inventory_update_guidance_label.text()
 
 
 def test_main_window_inventory_guidance_surfaces_persisted_local_private_intent(
@@ -2771,10 +2937,14 @@ def test_main_window_inventory_guidance_falls_back_to_typed_diagnostics_without_
 
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: No remote link available. Open remote page is unavailable for this row."
+        == "Beta Mod: No update source is declared or saved for this mod yet. "
+        "Open remote page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
-    assert blocked_detail_label.text() == "Update source diagnostics: missing update key."
+    assert (
+        blocked_detail_label.text()
+        == "Source fix: no update source is declared or saved for this mod yet."
+    )
 
 
 def test_main_window_inventory_update_source_intent_actions_are_hidden_and_inert_without_selection(
@@ -3049,10 +3219,14 @@ def test_main_window_inventory_manual_source_association_rejects_empty_required_
     )
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: No remote link available. Open remote page is unavailable for this row."
+        == "Beta Mod: No update source is declared or saved for this mod yet. "
+        "Open remote page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
-    assert blocked_detail_label.text() == "Update source diagnostics: missing update key."
+    assert (
+        blocked_detail_label.text()
+        == "Source fix: no update source is declared or saved for this mod yet."
+    )
 
 
 def test_main_window_inventory_manual_source_association_can_be_cleared_back_to_typed_diagnostics(
@@ -3099,10 +3273,14 @@ def test_main_window_inventory_manual_source_association_can_be_cleared_back_to_
     assert main_window._shell_service.get_update_source_intent("Sample.Beta") is None
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: No remote link available. Open remote page is unavailable for this row."
+        == "Beta Mod: No update source is declared or saved for this mod yet. "
+        "Open remote page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
-    assert blocked_detail_label.text() == "Update source diagnostics: missing update key."
+    assert (
+        blocked_detail_label.text()
+        == "Source fix: no update source is declared or saved for this mod yet."
+    )
     assert clear_source_intent_button.isEnabled() is False
 
 
@@ -3138,10 +3316,14 @@ def test_main_window_inventory_clearing_saved_source_intent_restores_typed_diagn
     assert main_window._shell_service.get_update_source_intent("Sample.Beta") is None
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: No remote link available. Open remote page is unavailable for this row."
+        == "Beta Mod: No update source is declared or saved for this mod yet. "
+        "Open remote page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
-    assert blocked_detail_label.text() == "Update source diagnostics: missing update key."
+    assert (
+        blocked_detail_label.text()
+        == "Source fix: no update source is declared or saved for this mod yet."
+    )
     assert clear_source_intent_button.isEnabled() is False
 
 
@@ -4112,19 +4294,24 @@ def test_main_window_real_container_rows_share_profile_toggle_ownership(
     main_window._render_inventory(inventory)
     qapp.processEvents()
 
-    component_b_row = _find_mod_row(main_window._mods_table, "Component B")
-    assert component_b_row >= 0
-    component_b_item = main_window._mods_table.item(component_b_row, 0)
-    assert component_b_item is not None
-    assert component_b_item.data(_ROLE_MOD_TOGGLEABLE) is True
+    assert main_window._mods_table.rowCount() == 1
+    grouped_row_item = main_window._mods_table.item(0, 0)
+    assert grouped_row_item is not None
+    assert grouped_row_item.text() == "Component A (+1 more)"
+    assert grouped_row_item.data(_ROLE_MOD_TOGGLEABLE) is True
+    assert grouped_row_item.data(_ROLE_MOD_IS_GROUPED) is True
+    assert grouped_row_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(component_a_path),
+        str(component_b_path),
+    )
 
-    component_b_item.setCheckState(Qt.CheckState.Unchecked)
+    grouped_row_item.setCheckState(Qt.CheckState.Unchecked)
     qapp.processEvents()
 
     toggle_kwargs = captured.get("toggle_kwargs")
     assert captured.get("operation_names") == ["Real profile mod toggle"]
     assert isinstance(toggle_kwargs, dict)
-    assert toggle_kwargs["mod_folder_path_text"] == str(component_b_path)
+    assert toggle_kwargs["mod_folder_path_text"] == str(component_a_path)
     assert toggle_kwargs["enabled"] is False
 
 
@@ -8730,6 +8917,520 @@ def test_main_window_background_operation_failure_uses_detailed_output_when_avai
     assert main_window._findings_box.toPlainText() == technical_detail
 
 
+def test_main_window_remove_selected_mod_confirmation_lists_grouped_container_members(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    component_a_path = real_mods_root / "PackFolder" / "ComponentA"
+    component_b_path = real_mods_root / "PackFolder" / "ComponentB"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.ComponentA",
+                name="Component A",
+                version="1.0.0",
+                folder_path=component_a_path,
+                manifest_path=component_a_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+            InstalledMod(
+                unique_id="Sample.ComponentB",
+                name="Component B",
+                version="1.0.0",
+                folder_path=component_b_path,
+                manifest_path=component_b_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind=MULTI_MOD_CONTAINER,
+                entry_path=real_mods_root / "PackFolder",
+                mod_paths=(component_a_path, component_b_path),
+                message="Container with 2 nested mods discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    main_window._render_inventory(inventory)
+    assert main_window._mods_table.rowCount() == 1
+    main_window._mods_table.setCurrentCell(0, 0)
+    qapp.processEvents()
+
+    plan = ModRemovalPlan(
+        destination_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        mods_path=real_mods_root,
+        archive_path=tmp_path / "RealArchive",
+        target_mod_path=real_mods_root / "PackFolder",
+        included_mod_paths=(component_a_path, component_b_path),
+    )
+    captured: dict[str, str] = {}
+
+    monkeypatch.setattr(main_window._shell_service, "build_mod_removal_plan", lambda **_: plan)
+
+    def fake_question(parent: object, title: str, text: str) -> QMessageBox.StandardButton:
+        captured["title"] = title
+        captured["text"] = text
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+
+    main_window._on_remove_selected_mod()
+
+    assert captured["title"] == "Confirm removal to archive"
+    assert "Target folder: " + str(real_mods_root / "PackFolder") in captured["text"]
+    assert "Included installed folders:" in captured["text"]
+    assert str(component_a_path) in captured["text"]
+    assert str(component_b_path) in captured["text"]
+    assert main_window._status_strip_label.text() == "Mod removal cancelled."
+
+
+def test_main_window_selected_inventory_mod_folder_paths_expand_grouped_row_members(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    component_a_path = real_mods_root / "PackFolder" / "ComponentA"
+    component_b_path = real_mods_root / "PackFolder" / "ComponentB"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.ComponentA",
+                name="Component A",
+                version="1.0.0",
+                folder_path=component_a_path,
+                manifest_path=component_a_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+            InstalledMod(
+                unique_id="Sample.ComponentB",
+                name="Component B",
+                version="1.0.0",
+                folder_path=component_b_path,
+                manifest_path=component_b_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind=MULTI_MOD_CONTAINER,
+                entry_path=real_mods_root / "PackFolder",
+                mod_paths=(component_a_path, component_b_path),
+                message="Container with 2 nested mods discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._mods_table.rowCount() == 1
+    grouped_item = main_window._mods_table.item(0, 0)
+    assert grouped_item is not None
+    assert grouped_item.text() == "Component A (+1 more)"
+    assert grouped_item.data(_ROLE_MOD_IS_GROUPED) is True
+    assert grouped_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(component_a_path),
+        str(component_b_path),
+    )
+
+    main_window._mods_table.setCurrentCell(0, 0)
+    qapp.processEvents()
+
+    assert main_window._selected_inventory_mod_folder_paths() == (
+        str(component_a_path),
+        str(component_b_path),
+    )
+
+
+def test_main_window_inventory_type_column_shows_player_facing_row_kinds(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    dependency_path = real_mods_root / "AedenthornCore"
+    content_path = real_mods_root / "[CP] Groceries"
+    built_in_path = real_mods_root / "SaveBackup"
+    disabled_path = real_mods_root / "SharedMods" / "MissingFromProfile"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Aedenthorn.Core",
+                name="Aedenthorn Core",
+                version="1.0.0",
+                folder_path=dependency_path,
+                manifest_path=dependency_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+            InstalledMod(
+                unique_id="cupoflifenoodles.Groceries",
+                name="Groceries",
+                version="1.0.0",
+                folder_path=content_path,
+                manifest_path=content_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="Aedenthorn.Core",
+                        required=False,
+                    ),
+                ),
+            ),
+            InstalledMod(
+                unique_id="SMAPI.SaveBackup",
+                name="Save Backup",
+                version="4.5.2",
+                folder_path=built_in_path,
+                manifest_path=built_in_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.MissingFromProfile",
+                name="Missing From Profile",
+                version="1.0.0",
+                folder_path=disabled_path,
+                manifest_path=disabled_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._mods_table.horizontalHeaderItem(5).text() == "Type"
+    groceries_row = _find_mod_row(main_window._mods_table, "Groceries")
+    dependency_row = _find_mod_row(main_window._mods_table, "Aedenthorn Core")
+    built_in_row = _find_mod_row(main_window._mods_table, "Save Backup")
+    disabled_row = _find_mod_row(main_window._mods_table, "Missing From Profile")
+    assert groceries_row >= 0
+    assert dependency_row >= 0
+    assert built_in_row >= 0
+    assert disabled_row >= 0
+
+    assert main_window._mods_table.item(groceries_row, 5).text() == "Content pack"
+    assert main_window._mods_table.item(dependency_row, 5).text() == "Dependency"
+    assert main_window._mods_table.item(built_in_row, 5).text() == "Built-in"
+    assert main_window._mods_table.item(disabled_row, 5).text() == "Not in profile"
+    assert str(content_path) in main_window._mods_table.item(groceries_row, 5).toolTip()
+
+
+def test_main_window_groups_top_level_paired_components_with_shared_update_key(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    primary_path = real_mods_root / "ZebrusLawnRobot"
+    content_path = real_mods_root / "[CP]ZebrusLawnRobot"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Zebrus.ZebrusLawnRobot",
+                name="Zebrus Lawn Robot",
+                version="1.0.0",
+                folder_path=primary_path,
+                manifest_path=primary_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44383",),
+            ),
+            InstalledMod(
+                unique_id="Zebrus.ZebrusLawnRobotCP",
+                name="Zebrus Lawn Robot - Content",
+                version="1.0.0",
+                folder_path=content_path,
+                manifest_path=content_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Zebrus.ZebrusLawnRobot",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44383",),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=primary_path,
+                mod_paths=(primary_path,),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=content_path,
+                mod_paths=(content_path,),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._mods_table.rowCount() == 1
+    grouped_item = main_window._mods_table.item(0, 0)
+    type_item = main_window._mods_table.item(0, 5)
+    assert grouped_item is not None
+    assert type_item is not None
+    assert grouped_item.text() == "Zebrus Lawn Robot (+1 more)"
+    assert grouped_item.data(_ROLE_MOD_IS_GROUPED) is True
+    assert grouped_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(primary_path),
+        str(content_path),
+    )
+    assert type_item.text() == "Grouped mod"
+
+
+def test_main_window_groups_top_level_paired_components_with_single_sided_update_key(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    code_path = real_mods_root / "Ultimate Coop and Barn"
+    content_path = real_mods_root / "[CP] Ultimate Coop and Barn"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="bobkalonger.UltCB_code",
+                name="Ultimate Coop and Barn",
+                version="1.6.14",
+                folder_path=code_path,
+                manifest_path=code_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:-1",),
+            ),
+            InstalledMod(
+                unique_id="bobkalonger.ultimatecoopnbarnCP",
+                name="Ultimate Coop and Barn",
+                version="1.6.14",
+                folder_path=content_path,
+                manifest_path=content_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="bobkalonger.UltCB_code",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44285",),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=code_path,
+                mod_paths=(code_path,),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=content_path,
+                mod_paths=(content_path,),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._mods_table.rowCount() == 1
+    grouped_item = main_window._mods_table.item(0, 0)
+    type_item = main_window._mods_table.item(0, 5)
+    assert grouped_item is not None
+    assert type_item is not None
+    assert grouped_item.text() == "Ultimate Coop and Barn (+1 more)"
+    assert grouped_item.data(_ROLE_MOD_IS_GROUPED) is True
+    assert grouped_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(code_path),
+        str(content_path),
+    )
+    assert type_item.text() == "Grouped mod"
+
+
+def test_main_window_grouped_row_rollback_reports_not_available(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    component_a_path = real_mods_root / "PackFolder" / "ComponentA"
+    component_b_path = real_mods_root / "PackFolder" / "ComponentB"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.ComponentA",
+                name="Component A",
+                version="1.0.0",
+                folder_path=component_a_path,
+                manifest_path=component_a_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+            InstalledMod(
+                unique_id="Sample.ComponentB",
+                name="Component B",
+                version="1.0.0",
+                folder_path=component_b_path,
+                manifest_path=component_b_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind=MULTI_MOD_CONTAINER,
+                entry_path=real_mods_root / "PackFolder",
+                mod_paths=(component_a_path, component_b_path),
+                message="Container with 2 nested mods discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    main_window._mods_table.setCurrentCell(0, 0)
+    qapp.processEvents()
+
+    captured: dict[str, str] = {}
+
+    def fake_information(parent: object, title: str, text: str) -> QMessageBox.StandardButton:
+        captured["title"] = title
+        captured["text"] = text
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.information", fake_information)
+
+    main_window._on_rollback_selected_mod()
+
+    assert captured["title"] == "Grouped rollback not available"
+    assert "not available yet for grouped multi-folder rows" in captured["text"]
+    assert main_window._status_strip_label.text() == captured["text"]
+
+
 def test_main_window_recovery_selector_labels_are_human_readable_and_newest_first(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -10531,6 +11232,94 @@ def test_main_window_stage_update_button_only_appears_for_update_like_detected_p
     assert main_window._stage_update_intake_button.isEnabled() is True
 
 
+def test_main_window_stage_update_button_appears_for_checked_update_batch(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    update_a = replace(
+        _intake_result(
+            "UpdateA.zip",
+            "update_replace_candidate",
+            "Alpha Mod",
+            "Sample.Alpha",
+        ),
+        matched_installed_unique_ids=("Sample.Alpha",),
+    )
+    update_b = replace(
+        _intake_result(
+            "UpdateB.zip",
+            "update_replace_candidate",
+            "Beta Mod",
+            "Sample.Beta",
+        ),
+        matched_installed_unique_ids=("Sample.Beta",),
+    )
+
+    main_window._detected_intakes = (update_a, update_b)
+    main_window._intake_correlations = (
+        _intake_correlation(
+            update_a,
+            next_step="Open as update.",
+            matched_update_available_unique_ids=("Sample.Alpha",),
+        ),
+        _intake_correlation(
+            update_b,
+            next_step="Open as update.",
+            matched_update_available_unique_ids=("Sample.Beta",),
+        ),
+    )
+    main_window._set_selected_zip_package_paths(
+        (update_a.package_path, update_b.package_path),
+        current_path=update_a.package_path,
+    )
+    qapp.processEvents()
+
+    assert main_window._stage_update_intake_button.isHidden() is False
+    assert main_window._stage_update_intake_button.isEnabled() is True
+    assert "checked watched packages as updates" in main_window._stage_update_intake_button.toolTip()
+
+
+def test_main_window_stage_update_button_stays_hidden_for_mixed_checked_batch(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    update_intake = replace(
+        _intake_result(
+            "UpdatePack.zip",
+            "update_replace_candidate",
+            "Alpha Mod",
+            "Sample.Alpha",
+        ),
+        matched_installed_unique_ids=("Sample.Alpha",),
+    )
+    fresh_intake = _intake_result(
+        "FreshPack.zip",
+        "new_install_candidate",
+        "Fresh Mod",
+        "Sample.Fresh",
+    )
+
+    main_window._detected_intakes = (update_intake, fresh_intake)
+    main_window._intake_correlations = (
+        _intake_correlation(
+            update_intake,
+            next_step="Open as update.",
+            matched_update_available_unique_ids=("Sample.Alpha",),
+        ),
+        _intake_correlation(
+            fresh_intake,
+            next_step="Stage for Install / Update review.",
+        ),
+    )
+    main_window._set_selected_zip_package_paths(
+        (update_intake.package_path, fresh_intake.package_path),
+        current_path=update_intake.package_path,
+    )
+    qapp.processEvents()
+
+    assert main_window._stage_update_intake_button.isHidden() is True
+
+
 def test_main_window_packages_compare_target_switches_truthful_update_state(
     main_window: MainWindow,
     qapp: QApplication,
@@ -10802,6 +11591,66 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
     assert captured["allow_overwrite"] is True
     assert main_window._pending_install_plan is not None
     assert main_window._pending_install_plan.entries[0].action == OVERWRITE_WITH_ARCHIVE
+
+
+def test_main_window_stage_update_for_checked_batch_carries_archive_replace_intent(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    update_a = replace(
+        _intake_result(
+            "UpdateA.zip",
+            "update_replace_candidate",
+            "Alpha Mod",
+            "Sample.Alpha",
+        ),
+        matched_installed_unique_ids=("Sample.Alpha",),
+    )
+    update_b = replace(
+        _intake_result(
+            "UpdateB.zip",
+            "update_replace_candidate",
+            "Beta Mod",
+            "Sample.Beta",
+        ),
+        matched_installed_unique_ids=("Sample.Beta",),
+    )
+    main_window._detected_intakes = (update_a, update_b)
+    main_window._intake_correlations = (
+        _intake_correlation(
+            update_a,
+            next_step="Open as update.",
+            matched_update_available_unique_ids=("Sample.Alpha",),
+        ),
+        _intake_correlation(
+            update_b,
+            next_step="Open as update.",
+            matched_update_available_unique_ids=("Sample.Beta",),
+        ),
+    )
+    main_window._set_selected_zip_package_paths(
+        (update_a.package_path, update_b.package_path),
+        current_path=update_a.package_path,
+    )
+    qapp.processEvents()
+
+    main_window._on_stage_selected_intake_update()
+    qapp.processEvents()
+
+    assert main_window._selected_zip_package_paths == (
+        update_a.package_path,
+        update_b.package_path,
+    )
+    assert main_window._overwrite_checkbox.isChecked() is True
+    assert main_window._auto_overwrite_package_paths == tuple(
+        sorted(
+            (
+                str(update_a.package_path),
+                str(update_b.package_path),
+            )
+        )
+    )
+    assert "2 watched update package(s)" in main_window._packages_output_box.toPlainText()
 
 
 def test_main_window_open_selected_update_pages_guides_packages_and_stages_detected_matches(

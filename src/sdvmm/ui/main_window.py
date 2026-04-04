@@ -12,6 +12,8 @@ from pathlib import Path
 import time
 import tomllib
 
+from PySide6.QtCore import QEvent
+from PySide6.QtCore import QObject
 from PySide6.QtCore import QTimer
 from PySide6.QtCore import QThreadPool
 from PySide6.QtCore import QUrl
@@ -25,6 +27,7 @@ from PySide6.QtGui import QPainter
 from PySide6.QtGui import QImage
 from PySide6.QtGui import QPalette
 from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -128,6 +131,7 @@ from sdvmm.domain.models import (
     InstallOperationRecord,
     InstallRecoveryExecutionResult,
     InstallRecoveryInspectionResult,
+    InstalledMod,
     ModDiscoveryResult,
     ModsCompareResult,
     ArchiveRestoreResult,
@@ -151,6 +155,7 @@ from sdvmm.domain.models import (
     SmapiUpdateStatus,
     SandboxInstallPlan,
 )
+from sdvmm.domain.scan_codes import DIRECT_MOD, MULTI_MOD_CONTAINER, NESTED_MOD_CONTAINER
 from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.domain.dependency_codes import SATISFIED
 from sdvmm.domain.smapi_codes import (
@@ -210,6 +215,8 @@ _ROLE_COMPARE_UNIQUE_ID = int(Qt.ItemDataRole.UserRole) + 10
 _ROLE_MOD_IS_ENABLED = int(Qt.ItemDataRole.UserRole) + 11
 _ROLE_MOD_TOGGLEABLE = int(Qt.ItemDataRole.UserRole) + 12
 _ROLE_MOD_TOGGLE_REASON = int(Qt.ItemDataRole.UserRole) + 13
+_ROLE_MOD_MEMBER_FOLDER_PATHS = int(Qt.ItemDataRole.UserRole) + 14
+_ROLE_MOD_IS_GROUPED = int(Qt.ItemDataRole.UserRole) + 15
 
 _NO_PLAN_REVIEW_SUMMARY_TEXT = (
     "Install summary: no plan yet. Click Plan install to inspect changes."
@@ -252,6 +259,522 @@ class _RestoreImportPlanningUiPayload:
     planning_text: str
     combined_text: str
     summary_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _InventoryRowEntry:
+    display_name: str
+    display_unique_id: str
+    display_version: str
+    primary_mod: InstalledMod
+    member_mods: tuple[InstalledMod, ...]
+    member_folder_paths: tuple[Path, ...]
+    is_enabled: bool
+    folder_label: str
+    grouped: bool
+    has_multiple_unique_ids: bool
+    order_index: int
+
+
+class _ComboBoxWheelGuard(QObject):
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            isinstance(watched, QComboBox)
+            and event.type() == QEvent.Type.Wheel
+            and isinstance(event, QWheelEvent)
+            and not watched.hasFocus()
+        ):
+            event.ignore()
+            return True
+        return super().eventFilter(watched, event)
+
+
+def _inventory_path_lookup_key(path: Path) -> str:
+    return os.path.abspath(os.path.normpath(str(path.expanduser()))).casefold()
+
+
+def _inventory_group_member_sort_key(mod: InstalledMod) -> tuple[int, str, str]:
+    prefers_primary = 1 if mod.name.startswith("[") or mod.folder_path.name.startswith("[") else 0
+    return (prefers_primary, mod.name.casefold(), str(mod.folder_path).casefold())
+
+
+def _inventory_group_base_name(mod: InstalledMod) -> str:
+    name = mod.name.strip()
+    suffix_start = name.rfind(" (")
+    if suffix_start > 0 and name.endswith(")"):
+        return name[:suffix_start].strip()
+    return name
+
+
+def _inventory_group_display_name(member_mods: tuple[InstalledMod, ...]) -> str:
+    primary_mod = member_mods[0]
+    base_names = {_inventory_group_base_name(mod) for mod in member_mods if mod.name.strip()}
+    if len(base_names) == 1:
+        primary_name = next(iter(base_names))
+    else:
+        primary_name = primary_mod.name
+    if len(member_mods) == 1:
+        return primary_name
+    return f"{primary_name} (+{len(member_mods) - 1} more)"
+
+
+def _inventory_group_folder_label(*, entry_path: Path | None, member_folder_paths: tuple[Path, ...]) -> str:
+    if len(member_folder_paths) == 1:
+        return member_folder_paths[0].name
+    if entry_path is not None:
+        return f"{entry_path.name} ({len(member_folder_paths)} folders)"
+    return f"{member_folder_paths[0].name} (+{len(member_folder_paths) - 1} linked folder)"
+
+
+def _inventory_group_has_multiple_unique_ids(member_mods: tuple[InstalledMod, ...]) -> bool:
+    unique_ids = {
+        canonicalize_unique_id(mod.unique_id) or mod.unique_id.casefold()
+        for mod in member_mods
+        if mod.unique_id.strip()
+    }
+    return len(unique_ids) > 1
+
+
+def _inventory_normalized_update_keys(mod: InstalledMod) -> set[str]:
+    return {key.strip().casefold() for key in mod.update_keys if key.strip()}
+
+
+def _inventory_effective_update_keys(mod: InstalledMod) -> set[str]:
+    return {
+        key
+        for key in _inventory_normalized_update_keys(mod)
+        if key != "nexus:-1"
+    }
+
+
+def _inventory_has_direct_dependency_link(left: InstalledMod, right: InstalledMod) -> bool:
+    left_id = canonicalize_unique_id(left.unique_id)
+    right_id = canonicalize_unique_id(right.unique_id)
+    if not left_id or not right_id:
+        return False
+    left_deps = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in left.dependencies
+        if dependency.unique_id.strip()
+    }
+    right_deps = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in right.dependencies
+        if dependency.unique_id.strip()
+    }
+    return right_id in left_deps or left_id in right_deps
+
+
+def _inventory_depended_on_unique_ids(inventory: ModsInventory) -> set[str]:
+    depended_on: set[str] = set()
+    for mod in inventory.mods + inventory.disabled_mods:
+        for dependency in mod.dependencies:
+            dependency_id = canonicalize_unique_id(dependency.unique_id)
+            if dependency_id:
+                depended_on.add(dependency_id)
+    return depended_on
+
+
+def _inventory_is_content_pack(mod: InstalledMod) -> bool:
+    if mod.name.startswith("[") or mod.folder_path.name.startswith("["):
+        return True
+    dependency_ids = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in mod.dependencies
+        if dependency.unique_id.strip()
+    }
+    return canonicalize_unique_id("Pathoschild.ContentPatcher") in dependency_ids
+
+
+def _inventory_row_type_label(
+    *,
+    row_entry: _InventoryRowEntry,
+    current_target: str,
+    depended_on_unique_ids: set[str],
+) -> str:
+    primary_mod = row_entry.primary_mod
+    folder_name = primary_mod.folder_path.name
+    primary_unique_id = canonicalize_unique_id(primary_mod.unique_id)
+
+    if not row_entry.is_enabled:
+        if folder_name.startswith("."):
+            return "Disabled mod"
+        if current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
+            return "Not in profile"
+    if row_entry.grouped:
+        return "Grouped mod"
+    if primary_mod.unique_id.startswith("SMAPI."):
+        return "Built-in"
+    if _inventory_is_content_pack(primary_mod):
+        return "Content pack"
+    if primary_unique_id and primary_unique_id in depended_on_unique_ids:
+        return "Dependency"
+    return "Mod"
+
+
+def _inventory_row_type_tooltip(
+    *,
+    row_entry: _InventoryRowEntry,
+    type_label: str,
+) -> str:
+    lines = [f"Type: {type_label}"]
+    if type_label == "Grouped mod":
+        lines.append("This row represents multiple linked installed folders.")
+    elif type_label == "Content pack":
+        lines.append("This row looks like a content-pack style mod component.")
+    elif type_label == "Dependency":
+        lines.append("Other installed mods currently depend on this row.")
+    elif type_label == "Built-in":
+        lines.append("This row is bundled with SMAPI instead of a normal downloaded mod.")
+    elif type_label == "Not in profile":
+        lines.append("This mod exists in Default but is not part of the active profile.")
+    elif type_label == "Disabled mod":
+        lines.append("This row is currently disabled in the scanned Mods path.")
+
+    if len(row_entry.member_folder_paths) == 1:
+        lines.append(f"Installed folder: {row_entry.member_folder_paths[0]}")
+    else:
+        lines.append("Installed folders:")
+        lines.extend(f"- {path}" for path in row_entry.member_folder_paths)
+    return "\n".join(lines)
+
+
+def _sanitize_update_status_message(message: str | None) -> str | None:
+    if message is None:
+        return None
+    sanitized = message.strip()
+    if sanitized.startswith("[") and "]" in sanitized:
+        _, _, remainder = sanitized.partition("]")
+        sanitized = remainder.strip()
+    return sanitized or None
+
+
+def _update_status_requires_api_key(status: ModUpdateStatus) -> bool:
+    if status.state != "metadata_unavailable":
+        return False
+    message = _sanitize_update_status_message(status.message)
+    if not message:
+        return False
+    lowered = message.casefold()
+    return "api key" in lowered and "nexus" in lowered
+
+
+def _update_status_display_label(status: ModUpdateStatus) -> str:
+    if status.state == "update_available":
+        return "Update available"
+    if status.state == "up_to_date":
+        return "Up to date"
+    if status.state == "no_remote_link":
+        if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
+            return "Local/private"
+        if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
+            return "Source key issue"
+        if status.update_source_diagnostic == NO_PROVIDER_MAPPING:
+            return "Unsupported source"
+        return "Missing source"
+    if status.state == "metadata_unavailable":
+        if _update_status_requires_api_key(status):
+            return "Needs API key"
+        if status.update_source_diagnostic == METADATA_SOURCE_ISSUE:
+            return "Source issue"
+        if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
+            return "Source key issue"
+        return "Lookup failed"
+    return status.state.replace("_", " ").title()
+
+
+def _blocked_reason_for_update_status(status: ModUpdateStatus) -> str:
+    sanitized_message = _sanitize_update_status_message(status.message)
+    if status.state == "up_to_date":
+        return "Up to date; no update action required."
+    if status.state == "no_remote_link":
+        if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
+            return (
+                "This row is marked local/private and is intentionally excluded from "
+                "remote update tracking."
+            )
+        if status.update_source_diagnostic == MISSING_UPDATE_KEY:
+            return "No update source is declared or saved for this mod yet."
+        if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
+            return "The declared update key format is not supported yet."
+        if status.update_source_diagnostic == NO_PROVIDER_MAPPING:
+            return "The declared update source provider is not mapped yet."
+        return sanitized_message or "No remote link is available for this mod."
+    if status.state == "metadata_unavailable":
+        if _update_status_requires_api_key(status):
+            return (
+                "A configured Nexus API key is required before Cinderleaf can check "
+                "versions for this source."
+            )
+        if status.update_source_diagnostic == METADATA_SOURCE_ISSUE:
+            return "The saved or declared source metadata is not usable yet."
+        return sanitized_message or "Metadata unavailable for this mod."
+    return sanitized_message or f"State '{status.state}' is not actionable."
+
+
+def _diagnostics_text_for_update_status(status: ModUpdateStatus | None) -> str | None:
+    if status is None:
+        return None
+    if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
+        return "Source fix: this row is intentionally marked local/private."
+    if status.update_source_diagnostic == MISSING_UPDATE_KEY:
+        return "Source fix: no update source is declared or saved for this mod yet."
+    if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
+        return (
+            "Source fix: the declared update key format is not supported yet. "
+            "Add a manual source association if you know the correct page."
+        )
+    if status.update_source_diagnostic == NO_PROVIDER_MAPPING:
+        return (
+            "Source fix: the declared provider is not mapped yet. "
+            "Add a manual source association instead."
+        )
+    if _update_status_requires_api_key(status):
+        return (
+            "Source fix: Nexus source is known, but a Nexus API key is required "
+            "before version checks can run."
+        )
+    if status.update_source_diagnostic == REMOTE_METADATA_LOOKUP_FAILED:
+        return (
+            "Source fix: remote metadata lookup failed. Check the source key, "
+            "provider availability, or credentials."
+        )
+    if status.update_source_diagnostic == METADATA_SOURCE_ISSUE:
+        return "Source fix: the saved or declared source metadata is not usable yet."
+    return None
+
+
+def _supports_discovery_source_hint(status: ModUpdateStatus) -> bool:
+    if status.state not in {"no_remote_link", "metadata_unavailable"}:
+        return False
+    if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
+        return False
+    return True
+
+
+def _inventory_row_status_candidates(
+    *,
+    name_item: QTableWidgetItem,
+    by_folder_text: dict[str, ModUpdateStatus],
+) -> tuple[ModUpdateStatus, ...]:
+    member_folder_paths = name_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS)
+    if isinstance(member_folder_paths, tuple):
+        candidate_paths = tuple(
+            path for path in member_folder_paths if isinstance(path, str) and path.strip()
+        )
+    else:
+        folder_path_text = name_item.data(_ROLE_MOD_FOLDER_PATH)
+        candidate_paths = (
+            (folder_path_text,)
+            if isinstance(folder_path_text, str) and folder_path_text.strip()
+            else tuple()
+        )
+    statuses: list[ModUpdateStatus] = []
+    seen: set[str] = set()
+    for folder_path in candidate_paths:
+        status = by_folder_text.get(folder_path)
+        if status is None:
+            continue
+        status_key = str(status.folder_path).casefold()
+        if status_key in seen:
+            continue
+        seen.add(status_key)
+        statuses.append(status)
+    return tuple(statuses)
+
+
+def _preferred_inventory_row_status(statuses: tuple[ModUpdateStatus, ...]) -> ModUpdateStatus | None:
+    if not statuses:
+        return None
+
+    def priority(status: ModUpdateStatus) -> tuple[int, int, str]:
+        if status.state == "update_available":
+            rank = 0
+        elif status.state == "up_to_date":
+            rank = 1
+        elif status.state == "metadata_unavailable":
+            rank = 2
+        elif status.state == "no_remote_link":
+            rank = 3
+        else:
+            rank = 4
+        has_remote_link = 0 if status.remote_link is not None else 1
+        return (rank, has_remote_link, str(status.folder_path).casefold())
+
+    return min(statuses, key=priority)
+
+
+def _build_inventory_row_entries(
+    *,
+    inventory: ModsInventory,
+    root: Path | None,
+) -> tuple[_InventoryRowEntry, ...]:
+    indexed_rows = tuple(
+        (index, mod, True) for index, mod in enumerate(inventory.mods)
+    ) + tuple(
+        (len(inventory.mods) + index, mod, False)
+        for index, mod in enumerate(inventory.disabled_mods)
+    )
+    row_by_path: dict[str, tuple[int, InstalledMod, bool]] = {
+        _inventory_path_lookup_key(mod.folder_path): (index, mod, enabled)
+        for index, mod, enabled in indexed_rows
+    }
+    grouped_rows: list[_InventoryRowEntry] = []
+    consumed_mod_paths: set[str] = set()
+    expected_root_key = _inventory_path_lookup_key(root) if root is not None else None
+
+    if expected_root_key is not None:
+        for finding in inventory.scan_entry_findings:
+            if finding.kind not in {DIRECT_MOD, NESTED_MOD_CONTAINER, MULTI_MOD_CONTAINER}:
+                continue
+            entry_path = Path(os.path.abspath(os.path.normpath(str(finding.entry_path.expanduser()))))
+            if _inventory_path_lookup_key(entry_path.parent) != expected_root_key:
+                continue
+            matched_rows: list[tuple[int, InstalledMod, bool]] = []
+            for mod_path in finding.mod_paths:
+                row = row_by_path.get(_inventory_path_lookup_key(mod_path))
+                if row is None:
+                    continue
+                matched_rows.append(row)
+            if not matched_rows:
+                continue
+            if finding.kind == DIRECT_MOD and len(matched_rows) == 1:
+                continue
+
+            member_mods = tuple(
+                mod
+                for _, mod, _ in sorted(
+                    matched_rows,
+                    key=lambda entry: _inventory_group_member_sort_key(entry[1]),
+                )
+            )
+            primary_mod = member_mods[0]
+            member_folder_paths = tuple(mod.folder_path for mod in member_mods)
+            grouped = len(member_mods) > 1
+            grouped_rows.append(
+                _InventoryRowEntry(
+                    display_name=_inventory_group_display_name(member_mods),
+                    display_unique_id=primary_mod.unique_id,
+                    display_version=primary_mod.version,
+                    primary_mod=primary_mod,
+                    member_mods=member_mods,
+                    member_folder_paths=member_folder_paths,
+                    is_enabled=any(enabled for _, _, enabled in matched_rows),
+                    folder_label=_inventory_group_folder_label(
+                        entry_path=entry_path,
+                        member_folder_paths=member_folder_paths,
+                    ),
+                    grouped=grouped,
+                    has_multiple_unique_ids=_inventory_group_has_multiple_unique_ids(member_mods),
+                    order_index=min(index for index, _, _ in matched_rows),
+                )
+            )
+            consumed_mod_paths.update(_inventory_path_lookup_key(path) for path in member_folder_paths)
+
+    if expected_root_key is not None:
+        top_level_candidates = [
+            (index, mod, enabled)
+            for index, mod, enabled in indexed_rows
+            if _inventory_path_lookup_key(mod.folder_path) not in consumed_mod_paths
+            and _inventory_path_lookup_key(mod.folder_path.parent) == expected_root_key
+        ]
+        adjacency: dict[str, set[str]] = {}
+        candidate_rows_by_key: dict[str, tuple[int, InstalledMod, bool]] = {}
+        for candidate in top_level_candidates:
+            index, mod, enabled = candidate
+            mod_key = _inventory_path_lookup_key(mod.folder_path)
+            candidate_rows_by_key[mod_key] = (index, mod, enabled)
+            adjacency.setdefault(mod_key, set())
+        candidate_keys = tuple(candidate_rows_by_key.keys())
+        for index, left_key in enumerate(candidate_keys):
+            _, left_mod, _ = candidate_rows_by_key[left_key]
+            left_update_keys = _inventory_effective_update_keys(left_mod)
+            for right_key in candidate_keys[index + 1 :]:
+                _, right_mod, _ = candidate_rows_by_key[right_key]
+                if not _inventory_has_direct_dependency_link(left_mod, right_mod):
+                    continue
+                right_update_keys = _inventory_effective_update_keys(right_mod)
+                has_shared_update_key = bool(left_update_keys & right_update_keys)
+                has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
+                shares_base_name = (
+                    _inventory_group_base_name(left_mod).casefold()
+                    == _inventory_group_base_name(right_mod).casefold()
+                )
+                if not (
+                    has_shared_update_key
+                    or (has_single_sided_update_key and shares_base_name)
+                ):
+                    continue
+                adjacency[left_key].add(right_key)
+                adjacency[right_key].add(left_key)
+
+        visited: set[str] = set()
+        for mod_key in candidate_keys:
+            if mod_key in visited:
+                continue
+            stack = [mod_key]
+            component: list[str] = []
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                component.append(current)
+                stack.extend(adjacency.get(current, ()))
+            if len(component) <= 1:
+                continue
+
+            matched_rows = [candidate_rows_by_key[key] for key in component]
+            member_mods = tuple(
+                mod
+                for _, mod, _ in sorted(
+                    matched_rows,
+                    key=lambda entry: _inventory_group_member_sort_key(entry[1]),
+                )
+            )
+            primary_mod = member_mods[0]
+            member_folder_paths = tuple(mod.folder_path for mod in member_mods)
+            grouped_rows.append(
+                _InventoryRowEntry(
+                    display_name=_inventory_group_display_name(member_mods),
+                    display_unique_id=primary_mod.unique_id,
+                    display_version=primary_mod.version,
+                    primary_mod=primary_mod,
+                    member_mods=member_mods,
+                    member_folder_paths=member_folder_paths,
+                    is_enabled=any(enabled for _, _, enabled in matched_rows),
+                    folder_label=_inventory_group_folder_label(
+                        entry_path=None,
+                        member_folder_paths=member_folder_paths,
+                    ),
+                    grouped=True,
+                    has_multiple_unique_ids=_inventory_group_has_multiple_unique_ids(member_mods),
+                    order_index=min(index for index, _, _ in matched_rows),
+                )
+            )
+            consumed_mod_paths.update(_inventory_path_lookup_key(path) for path in member_folder_paths)
+
+    for index, mod, enabled in indexed_rows:
+        mod_key = _inventory_path_lookup_key(mod.folder_path)
+        if mod_key in consumed_mod_paths:
+            continue
+        grouped_rows.append(
+            _InventoryRowEntry(
+                display_name=mod.name,
+                display_unique_id=mod.unique_id,
+                display_version=mod.version,
+                primary_mod=mod,
+                member_mods=(mod,),
+                member_folder_paths=(mod.folder_path,),
+                is_enabled=enabled,
+                folder_label=mod.folder_path.name,
+                grouped=False,
+                has_multiple_unique_ids=False,
+                order_index=index,
+            )
+        )
+
+    return tuple(sorted(grouped_rows, key=lambda entry: entry.order_index))
 
 
 class MainWindow(QMainWindow):
@@ -314,6 +837,7 @@ class MainWindow(QMainWindow):
         self._suppress_intake_selection_sync = False
         self._syncing_auto_overwrite_checkbox = False
         self._app_version_text = _resolve_ui_app_version()
+        self._combo_box_wheel_guard = _ComboBoxWheelGuard(self)
 
         self.setWindowTitle(_APP_BRAND_NAME)
         self.setMinimumSize(1100, 720)
@@ -686,6 +1210,12 @@ class MainWindow(QMainWindow):
         self._open_remote_page_button.setToolTip(
             "Select an actionable mod row to open its remote page."
         )
+        self._find_source_hint_button = QPushButton("Find source hint")
+        self._find_source_hint_button.setObjectName("inventory_find_source_hint_button")
+        self._find_source_hint_button.setEnabled(False)
+        self._find_source_hint_button.setToolTip(
+            "Select a blocked mod row to search Discover for SMAPI compatibility hints."
+        )
         for stats_label in (
             self._mods_filter_stats_label,
             self._discovery_filter_stats_label,
@@ -843,7 +1373,7 @@ class MainWindow(QMainWindow):
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
-            ["Name", "UniqueID", "Installed ver.", "Remote ver.", "Update status", "Folder"]
+            ["Name", "UniqueID", "Installed ver.", "Remote ver.", "Update status", "Type"]
         )
         self._mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1219,6 +1749,7 @@ class MainWindow(QMainWindow):
         self._archive_filter_input.textChanged.connect(self._apply_archive_filter)
 
         self._build_layout()
+        self._install_combo_box_wheel_guards()
         self._refresh_intake_selector()
         self._load_startup_state()
         self._reload_real_mod_profiles()
@@ -1259,6 +1790,11 @@ class MainWindow(QMainWindow):
         if actions_widget is not None:
             header_layout.addWidget(actions_widget, 0, Qt.AlignmentFlag.AlignTop)
         return header
+
+    def _install_combo_box_wheel_guards(self) -> None:
+        for combo in self.findChildren(QComboBox):
+            combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            combo.installEventFilter(self._combo_box_wheel_guard)
 
     def _build_workspace_rail(self, *, context_tabs: QTabWidget) -> QFrame:
         rail = QFrame()
@@ -1831,6 +2367,9 @@ class MainWindow(QMainWindow):
         self._open_remote_page_button.clicked.connect(self._on_open_remote_page)
         _set_utility_button_style(self._open_remote_page_button)
         source_row.addWidget(self._open_remote_page_button)
+        self._find_source_hint_button.clicked.connect(self._on_find_selected_mod_source_hint)
+        _set_utility_button_style(self._find_source_hint_button)
+        source_row.addWidget(self._find_source_hint_button)
         inventory_action_band_layout.addLayout(source_row)
         self._remove_mod_button = QPushButton("Archive selected mod")
         self._remove_mod_button.clicked.connect(self._on_remove_selected_mod)
@@ -4659,6 +5198,27 @@ class MainWindow(QMainWindow):
             f"Moved missing dependency {dependency_target} into Discover. Next step: run Find mods."
         )
 
+    def _on_find_selected_mod_source_hint(self) -> None:
+        selected_context = self._selected_inventory_source_hint_context()
+        if selected_context is None:
+            self._set_status(
+                "Select a blocked installed mod row to search Discover for source hints."
+            )
+            return
+        selected_unique_id, mod_name = selected_context
+        query_text = selected_unique_id.strip() or mod_name.strip()
+        if not query_text:
+            self._set_status("Selected row does not have a usable query for Discover.")
+            return
+        self._discovery_query_input.setText(query_text)
+        self._discovery_filter_input.clear()
+        self._context_tabs.setCurrentWidget(self._discovery_page)
+        self._set_status(
+            f"Searching Discover for source hints for {selected_unique_id}. "
+            "SMAPI compatibility suggestions will land in Discover."
+        )
+        self._on_search_discovery()
+
     def _refresh_smapi_troubleshooting_surface(self) -> None:
         active_operation = self._active_operation_name
         if active_operation in {"SMAPI log check", "SMAPI log load", "Startup SMAPI log check"}:
@@ -5015,6 +5575,10 @@ class MainWindow(QMainWindow):
             if plan.destination_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
             else "Sandbox Mods destination"
         )
+        included_folders_text = ""
+        if plan.included_mod_paths and len(plan.included_mod_paths) > 1:
+            included_lines = "\n".join(f"- {path}" for path in plan.included_mod_paths)
+            included_folders_text = f"\nIncluded installed folders:\n{included_lines}\n"
         yes = QMessageBox.question(
             self,
             "Confirm removal to archive",
@@ -5023,6 +5587,7 @@ class MainWindow(QMainWindow):
                 f"Mod: {mod_name}\n"
                 f"Destination: {destination_label}\n"
                 f"Target folder: {plan.target_mod_path}\n"
+                f"{included_folders_text}"
                 f"Archive root: {plan.archive_path}\n\n"
                 "This stage performs archive move only (no permanent delete)."
             ),
@@ -5058,7 +5623,10 @@ class MainWindow(QMainWindow):
             self._scan_target_label(result.destination_kind),
         )
         self._set_inventory_output_text(build_mod_removal_result_text(result))
-        self._set_status(f"Mod removed to archive: {result.archived_target.name}")
+        removed_count = len(result.included_mod_paths) if result.included_mod_paths else 1
+        self._set_status(
+            f"Mod removed to archive: {result.archived_target.name} ({removed_count} folder(s))"
+        )
 
     def _on_rollback_selected_mod(self) -> None:
         row = self._mods_table.currentRow()
@@ -5084,6 +5652,19 @@ class MainWindow(QMainWindow):
         if not isinstance(mod_folder_path, str) or not mod_folder_path.strip():
             message = "Selected mod row does not include a valid folder path."
             QMessageBox.warning(self, "Invalid selection", message)
+            self._set_status(message)
+            return
+        grouped_member_paths = name_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS)
+        if (
+            name_item.data(_ROLE_MOD_IS_GROUPED) is True
+            and isinstance(grouped_member_paths, tuple)
+            and len(grouped_member_paths) > 1
+        ):
+            message = (
+                "Restore archived mod is not available yet for grouped multi-folder rows. "
+                "Archive/remove now works as one grouped action, but grouped rollback still needs its own flow."
+            )
+            QMessageBox.information(self, "Grouped rollback not available", message)
             self._set_status(message)
             return
         active_real_profile = self._active_custom_real_profile()
@@ -5624,10 +6205,18 @@ class MainWindow(QMainWindow):
         self._guided_update_unique_ids = tuple()
         was_sorting = self._mods_table.isSortingEnabled()
         self._mods_table.setSortingEnabled(False)
-        row_entries = tuple((mod, True) for mod in inventory.mods) + tuple(
-            (mod, False) for mod in inventory.disabled_mods
-        )
         current_target = self._current_scan_target()
+        current_scan_result = self._cached_scan_result_for_target(current_target)
+        inventory_root = (
+            Path(os.path.abspath(os.path.normpath(str(current_scan_result.scan_path.expanduser()))))
+            if current_scan_result is not None
+            else self._configured_scan_path_for_target(current_target)
+        )
+        row_entries = _build_inventory_row_entries(
+            inventory=inventory,
+            root=inventory_root,
+        )
+        depended_on_unique_ids = _inventory_depended_on_unique_ids(inventory)
         real_root = (
             self._configured_scan_path_for_target(SCAN_TARGET_CONFIGURED_REAL_MODS)
             if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS
@@ -5642,11 +6231,18 @@ class MainWindow(QMainWindow):
         try:
             self._mods_table.setRowCount(len(row_entries))
 
-            for row, (mod, is_enabled) in enumerate(row_entries):
-                name_item = QTableWidgetItem(mod.name)
+            for row, row_entry in enumerate(row_entries):
+                mod = row_entry.primary_mod
+                is_enabled = row_entry.is_enabled
+                name_item = QTableWidgetItem(row_entry.display_name)
                 name_item.setData(_ROLE_REMOTE_LINK, "")
                 name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
                 name_item.setData(_ROLE_MOD_FOLDER_PATH, str(mod.folder_path))
+                name_item.setData(
+                    _ROLE_MOD_MEMBER_FOLDER_PATHS,
+                    tuple(str(path) for path in row_entry.member_folder_paths),
+                )
+                name_item.setData(_ROLE_MOD_IS_GROUPED, row_entry.grouped)
                 name_item.setData(_ROLE_UPDATE_ACTIONABLE, False)
                 name_item.setData(_ROLE_MOD_IS_ENABLED, is_enabled)
                 toggle_allowed, toggle_reason = self._profile_toggle_state_for_mod_row(
@@ -5673,13 +6269,43 @@ class MainWindow(QMainWindow):
                 )
                 name_item.setData(_ROLE_UPDATE_BLOCK_REASON, blocked_reason)
                 self._mods_table.setItem(row, 0, name_item)
-                self._mods_table.setItem(row, 1, QTableWidgetItem(mod.unique_id))
-                self._mods_table.setItem(row, 2, QTableWidgetItem(mod.version))
+                unique_id_item = QTableWidgetItem(row_entry.display_unique_id)
+                version_item = QTableWidgetItem(row_entry.display_version)
+                self._mods_table.setItem(row, 1, unique_id_item)
+                self._mods_table.setItem(row, 2, version_item)
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
                 status_item = QTableWidgetItem(status_text)
                 status_item.setToolTip(blocked_reason)
                 self._mods_table.setItem(row, 4, status_item)
-                self._mods_table.setItem(row, 5, QTableWidgetItem(mod.folder_path.name))
+                type_label = _inventory_row_type_label(
+                    row_entry=row_entry,
+                    current_target=current_target,
+                    depended_on_unique_ids=depended_on_unique_ids,
+                )
+                type_item = QTableWidgetItem(type_label)
+                type_item.setToolTip(
+                    _inventory_row_type_tooltip(
+                        row_entry=row_entry,
+                        type_label=type_label,
+                    )
+                )
+                self._mods_table.setItem(row, 5, type_item)
+                if row_entry.grouped:
+                    grouped_tooltip = "Grouped container entry includes:\n" + "\n".join(
+                        f"- {path}" for path in row_entry.member_folder_paths
+                    )
+                    if toggle_reason:
+                        name_item.setToolTip(f"{toggle_reason}\n\n{grouped_tooltip}")
+                    else:
+                        name_item.setToolTip(grouped_tooltip)
+                    unique_id_item.setToolTip(
+                        "Grouped UniqueIDs:\n"
+                        + "\n".join(f"- {member.unique_id}" for member in row_entry.member_mods)
+                    )
+                    version_item.setToolTip(
+                        "Grouped row shows the primary component version. "
+                        "Other included components may have their own versions."
+                    )
                 if is_enabled:
                     _set_table_row_visual(
                         self._mods_table,
@@ -6399,13 +7025,15 @@ class MainWindow(QMainWindow):
                     "This mod is disabled. Re-enable it before update and source actions.",
                 )
                 continue
-            folder_path_text = name_item.data(_ROLE_MOD_FOLDER_PATH)
-            if not isinstance(folder_path_text, str):
-                continue
-            status = by_folder_text.get(folder_path_text)
+            status = _preferred_inventory_row_status(
+                _inventory_row_status_candidates(
+                    name_item=name_item,
+                    by_folder_text=by_folder_text,
+                )
+            )
             if status is None:
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
-                status_item = QTableWidgetItem("metadata_unavailable")
+                status_item = QTableWidgetItem("Metadata unavailable")
                 reason = "Metadata unavailable for this mod in the latest update check."
                 status_item.setToolTip(reason)
                 self._mods_table.setItem(row, 4, status_item)
@@ -6425,7 +7053,7 @@ class MainWindow(QMainWindow):
 
             actionable, blocked_reason = _update_status_actionability(status)
             self._mods_table.setItem(row, 3, QTableWidgetItem(status.remote_version or "-"))
-            status_item = QTableWidgetItem(status.state)
+            status_item = QTableWidgetItem(_update_status_display_label(status))
             status_item.setToolTip(
                 blocked_reason
                 if not actionable
@@ -8081,6 +8709,19 @@ class MainWindow(QMainWindow):
         self._set_status(message)
 
     def _on_stage_selected_intake_update(self) -> None:
+        selected_queue_update_paths = self._selected_queue_update_candidate_paths()
+        if selected_queue_update_paths:
+            self._stage_package_batch_for_plan_install(
+                selected_queue_update_paths,
+                apply_update_intent=True,
+                status_message=(
+                    "Opened Install with archive-aware replace preselected for "
+                    f"{len(selected_queue_update_paths)} watched update package(s). "
+                    "Next step: Plan install."
+                ),
+            )
+            return
+
         selected_index = self._selected_intake_index()
         if selected_index < 0 or not self._selected_intake_supports_update_action():
             message = "Select a detected update package first."
@@ -8354,6 +8995,10 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Select an actionable mod row to open its remote page.",
             )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
+            )
             self._refresh_inventory_source_intent_action_state(
                 selected_unique_id=None,
                 selected=False,
@@ -8375,6 +9020,10 @@ class MainWindow(QMainWindow):
             self._set_open_remote_page_state(
                 enabled=False,
                 tooltip="Select an actionable mod row to open its remote page.",
+            )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
             )
             self._refresh_inventory_source_intent_action_state(
                 selected_unique_id=None,
@@ -8418,6 +9067,10 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Disabled mod rows do not offer remote-page actions.",
             )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="Disabled mod rows do not offer source-hint actions.",
+            )
         elif status is None and status_text == "not_checked":
             message = (
                 f"{mod_name}: run Check updates to evaluate update actionability. "
@@ -8427,6 +9080,10 @@ class MainWindow(QMainWindow):
             self._set_open_remote_page_state(
                 enabled=False,
                 tooltip="Run Check updates and select an actionable row first.",
+            )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="Run Check updates and select a blocked row first.",
             )
         elif is_actionable:
             if len(actionable_targets) > 1:
@@ -8445,6 +9102,10 @@ class MainWindow(QMainWindow):
                 enabled=True,
                 tooltip=f"Open update page for selected mod: {mod_name}. Cinderleaf will start intake watch if needed.",
             )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="Actionable update rows already have a direct update-page action.",
+            )
         elif overlay_intent is not None:
             message, detail_text, tooltip = _inventory_guidance_for_update_source_intent(
                 mod_name=mod_name,
@@ -8456,19 +9117,31 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip=tooltip,
             )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="A saved update-source intent is already recorded for this row.",
+            )
         elif isinstance(blocked_reason, str) and blocked_reason.strip():
             message = (
                 f"{mod_name}: {blocked_reason.strip()} "
                 "Open remote page is unavailable for this row."
             )
             self._set_inventory_blocked_detail_text(
-                _diagnostics_text_for_update_source_code(
-                    status.update_source_diagnostic if status is not None else None
-                )
+                _diagnostics_text_for_update_status(status)
             )
             self._set_open_remote_page_state(
                 enabled=False,
                 tooltip=f"Remote-page action unavailable: {blocked_reason.strip()}",
+            )
+            can_open_discovery_hint = status is not None and _supports_discovery_source_hint(status)
+            self._set_find_source_hint_state(
+                enabled=can_open_discovery_hint,
+                tooltip=(
+                    "Search Discover for SMAPI compatibility hints, unofficial updates, "
+                    "or source-page suggestions for the selected mod."
+                    if can_open_discovery_hint
+                    else "Source hints are available only for blocked source/update rows."
+                ),
             )
         else:
             message = f"{mod_name}: no update action is currently available."
@@ -8476,6 +9149,10 @@ class MainWindow(QMainWindow):
             self._set_open_remote_page_state(
                 enabled=False,
                 tooltip="Remote-page action is unavailable for the selected row.",
+            )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="Source hints are available only for blocked source/update rows.",
             )
 
         self._refresh_inventory_source_intent_action_state(
@@ -8709,6 +9386,10 @@ class MainWindow(QMainWindow):
         self._open_remote_page_button.setEnabled(enabled)
         self._open_remote_page_button.setToolTip(tooltip)
 
+    def _set_find_source_hint_state(self, *, enabled: bool, tooltip: str) -> None:
+        self._find_source_hint_button.setEnabled(enabled)
+        self._find_source_hint_button.setToolTip(tooltip)
+
     def _smapi_troubleshooting_has_actionable_entries(self) -> bool:
         return bool(
             self._last_smapi_log_report is not None
@@ -8805,6 +9486,28 @@ class MainWindow(QMainWindow):
         mod_name = name_item.text().strip() or "Selected mod"
         return unique_id, mod_name
 
+    def _selected_inventory_source_hint_context(self) -> tuple[str, str] | None:
+        row = self._mods_table.currentRow()
+        if row < 0 or self._mods_table.isRowHidden(row) or not self._mods_table.selectedItems():
+            return None
+        name_item = self._mods_table.item(row, 0)
+        unique_id_item = self._mods_table.item(row, 1)
+        if name_item is None or unique_id_item is None:
+            return None
+        if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
+            return None
+        if name_item.data(_ROLE_UPDATE_ACTIONABLE) is True:
+            return None
+        status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
+        status = status_data if isinstance(status_data, ModUpdateStatus) else None
+        if status is None or not _supports_discovery_source_hint(status):
+            return None
+        unique_id = unique_id_item.text().strip()
+        if not unique_id:
+            return None
+        mod_name = name_item.text().strip() or unique_id
+        return unique_id, mod_name
+
     def _selected_inventory_mod_folder_paths(self) -> tuple[str, ...]:
         selection_model = self._mods_table.selectionModel()
         if selection_model is None:
@@ -8825,14 +9528,24 @@ class MainWindow(QMainWindow):
                 continue
             if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
                 continue
-            folder_path = name_item.data(_ROLE_MOD_FOLDER_PATH)
-            if not isinstance(folder_path, str) or not folder_path.strip():
-                continue
-            normalized = folder_path.casefold()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            folder_paths.append(folder_path)
+            member_folder_paths = name_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS)
+            if isinstance(member_folder_paths, tuple):
+                candidate_paths = tuple(
+                    path for path in member_folder_paths if isinstance(path, str) and path.strip()
+                )
+            else:
+                folder_path = name_item.data(_ROLE_MOD_FOLDER_PATH)
+                candidate_paths = (
+                    (folder_path,)
+                    if isinstance(folder_path, str) and folder_path.strip()
+                    else tuple()
+                )
+            for folder_path in candidate_paths:
+                normalized = folder_path.casefold()
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                folder_paths.append(folder_path)
         return tuple(folder_paths)
 
     def _selected_actionable_update_targets(self) -> tuple[tuple[str, str], ...]:
@@ -9609,18 +10322,28 @@ class MainWindow(QMainWindow):
             self._plan_selected_intake_button.setToolTip(
                 "Inspect a zip or select a detected package to open Install."
             )
-        update_like_selection = self._selected_intake_supports_update_action()
+        selected_queue_update_paths = self._selected_queue_update_candidate_paths()
+        update_like_selection = bool(selected_queue_update_paths) or self._selected_intake_supports_update_action()
         self._stage_update_intake_button.setVisible(update_like_selection)
         self._stage_update_intake_button.setEnabled(update_like_selection)
         if update_like_selection:
             target_label = self._packages_comparison_target_label_text()
-            self._stage_update_intake_button.setToolTip(
-                f"Open this detected package as an update against {target_label} and preselect archive-aware replace."
-            )
+            if len(selected_queue_update_paths) > 1:
+                self._stage_update_intake_button.setToolTip(
+                    f"Open the checked watched packages as updates against {target_label} and preselect archive-aware replace."
+                )
+            elif len(selected_queue_update_paths) == 1:
+                self._stage_update_intake_button.setToolTip(
+                    f"Open the checked watched package as an update against {target_label} and preselect archive-aware replace."
+                )
+            else:
+                self._stage_update_intake_button.setToolTip(
+                    f"Open this detected package as an update against {target_label} and preselect archive-aware replace."
+                )
             self._refresh_workflow_surface_states()
             return
         self._stage_update_intake_button.setToolTip(
-            "Open as update only appears when the selected package is newer than the currently selected comparison target."
+            "Open as update only appears when the selected package batch is newer than the currently selected comparison target."
         )
         self._refresh_workflow_surface_states()
 
@@ -9723,6 +10446,33 @@ class MainWindow(QMainWindow):
             self._apply_auto_overwrite_intent_for_package(package_path)
         else:
             self._sync_auto_overwrite_intent_with_staged_package(package_path)
+        self._set_current_install_target(self._packages_comparison_target_kind())
+        self._refresh_staged_package_preview()
+        self._refresh_stage_package_action_state()
+        self._set_intake_output_text(status_message)
+        self._context_tabs.setCurrentWidget(self._plan_install_tab)
+        self._set_status(status_message)
+
+    def _stage_package_batch_for_plan_install(
+        self,
+        package_paths: tuple[Path, ...],
+        *,
+        status_message: str,
+        apply_update_intent: bool = False,
+    ) -> None:
+        self._invalidate_pending_plan()
+        selected_paths = tuple(dict.fromkeys(package_paths))
+        if not selected_paths:
+            return
+        self._set_selected_zip_package_paths(
+            selected_paths,
+            current_path=selected_paths[0],
+            preserve_inspection=len(selected_paths) > 1,
+        )
+        if apply_update_intent:
+            self._apply_auto_overwrite_intent_for_package_paths(selected_paths)
+        else:
+            self._sync_auto_overwrite_intent_with_staged_package(str(selected_paths[0]))
         self._set_current_install_target(self._packages_comparison_target_kind())
         self._refresh_staged_package_preview()
         self._refresh_stage_package_action_state()
@@ -9943,6 +10693,26 @@ class MainWindow(QMainWindow):
             return False
         return correlation.actionable_as_update
 
+    def _selected_queue_update_candidate_paths(self) -> tuple[Path, ...]:
+        selected_paths = self._selected_zip_package_paths
+        if not selected_paths:
+            return tuple()
+        selected_lookup = {
+            self._normalized_package_path_text(str(path)): path
+            for path in selected_paths
+        }
+        matched_paths: list[Path] = []
+        for intake, correlation in zip(self._detected_intakes, self._intake_correlations):
+            normalized_path = self._normalized_package_path_text(str(intake.package_path))
+            if normalized_path not in selected_lookup:
+                continue
+            if not correlation.actionable or not correlation.actionable_as_update:
+                return tuple()
+            matched_paths.append(selected_lookup[normalized_path])
+        if len(matched_paths) != len(selected_lookup):
+            return tuple()
+        return tuple(matched_paths)
+
     @staticmethod
     def _scan_target_label(target: str) -> str:
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
@@ -10057,29 +10827,7 @@ def _latest_recovery_outcome_summary(
 def _update_status_actionability(status: ModUpdateStatus) -> tuple[bool, str]:
     if status.state == "update_available":
         return True, ""
-    if status.state == "up_to_date":
-        return False, "Up to date; no update action required."
-    if status.state == "no_remote_link":
-        return False, status.message or "No remote link is available for this mod."
-    if status.state == "metadata_unavailable":
-        return False, status.message or "Metadata unavailable for this mod."
-    return False, status.message or f"State '{status.state}' is not actionable."
-
-
-def _diagnostics_text_for_update_source_code(code: str | None) -> str | None:
-    if code == LOCAL_PRIVATE_MOD:
-        return "Update source diagnostics: local/private mod."
-    if code == MISSING_UPDATE_KEY:
-        return "Update source diagnostics: missing update key."
-    if code == UNSUPPORTED_UPDATE_KEY_FORMAT:
-        return "Update source diagnostics: unsupported update key format."
-    if code == NO_PROVIDER_MAPPING:
-        return "Update source diagnostics: no provider mapping."
-    if code == REMOTE_METADATA_LOOKUP_FAILED:
-        return "Update source diagnostics: remote metadata lookup failed."
-    if code == METADATA_SOURCE_ISSUE:
-        return "Update source diagnostics: metadata source issue."
-    return None
+    return False, _blocked_reason_for_update_status(status)
 
 
 def _inventory_guidance_for_update_source_intent(
