@@ -7002,6 +7002,7 @@ class MainWindow(QMainWindow):
     def _apply_update_report(self, report: ModUpdateReport) -> None:
         if self._current_inventory is None:
             return
+        self._current_update_report = report
 
         by_folder_text = {str(status.folder_path): status for status in report.statuses}
         was_sorting = self._mods_table.isSortingEnabled()
