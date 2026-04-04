@@ -4175,6 +4175,57 @@ def test_build_install_plan_uses_archive_overwrite_for_real_mods_destination(tmp
     assert plan.entries[0].archive_path.parent == real_mods.parent / ".sdvmm-real-archive"
 
 
+def test_build_install_plan_prefers_existing_nested_target_for_layout_changing_update(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    existing_container = real_mods / "LegacyContainer"
+    existing_target = _create_mod(
+        existing_container,
+        "NestedMyMod",
+        "Sample.Nested",
+        version="1.0.0",
+    )
+
+    package = tmp_path / "update-layout-change.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "MyMod/manifest.json",
+            '{"Name":"My Mod","UniqueID":"Sample.Nested","Version":"2.0.0"}',
+        )
+        archive.writestr("MyMod/new.txt", "new")
+
+    plan = service.build_install_plan(
+        package_path_text=str(package),
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        allow_overwrite=True,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert len(plan.entries) == 1
+    assert plan.entries[0].target_path == existing_target
+    assert plan.entries[0].action == OVERWRITE_WITH_ARCHIVE
+    assert plan.entries[0].archive_path is not None
+
+    result = service.execute_sandbox_install_plan(
+        plan,
+        confirm_real_destination=True,
+    )
+
+    assert result.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert (existing_target / "new.txt").read_text(encoding="utf-8") == "new"
+    assert (existing_container / "NestedMyMod").exists()
+    assert any(path.name == "NestedMyMod" for path in result.installed_targets)
+
+
 def test_build_install_plan_reports_config_preservation_for_real_update_overwrite(
     tmp_path: Path,
 ) -> None:
@@ -4730,6 +4781,7 @@ def test_build_mod_removal_plan_for_sandbox_destination(tmp_path: Path) -> None:
     assert plan.mods_path == sandbox_mods
     assert plan.archive_path == sandbox_archive
     assert plan.target_mod_path == sandbox_mods / "ToRemove"
+    assert plan.included_mod_paths == (sandbox_mods / "ToRemove",)
 
 
 def test_build_mod_removal_plan_for_real_destination_uses_real_archive_path(tmp_path: Path) -> None:
@@ -4755,6 +4807,41 @@ def test_build_mod_removal_plan_for_real_destination_uses_real_archive_path(tmp_
     assert plan.mods_path == real_mods
     assert plan.archive_path == real_archive
     assert plan.target_mod_path == real_mods / "ToRemove"
+    assert plan.included_mod_paths == (real_mods / "ToRemove",)
+
+
+def test_build_mod_removal_plan_accepts_nested_installed_mod_folder(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    existing_container = real_mods / "LegacyContainer"
+    nested_mod = _create_mod(existing_container, "NestedMyMod", "Sample.Nested")
+    sibling_mod = _create_mod(existing_container, "NestedCompanion", "Sample.Companion")
+
+    plan = service.build_mod_removal_plan(
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+        mod_folder_path_text=str(nested_mod),
+    )
+
+    assert plan.target_mod_path == existing_container
+    assert plan.included_mod_paths == (sibling_mod, nested_mod)
+    result = service.execute_mod_removal(plan, confirm_removal=True)
+
+    assert result.removed_target == existing_container
+    assert result.included_mod_paths == (sibling_mod, nested_mod)
+    assert nested_mod.exists() is False
+    assert sibling_mod.exists() is False
+    assert existing_container.exists() is False
+    assert result.archived_target.parent == real_archive
+    assert result.archived_target.exists()
 
 
 def test_execute_mod_removal_requires_explicit_confirmation(tmp_path: Path) -> None:

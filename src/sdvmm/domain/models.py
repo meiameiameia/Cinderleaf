@@ -898,6 +898,7 @@ class ModRemovalPlan:
     mods_path: Path
     archive_path: Path
     target_mod_path: Path
+    included_mod_paths: tuple[Path, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)
@@ -907,6 +908,7 @@ class ModRemovalResult:
     archived_target: Path
     scan_context_path: Path
     inventory: ModsInventory
+    included_mod_paths: tuple[Path, ...] = tuple()
     destination_kind: str = "sandbox_mods"
 
 

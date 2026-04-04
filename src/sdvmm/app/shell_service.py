@@ -4620,11 +4620,21 @@ class AppShellService:
             raise AppShellError(safety.message)
 
         try:
+            installed_inventory = scan_mods_directory(
+                destination_mods_path,
+                excluded_paths=(
+                    destination_archive_path,
+                    destination_mods_path / _LEGACY_ARCHIVE_DIRNAME,
+                ),
+            )
             plan = build_sandbox_install_plan_service(
                 package_path=package_path,
                 sandbox_mods_path=destination_mods_path,
                 sandbox_archive_path=destination_archive_path,
                 allow_overwrite=allow_overwrite,
+                existing_target_paths_by_unique_id=_build_install_target_overrides(
+                    installed_inventory
+                ),
             )
             inspected_mods = _inspect_package_mod_entries(package_path)
             remote_requirements = evaluate_remote_requirements_for_package_mods(
@@ -4857,16 +4867,30 @@ class AppShellService:
 
         mods_root_resolved = destination_mods_path.resolve()
         target_resolved = target_mod_path.resolve()
-        if target_resolved.parent != mods_root_resolved:
+        if (
+            target_resolved == mods_root_resolved
+            or not target_resolved.is_relative_to(mods_root_resolved)
+        ):
             raise AppShellError(
-                "Selected mod folder must be a direct child of the selected Mods destination."
+                "Selected mod folder must be inside the selected Mods destination."
             )
+
+        inventory = scan_mods_directory(
+            destination_mods_path,
+            excluded_paths=(destination_archive_path, destination_mods_path / _LEGACY_ARCHIVE_DIRNAME),
+        )
+        grouped_target_path, included_mod_paths = _resolve_grouped_mod_removal_scope(
+            inventory=inventory,
+            root=destination_mods_path,
+            selected_mod_path=target_mod_path,
+        )
 
         return ModRemovalPlan(
             destination_kind=scan_target,
             mods_path=destination_mods_path,
             archive_path=destination_archive_path,
-            target_mod_path=target_mod_path,
+            target_mod_path=grouped_target_path,
+            included_mod_paths=included_mod_paths,
         )
 
     def execute_mod_removal(
@@ -4901,6 +4925,7 @@ class AppShellService:
             archived_target=archived_target,
             scan_context_path=plan.mods_path,
             inventory=inventory,
+            included_mod_paths=plan.included_mod_paths,
             destination_kind=plan.destination_kind,
         )
 
@@ -10038,6 +10063,48 @@ def _compare_intake_against_inventory(
             )
         )
     return tuple(comparisons)
+
+
+def _build_install_target_overrides(inventory: ModsInventory) -> dict[str, Path]:
+    installed_by_unique_id: dict[str, list[InstalledMod]] = {}
+    for mod in inventory.mods:
+        installed_by_unique_id.setdefault(canonicalize_unique_id(mod.unique_id), []).append(mod)
+
+    overrides: dict[str, Path] = {}
+    for unique_id, matches in installed_by_unique_id.items():
+        if len(matches) != 1:
+            continue
+        overrides[unique_id] = matches[0].folder_path
+    return overrides
+
+
+def _resolve_grouped_mod_removal_scope(
+    *,
+    inventory: ModsInventory,
+    root: Path,
+    selected_mod_path: Path,
+) -> tuple[Path, tuple[Path, ...]]:
+    selected_key = _path_lookup_key(selected_mod_path)
+    expected_root_key = _path_lookup_key(root)
+
+    for finding in inventory.scan_entry_findings:
+        if finding.kind not in {DIRECT_MOD, NESTED_MOD_CONTAINER, MULTI_MOD_CONTAINER}:
+            continue
+        entry_path = Path(os.path.abspath(os.path.normpath(str(finding.entry_path.expanduser()))))
+        if _path_lookup_key(entry_path.parent) != expected_root_key:
+            continue
+
+        included_mod_paths = tuple(
+            Path(os.path.abspath(os.path.normpath(str(mod_path.expanduser()))))
+            for mod_path in finding.mod_paths
+        )
+        if not included_mod_paths:
+            continue
+        if selected_key not in {_path_lookup_key(path) for path in included_mod_paths}:
+            continue
+        return entry_path, tuple(sorted(included_mod_paths, key=lambda path: str(path).casefold()))
+
+    return selected_mod_path, (selected_mod_path,)
 
 
 def _resolve_package_comparison_state(

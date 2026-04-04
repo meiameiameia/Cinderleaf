@@ -14,6 +14,7 @@ from sdvmm.domain.models import (
     SandboxInstallPlanEntry,
     SandboxInstallResult,
 )
+from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.services.mod_scanner import scan_mods_directory
 from sdvmm.services.package_inspector import inspect_zip_package
 
@@ -42,6 +43,7 @@ def build_sandbox_install_plan(
     sandbox_archive_path: Path,
     *,
     allow_overwrite: bool,
+    existing_target_paths_by_unique_id: dict[str, Path] | None = None,
 ) -> SandboxInstallPlan:
     inspection = inspect_zip_package(package_path)
 
@@ -55,6 +57,12 @@ def build_sandbox_install_plan(
 
         target_folder_name = _derive_target_folder_name(source_root, mod.unique_id, mod.name)
         target_path = sandbox_mods_path / target_folder_name
+        if existing_target_paths_by_unique_id is not None:
+            existing_target_path = existing_target_paths_by_unique_id.get(
+                canonicalize_unique_id(mod.unique_id)
+            )
+            if existing_target_path is not None:
+                target_path = existing_target_path
 
         warnings: list[str] = []
         can_install = True
@@ -248,9 +256,12 @@ def remove_mod_to_archive(
     if not target_mod_path.exists() or not target_mod_path.is_dir():
         raise SandboxInstallError(f"Selected mod folder is not accessible: {target_mod_path}")
 
-    if target_mod_resolved.parent != mods_root_resolved:
+    if (
+        target_mod_resolved == mods_root_resolved
+        or not target_mod_resolved.is_relative_to(mods_root_resolved)
+    ):
         raise SandboxInstallError(
-            "Selected mod folder must be a direct child of the selected Mods destination."
+            "Selected mod folder must be inside the selected Mods destination."
         )
 
     _ensure_archive_root(archive_root)

@@ -6,6 +6,7 @@ from sdvmm.app.shell_service import DiscoveryContextCorrelation
 from sdvmm.app.inventory_presenter import (
     build_archive_restore_result_text,
     build_mod_rollback_result_text,
+    build_mod_removal_result_text,
     build_discovery_search_text,
     build_downloads_intake_text,
     build_environment_status_text,
@@ -24,6 +25,8 @@ from sdvmm.domain.models import (
     GameEnvironmentStatus,
     ModDiscoveryEntry,
     ModDiscoveryResult,
+    ModRemovalPlan,
+    ModRemovalResult,
     ModsInventory,
     ModUpdateReport,
     ModUpdateStatus,
@@ -64,6 +67,45 @@ def test_update_report_text_is_human_readable_and_includes_next_step() -> None:
     assert "Update available" in text
     assert "Recommended next step" in text
     assert "Open remote page" in text
+
+
+def test_mod_removal_result_text_lists_grouped_included_folders() -> None:
+    root = Path("/tmp/Mods")
+    container = root / "PackFolder"
+    result = ModRemovalResult(
+        plan=ModRemovalPlan(
+            destination_kind="configured_real_mods",
+            mods_path=root,
+            archive_path=Path("/tmp/Archive"),
+            target_mod_path=container,
+            included_mod_paths=(
+                container / "ComponentA",
+                container / "ComponentB",
+            ),
+        ),
+        removed_target=container,
+        archived_target=Path("/tmp/Archive/PackFolder__sdvmm_archive_001"),
+        scan_context_path=root,
+        inventory=ModsInventory(
+            mods=tuple(),
+            parse_warnings=tuple(),
+            duplicate_unique_ids=tuple(),
+            missing_required_dependencies=tuple(),
+            scan_entry_findings=tuple(),
+            ignored_entries=tuple(),
+        ),
+        included_mod_paths=(
+            container / "ComponentA",
+            container / "ComponentB",
+        ),
+        destination_kind="configured_real_mods",
+    )
+
+    text = build_mod_removal_result_text(result)
+
+    assert "Included installed folders: 2" in text
+    assert str(container / "ComponentA") in text
+    assert str(container / "ComponentB") in text
 
 
 def test_environment_text_clarifies_invalid_path_next_step() -> None:

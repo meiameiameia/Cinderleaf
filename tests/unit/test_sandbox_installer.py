@@ -101,6 +101,43 @@ def test_install_plan_allows_overwrite_and_sets_archive_path(tmp_path: Path) -> 
     assert entry.archive_path == archive_root / "MyMod__sdvmm_archive_001"
 
 
+def test_install_plan_prefers_existing_target_override_for_layout_changing_update(
+    tmp_path: Path,
+) -> None:
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+    existing_container = sandbox / "LegacyContainer"
+    existing_container.mkdir()
+    existing_target = existing_container / "NestedMyMod"
+    existing_target.mkdir()
+    (existing_target / "manifest.json").write_text(
+        '{"Name":"Nested My Mod","UniqueID":"Pkg.MyMod","Version":"1.0.0"}',
+        encoding="utf-8",
+    )
+
+    package = _build_zip(
+        tmp_path / "layout-change.zip",
+        {
+            "MyMod/manifest.json": '{"Name":"My Mod","UniqueID":"Pkg.MyMod","Version":"2.0.0"}',
+        },
+    )
+
+    plan = build_sandbox_install_plan(
+        package,
+        sandbox,
+        archive_root,
+        allow_overwrite=True,
+        existing_target_paths_by_unique_id={"pkg.mymod": existing_target},
+    )
+
+    entry = plan.entries[0]
+    assert entry.target_path == existing_target
+    assert entry.action == OVERWRITE_WITH_ARCHIVE
+    assert entry.archive_path == archive_root / "NestedMyMod__sdvmm_archive_001"
+
+
 def test_install_plan_reports_config_preservation_for_overwrite_targets(tmp_path: Path) -> None:
     sandbox = tmp_path / "SandboxMods"
     archive_root = tmp_path / "SandboxArchive"

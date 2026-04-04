@@ -512,6 +512,10 @@ def build_mod_removal_result_text(result: ModRemovalResult) -> str:
     lines.append(f"- Destination type: {destination_label}")
     lines.append(f"- Removed from active Mods path: {result.removed_target}")
     lines.append(f"- Archived to: {result.archived_target}")
+    if result.included_mod_paths:
+        lines.append(f"- Included installed folders: {len(result.included_mod_paths)}")
+        for path in result.included_mod_paths:
+            lines.append(f"  - {path}")
     lines.append(f"- Scan context: {result.scan_context_path}")
     lines.append("")
     lines.append("Recommended next step:")
