@@ -74,6 +74,8 @@ def test_real_nexus_updatekey_forms_are_resolved() -> None:
     assert resolve_remote_link(("Nexus:12345",)).provider == "nexus"
     assert resolve_remote_link(("Nexus: 19508",)).provider == "nexus"
     assert resolve_remote_link(("nexus:15223",)).provider == "nexus"
+    assert resolve_remote_link(("Nexus:11115@Main",)).provider == "nexus"
+    assert resolve_remote_link(("Nexus:23135@main",)).provider == "nexus"
     assert (
         resolve_remote_link(("Nexus:https://www.nexusmods.com/stardewvalley/mods/541",)).provider
         == "nexus"
@@ -163,6 +165,34 @@ def test_malformed_nexus_updatekey_is_reported_explicitly() -> None:
     assert status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT
     assert "[malformed_update_key]" in (status.message or "")
     assert status.remote_requirements_state == "requirements_unavailable"
+
+
+def test_nexus_updatekey_with_channel_suffix_is_resolved_for_version_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(NEXUS_API_KEY_ENV, raising=False)
+
+    mod = _mod(unique_id="Sample.Channel", version="1.0.0", update_keys=("Nexus:11115@Main",))
+    inventory = _inventory((mod,))
+    url = "https://api.nexusmods.com/v1/games/stardewvalley/mods/11115.json"
+    fetcher = StubFetcher(
+        payloads={
+            url: {
+                "version": "1.1.0",
+                "url": "https://www.nexusmods.com/stardewvalley/mods/11115",
+            }
+        }
+    )
+
+    report = check_updates_for_inventory(inventory, fetcher=fetcher, nexus_api_key="test-api-key")
+
+    status = report.statuses[0]
+    assert status.state == "update_available"
+    assert status.remote_version == "1.1.0"
+    assert status.remote_link is not None
+    assert status.remote_link.page_url == "https://www.nexusmods.com/stardewvalley/mods/11115"
+    assert fetcher.calls[0][0] == url
+    assert fetcher.calls[0][1].get("apikey") == "test-api-key"
 
 
 def test_nexus_auth_or_request_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:

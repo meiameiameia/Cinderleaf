@@ -649,6 +649,11 @@ def _parse_nexus_key(raw_value: str) -> tuple[str, str] | None:
     if not value:
         return None
 
+    if "@" in value:
+        value = value.split("@", 1)[0].strip()
+        if not value:
+            return None
+
     if value.isdigit():
         return "stardewvalley", value
 
