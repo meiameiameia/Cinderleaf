@@ -286,6 +286,82 @@ def test_no_regression_for_github_provider() -> None:
     assert report.statuses[0].update_source_diagnostic is None
 
 
+def test_duplicate_nexus_links_share_one_remote_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(NEXUS_API_KEY_ENV, raising=False)
+
+    mods = (
+        _mod(unique_id="Sample.One", version="1.0.0", update_keys=("Nexus:12345",)),
+        _mod(unique_id="Sample.Two", version="1.0.0", update_keys=("Nexus:12345",)),
+    )
+    inventory = _inventory(mods)
+    url = "https://api.nexusmods.com/v1/games/stardewvalley/mods/12345.json"
+    fetcher = StubFetcher(
+        payloads={
+            url: {
+                "version": "1.2.0",
+                "url": "https://www.nexusmods.com/stardewvalley/mods/12345",
+            }
+        }
+    )
+
+    report = check_updates_for_inventory(inventory, fetcher=fetcher, nexus_api_key="test-api-key")
+
+    assert [status.state for status in report.statuses] == ["update_available", "update_available"]
+    assert fetcher.calls == [(url, {"apikey": "test-api-key"})]
+
+
+def test_duplicate_github_links_share_one_remote_fetch() -> None:
+    mods = (
+        _mod(
+            unique_id="Sample.One",
+            version="1.0.0",
+            update_keys=("GitHub:owner/repo",),
+        ),
+        _mod(
+            unique_id="Sample.Two",
+            version="1.0.0",
+            update_keys=("GitHub:owner/repo",),
+        ),
+    )
+    inventory = _inventory(mods)
+    url = "https://api.github.com/repos/owner/repo/releases/latest"
+    fetcher = StubFetcher(payloads={url: {"tag_name": "v1.1.0"}})
+
+    report = check_updates_for_inventory(
+        inventory,
+        fetcher=fetcher,
+        nexus_api_key="test-api-key",
+    )
+
+    assert [status.state for status in report.statuses] == ["update_available", "update_available"]
+    assert fetcher.calls == [(url, {})]
+
+
+def test_duplicate_link_failures_share_one_remote_fetch_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(NEXUS_API_KEY_ENV, raising=False)
+
+    mods = (
+        _mod(unique_id="Sample.One", version="1.0.0", update_keys=("Nexus:12345",)),
+        _mod(unique_id="Sample.Two", version="1.0.0", update_keys=("Nexus:12345",)),
+    )
+    inventory = _inventory(mods)
+    url = "https://api.nexusmods.com/v1/games/stardewvalley/mods/12345.json"
+    fetcher = StubFetcher(
+        error_by_url={url: MetadataFetchError(AUTH_FAILURE, "HTTP 403: rate limited")}
+    )
+
+    report = check_updates_for_inventory(
+        inventory,
+        fetcher=fetcher,
+        nexus_api_key="test-api-key",
+    )
+
+    assert [status.state for status in report.statuses] == ["metadata_unavailable", "metadata_unavailable"]
+    assert fetcher.calls == [(url, {"apikey": "test-api-key"})]
+
+
 def test_missing_update_key_sets_typed_no_link_diagnostic() -> None:
     mod = _mod(unique_id="Sample.NoLink", version="1.0.0", update_keys=tuple())
     inventory = _inventory((mod,))

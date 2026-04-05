@@ -323,6 +323,8 @@ _PROVIDER_ADAPTERS: tuple[MetadataProviderAdapter, ...] = (
     NexusProviderAdapter(),
 )
 _PROVIDERS_BY_NAME = {adapter.provider: adapter for adapter in _PROVIDER_ADAPTERS}
+_RemotePayloadCacheKey = tuple[str, str, str]
+_RemotePayloadCacheValue = dict[str, Any] | MetadataFetchError
 
 
 def check_updates_for_inventory(
@@ -335,6 +337,7 @@ def check_updates_for_inventory(
 ) -> ModUpdateReport:
     active_fetcher = fetcher or UrllibJsonMetadataFetcher()
     overlay_by_unique_id = _overlay_records_by_unique_id(update_source_intent_overlay)
+    remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue] = {}
 
     statuses: list[ModUpdateStatus] = []
     for mod in inventory.mods:
@@ -344,6 +347,7 @@ def check_updates_for_inventory(
                 fetcher=active_fetcher,
                 timeout_seconds=timeout_seconds,
                 nexus_api_key=nexus_api_key,
+                remote_payload_cache=remote_payload_cache,
                 update_source_intent=overlay_by_unique_id.get(
                     canonicalize_unique_id(mod.unique_id)
                 ),
@@ -480,6 +484,7 @@ def _check_single_mod(
     fetcher: JsonMetadataFetcher,
     timeout_seconds: float,
     nexus_api_key: str | None,
+    remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
     update_source_intent: UpdateSourceIntentRecord | None,
 ) -> ModUpdateStatus:
     manual_resolution = _resolve_manual_source_override(update_source_intent)
@@ -544,11 +549,13 @@ def _check_single_mod(
             continue
 
         try:
-            payload = provider.fetch_payload(
-                link,
+            payload = _fetch_payload_with_cache(
+                provider=provider,
+                link=link,
                 fetcher=fetcher,
                 timeout_seconds=timeout_seconds,
                 nexus_api_key=nexus_api_key,
+                remote_payload_cache=remote_payload_cache,
             )
         except MetadataFetchError as exc:
             failures.append(
@@ -633,6 +640,50 @@ def _check_single_mod(
         remote_requirements=best_requirements,
         remote_requirements_message=best_requirements_message or message,
     )
+
+
+def _fetch_payload_with_cache(
+    *,
+    provider: MetadataProviderAdapter,
+    link: RemoteModLink,
+    fetcher: JsonMetadataFetcher,
+    timeout_seconds: float,
+    nexus_api_key: str | None,
+    remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
+) -> dict[str, Any]:
+    cache_key = _remote_payload_cache_key(link, nexus_api_key)
+    cached = remote_payload_cache.get(cache_key)
+    if cached is not None:
+        if isinstance(cached, MetadataFetchError):
+            raise MetadataFetchError(cached.reason, cached.message)
+        return cached
+
+    try:
+        payload = provider.fetch_payload(
+            link,
+            fetcher=fetcher,
+            timeout_seconds=timeout_seconds,
+            nexus_api_key=nexus_api_key,
+        )
+    except MetadataFetchError as exc:
+        remote_payload_cache[cache_key] = MetadataFetchError(exc.reason, exc.message)
+        raise
+
+    remote_payload_cache[cache_key] = payload
+    return payload
+
+
+def _remote_payload_cache_key(
+    link: RemoteModLink,
+    nexus_api_key: str | None,
+) -> _RemotePayloadCacheKey:
+    metadata_target = (link.metadata_url or link.page_url or link.key).strip()
+    auth_marker = ""
+    if link.provider == NEXUS_PROVIDER:
+        auth_marker = normalize_nexus_api_key(nexus_api_key) or normalize_nexus_api_key(
+            os.getenv(NEXUS_API_KEY_ENV, "")
+        )
+    return (link.provider, metadata_target, auth_marker or "")
 
 
 def _parse_update_key(raw_key: str) -> tuple[str | None, str]:
