@@ -3649,7 +3649,7 @@ def test_main_window_inventory_manual_source_action_is_available_only_for_select
     main_window._mods_table.setCurrentCell(actionable_row, 0)
     qapp.processEvents()
     assert actions_widget.isVisible() is True
-    assert manual_source_button.isEnabled() is False
+    assert manual_source_button.isEnabled() is True
 
     main_window._mods_table.setCurrentCell(blocked_row, 0)
     qapp.processEvents()
@@ -9483,9 +9483,7 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
 
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
-    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
-    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
-    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
     monkeypatch.setattr(
         main_window,
@@ -9735,9 +9733,7 @@ def test_main_window_successful_install_selects_new_recorded_install_for_recover
 
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
-    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
-    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
-    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
     monkeypatch.setattr(main_window._shell_service, "load_install_operation_history", fake_load_history)
     monkeypatch.setattr(
@@ -9783,9 +9779,7 @@ def test_main_window_successful_install_does_not_guess_when_new_record_is_ambigu
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
-    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
-    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
-    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
     monkeypatch.setattr(
         main_window._shell_service,
         "execute_sandbox_install_plan",
@@ -10677,9 +10671,7 @@ def test_main_window_recovery_inspect_run_behavior_remains_intact_for_filtered_v
         "sdvmm.ui.main_window.QMessageBox.question",
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
-    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
-    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
-    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
 
     def fake_execute(review: object) -> object:
         execute_calls.append(review)
@@ -10882,9 +10874,7 @@ def test_main_window_allowed_recovery_inspection_enables_run_and_executes(
         "sdvmm.ui.main_window.QMessageBox.question",
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
-    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
-    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
-    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
 
     def fake_execute(review: object) -> object:
         execute_calls.append(review)
