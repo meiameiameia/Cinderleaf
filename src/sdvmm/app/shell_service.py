@@ -553,6 +553,17 @@ _ACTIONABLE_INTAKE_CLASSIFICATIONS = {
 _ARCHIVE_SUFFIX_SEQUENCE_PATTERN = re.compile(r"^(?P<target>.+)__sdvmm_archive_(?P<sequence>[0-9]{3,})$")
 
 
+def _scan_inventory_with_archive_exclusions(
+    mods_path: Path,
+    *,
+    archive_path: Path,
+) -> ModsInventory:
+    return scan_mods_directory(
+        mods_path,
+        excluded_paths=(archive_path, mods_path / _LEGACY_ARCHIVE_DIRNAME),
+    )
+
+
 class AppShellService:
     def __init__(self, state_file: Path) -> None:
         self._state_file = state_file
@@ -4641,12 +4652,9 @@ class AppShellService:
             raise AppShellError(safety.message)
 
         try:
-            installed_inventory = scan_mods_directory(
+            installed_inventory = _scan_inventory_with_archive_exclusions(
                 destination_mods_path,
-                excluded_paths=(
-                    destination_archive_path,
-                    destination_mods_path / _LEGACY_ARCHIVE_DIRNAME,
-                ),
+                archive_path=destination_archive_path,
             )
         except OSError as exc:
             raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
@@ -4790,9 +4798,9 @@ class AppShellService:
     ) -> SandboxInstallPlan:
         inventory = installed_inventory
         if inventory is None:
-            inventory = scan_mods_directory(
+            inventory = _scan_inventory_with_archive_exclusions(
                 plan.sandbox_mods_path,
-                excluded_paths=(plan.sandbox_archive_path, plan.sandbox_mods_path / _LEGACY_ARCHIVE_DIRNAME),
+                archive_path=plan.sandbox_archive_path,
             )
         dependency_findings = _evaluate_sandbox_plan_dependencies(
             plan=plan,
@@ -4978,9 +4986,9 @@ class AppShellService:
                 "Selected mod folder must be inside the selected Mods destination."
             )
 
-        inventory = scan_mods_directory(
+        inventory = _scan_inventory_with_archive_exclusions(
             destination_mods_path,
-            excluded_paths=(destination_archive_path, destination_mods_path / _LEGACY_ARCHIVE_DIRNAME),
+            archive_path=destination_archive_path,
         )
         grouped_target_path, included_mod_paths = _resolve_grouped_mod_removal_scope(
             inventory=inventory,
@@ -5011,9 +5019,9 @@ class AppShellService:
                 mods_root=plan.mods_path,
                 archive_root=plan.archive_path,
             )
-            inventory = scan_mods_directory(
+            inventory = _scan_inventory_with_archive_exclusions(
                 plan.mods_path,
-                excluded_paths=(plan.archive_path, plan.mods_path / _LEGACY_ARCHIVE_DIRNAME),
+                archive_path=plan.archive_path,
             )
         except SandboxFileLockError as exc:
             raise AppShellError(str(exc), detail_message=exc.technical_detail) from exc
@@ -5171,9 +5179,9 @@ class AppShellService:
                 destination_mods_root=plan.destination_mods_path,
                 destination_folder_name=plan.entry.target_folder_name,
             )
-            inventory = scan_mods_directory(
+            inventory = _scan_inventory_with_archive_exclusions(
                 plan.destination_mods_path,
-                excluded_paths=plan.scan_excluded_paths,
+                archive_path=plan.entry.archive_root,
             )
         except ArchiveManagerError as exc:
             raise AppShellError(str(exc)) from exc
@@ -5457,9 +5465,9 @@ class AppShellService:
                 archive_root=plan.archive_path,
                 archived_candidate_path=plan.rollback_entry.archived_path,
             )
-            inventory = scan_mods_directory(
+            inventory = _scan_inventory_with_archive_exclusions(
                 plan.mods_path,
-                excluded_paths=(plan.archive_path, plan.mods_path / _LEGACY_ARCHIVE_DIRNAME),
+                archive_path=plan.archive_path,
             )
         except ArchiveManagerError as exc:
             raise AppShellError(str(exc)) from exc
