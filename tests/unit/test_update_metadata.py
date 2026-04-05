@@ -311,6 +311,15 @@ def test_duplicate_nexus_links_share_one_remote_fetch(monkeypatch: pytest.Monkey
 
     assert [status.state for status in report.statuses] == ["update_available", "update_available"]
     assert fetcher.calls == [(url, {"apikey": "test-api-key"})]
+    assert report.diagnostics is not None
+    assert report.diagnostics.mod_count == 2
+    assert report.diagnostics.remote_links_resolved == 2
+    assert report.diagnostics.unique_remote_targets == 1
+    assert report.diagnostics.live_fetches == 1
+    assert report.diagnostics.in_run_cache_hits == 1
+    assert report.diagnostics.persisted_cache_hits == 0
+    assert report.diagnostics.cached_failure_hits == 0
+    assert report.diagnostics.duration_ms >= 0.0
 
 
 def test_duplicate_github_links_share_one_remote_fetch() -> None:
@@ -338,6 +347,13 @@ def test_duplicate_github_links_share_one_remote_fetch() -> None:
 
     assert [status.state for status in report.statuses] == ["update_available", "update_available"]
     assert fetcher.calls == [(url, {})]
+    assert report.diagnostics is not None
+    assert report.diagnostics.mod_count == 2
+    assert report.diagnostics.remote_links_resolved == 2
+    assert report.diagnostics.unique_remote_targets == 1
+    assert report.diagnostics.live_fetches == 1
+    assert report.diagnostics.in_run_cache_hits == 1
+    assert report.diagnostics.persisted_cache_hits == 0
 
 
 def test_duplicate_link_failures_share_one_remote_fetch_attempt(
@@ -363,6 +379,12 @@ def test_duplicate_link_failures_share_one_remote_fetch_attempt(
 
     assert [status.state for status in report.statuses] == ["metadata_unavailable", "metadata_unavailable"]
     assert fetcher.calls == [(url, {"apikey": "test-api-key"})]
+    assert report.diagnostics is not None
+    assert report.diagnostics.mod_count == 2
+    assert report.diagnostics.remote_links_resolved == 2
+    assert report.diagnostics.unique_remote_targets == 1
+    assert report.diagnostics.live_fetches == 1
+    assert report.diagnostics.cached_failure_hits == 1
 
 
 def test_fresh_persisted_remote_metadata_cache_skips_refetch() -> None:
@@ -392,6 +414,13 @@ def test_fresh_persisted_remote_metadata_cache_skips_refetch() -> None:
     assert report.statuses[0].state == "update_available"
     assert fetcher.calls == []
     assert updated_cache == persisted_cache
+    assert report.diagnostics is not None
+    assert report.diagnostics.mod_count == 1
+    assert report.diagnostics.remote_links_resolved == 1
+    assert report.diagnostics.unique_remote_targets == 1
+    assert report.diagnostics.live_fetches == 0
+    assert report.diagnostics.persisted_cache_hits == 1
+    assert report.diagnostics.in_run_cache_hits == 0
 
 
 def test_stale_persisted_remote_metadata_cache_refetches_and_refreshes_timestamp() -> None:

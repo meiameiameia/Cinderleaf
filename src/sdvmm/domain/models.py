@@ -299,8 +299,21 @@ class ModUpdateStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class UpdateCheckDiagnostics:
+    mod_count: int
+    remote_links_resolved: int
+    unique_remote_targets: int
+    live_fetches: int
+    in_run_cache_hits: int
+    persisted_cache_hits: int
+    cached_failure_hits: int
+    duration_ms: float
+
+
+@dataclass(frozen=True, slots=True)
 class ModUpdateReport:
     statuses: tuple[ModUpdateStatus, ...]
+    diagnostics: UpdateCheckDiagnostics | None = None
 
 
 @dataclass(frozen=True, slots=True)
