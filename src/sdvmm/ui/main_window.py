@@ -278,6 +278,15 @@ class _InventoryRowEntry:
     order_index: int
 
 
+@dataclass(frozen=True, slots=True)
+class _InventoryUpdatePresentation:
+    actionable: bool
+    blocked_reason: str
+    status_label: str
+    status_tooltip: str
+    style_kind: str
+
+
 class _ComboBoxWheelGuard(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if (
@@ -781,6 +790,44 @@ def _effective_inventory_source_intent_state(
     if saved_intent_state is not None:
         return saved_intent_state
     return _synthetic_source_intent_state_for_inventory_mod(mod=mod, inventory=inventory)
+
+
+def _inventory_update_presentation(
+    *,
+    status: ModUpdateStatus,
+    effective_intent_state: str | None,
+) -> _InventoryUpdatePresentation:
+    actionable, blocked_reason = _update_status_actionability(status)
+    status_label = _update_status_display_label(status)
+    status_tooltip = blocked_reason
+    if effective_intent_state == "no_tracking":
+        actionable = False
+        _, _, status_tooltip = _inventory_guidance_for_update_source_intent(
+            mod_name=status.name,
+            intent_state="no_tracking",
+            manual_provider=None,
+        )
+        blocked_reason = status_tooltip
+        status_label = "No tracking"
+    if actionable:
+        return _InventoryUpdatePresentation(
+            actionable=True,
+            blocked_reason=blocked_reason,
+            status_label=status_label,
+            status_tooltip="Actionable: update is available for this mod.",
+            style_kind="actionable",
+        )
+    if status.state == "up_to_date":
+        style_kind = "up_to_date"
+    else:
+        style_kind = "blocked"
+    return _InventoryUpdatePresentation(
+        actionable=False,
+        blocked_reason=blocked_reason,
+        status_label=status_label,
+        status_tooltip=status_tooltip,
+        style_kind=style_kind,
+    )
 
 
 def _merge_status_into_update_report(
@@ -7518,7 +7565,6 @@ class MainWindow(QMainWindow):
                 )
                 continue
 
-            actionable, blocked_reason = _update_status_actionability(status)
             unique_id_item = self._mods_table.item(row, 1)
             version_item = self._mods_table.item(row, 2)
             selected_mod = _inventory_mod_for_folder_text(
@@ -7531,13 +7577,10 @@ class MainWindow(QMainWindow):
                 mod=selected_mod,
                 inventory=self._current_inventory,
             )
-            if effective_intent_state == "no_tracking":
-                actionable = False
-                _, _, blocked_reason = _inventory_guidance_for_update_source_intent(
-                    mod_name=status.name,
-                    intent_state="no_tracking",
-                    manual_provider=None,
-                )
+            presentation = _inventory_update_presentation(
+                status=status,
+                effective_intent_state=effective_intent_state,
+            )
             if unique_id_item is not None:
                 unique_id_item.setText(status.unique_id)
             if version_item is not None:
@@ -7552,34 +7595,17 @@ class MainWindow(QMainWindow):
                         f"Installed version: {selected_mod.version}"
                     )
             self._mods_table.setItem(row, 3, QTableWidgetItem(status.remote_version or "-"))
-            status_label = (
-                "No tracking"
-                if effective_intent_state == "no_tracking"
-                else _update_status_display_label(status)
-            )
-            status_tooltip = blocked_reason
-            if effective_intent_state == "no_tracking":
-                _, _, status_tooltip = _inventory_guidance_for_update_source_intent(
-                    mod_name=status.name,
-                    intent_state="no_tracking",
-                    manual_provider=None,
-                )
-            effective_blocked_reason = status_tooltip if not actionable else blocked_reason
-            status_item = QTableWidgetItem(status_label)
-            status_item.setToolTip(
-                status_tooltip
-                if not actionable
-                else "Actionable: update is available for this mod."
-            )
+            status_item = QTableWidgetItem(presentation.status_label)
+            status_item.setToolTip(presentation.status_tooltip)
             self._mods_table.setItem(row, 4, status_item)
             name_item.setData(_ROLE_MOD_UPDATE_STATUS, status)
             name_item.setData(
                 _ROLE_REMOTE_LINK,
                 status.remote_link.page_url if status.remote_link is not None else "",
             )
-            name_item.setData(_ROLE_UPDATE_ACTIONABLE, actionable)
-            name_item.setData(_ROLE_UPDATE_BLOCK_REASON, effective_blocked_reason)
-            if actionable:
+            name_item.setData(_ROLE_UPDATE_ACTIONABLE, presentation.actionable)
+            name_item.setData(_ROLE_UPDATE_BLOCK_REASON, presentation.blocked_reason)
+            if presentation.style_kind == "actionable":
                 _set_table_row_visual(
                     self._mods_table,
                     row,
@@ -7588,7 +7614,7 @@ class MainWindow(QMainWindow):
                     bold_columns=(0, 4),
                     column_foregrounds={3: "#f2d492", 4: "#cbe7c1"},
                 )
-            elif status.state == "up_to_date":
+            elif presentation.style_kind == "up_to_date":
                 _set_table_row_visual(
                     self._mods_table,
                     row,
