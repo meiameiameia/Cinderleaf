@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 import os
@@ -657,6 +657,35 @@ def _nexus_page_url_from_url(url: str) -> str | None:
     return url.strip()
 
 
+def _manual_source_remote_page_url(saved_intent: object | None) -> str | None:
+    if saved_intent is None:
+        return None
+    if getattr(saved_intent, "intent_state", None) != "manual_source_association":
+        return None
+
+    page_url = getattr(saved_intent, "manual_source_page_url", None)
+    if isinstance(page_url, str) and page_url.strip():
+        return page_url.strip()
+
+    provider = str(getattr(saved_intent, "manual_provider", "") or "").strip().casefold()
+    source_key = str(getattr(saved_intent, "manual_source_key", "") or "").strip()
+    if not source_key:
+        return None
+
+    if provider == "github":
+        repo_slug = _github_repo_slug_from_url(source_key)
+        if repo_slug is not None:
+            return f"https://github.com/{repo_slug}"
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source_key):
+            return f"https://github.com/{source_key}"
+        return None
+
+    if provider == "nexus":
+        return _nexus_page_url_from_url(source_key)
+
+    return None
+
+
 def _manual_source_association_from_discovery_correlation(
     correlation: DiscoveryContextCorrelation,
     *,
@@ -1106,6 +1135,7 @@ class MainWindow(QMainWindow):
         self._pending_install_plan: SandboxInstallPlan | None = None
         self._current_inventory: ModsInventory | None = None
         self._scan_results_by_target: dict[str, ScanResult] = {}
+        self._update_reports_by_context: dict[str, ModUpdateReport] = {}
         self._current_update_report: ModUpdateReport | None = None
         self._current_mods_compare_result: ModsCompareResult | None = None
         self._current_discovery_result: ModDiscoveryResult | None = None
@@ -4959,13 +4989,18 @@ class MainWindow(QMainWindow):
                 execution_result.scan_context_path,
                 execution_result.inventory,
             )
-            self._render_inventory(execution_result.inventory)
-            self._set_plan_install_output_text(build_sandbox_install_result_text(execution_result))
-            self._set_current_scan_target(execution_result.destination_kind)
-            self._set_scan_context(
-                execution_result.scan_context_path,
-                self._scan_target_label(execution_result.destination_kind),
+            self._patch_cached_update_report_after_install(
+                target_kind=execution_result.destination_kind,
+                scan_path=execution_result.scan_context_path,
+                inventory=execution_result.inventory,
+                installed_targets=tuple(execution_result.installed_targets),
             )
+            self._show_inventory_for_context(
+                target_kind=execution_result.destination_kind,
+                scan_path=execution_result.scan_context_path,
+                inventory=execution_result.inventory,
+            )
+            self._set_plan_install_output_text(build_sandbox_install_result_text(execution_result))
             if is_real_destination:
                 self._set_status(
                     f"Real Mods install complete: {len(execution_result.installed_targets)} target(s)"
@@ -5242,11 +5277,10 @@ class MainWindow(QMainWindow):
             result.scan_context_path,
             result.inventory,
         )
-        self._render_inventory(result.inventory)
-        self._set_current_scan_target(result.destination_kind)
-        self._set_scan_context(
-            result.scan_context_path,
-            self._scan_target_label(result.destination_kind),
+        self._show_inventory_for_context(
+            target_kind=result.destination_kind,
+            scan_path=result.scan_context_path,
+            inventory=result.inventory,
         )
         self._set_recovery_output_text(_build_install_recovery_execution_result_text(result))
         self._set_status(
@@ -5353,7 +5387,6 @@ class MainWindow(QMainWindow):
         )
 
     def _on_check_updates_completed(self, report: ModUpdateReport) -> None:
-        self._current_update_report = report
         self._apply_update_report(report)
         self._set_inventory_output_text(build_update_report_text(report))
         self._recompute_intake_correlations()
@@ -6127,11 +6160,10 @@ class MainWindow(QMainWindow):
             result.scan_context_path,
             result.inventory,
         )
-        self._render_inventory(result.inventory)
-        self._set_current_scan_target(result.destination_kind)
-        self._set_scan_context(
-            result.scan_context_path,
-            self._scan_target_label(result.destination_kind),
+        self._show_inventory_for_context(
+            target_kind=result.destination_kind,
+            scan_path=result.scan_context_path,
+            inventory=result.inventory,
         )
         self._set_inventory_output_text(build_mod_removal_result_text(result))
         removed_count = len(result.included_mod_paths) if result.included_mod_paths else 1
@@ -6302,11 +6334,10 @@ class MainWindow(QMainWindow):
             result.scan_context_path,
             result.inventory,
         )
-        self._render_inventory(result.inventory)
-        self._set_current_scan_target(result.destination_kind)
-        self._set_scan_context(
-            result.scan_context_path,
-            self._scan_target_label(result.destination_kind),
+        self._show_inventory_for_context(
+            target_kind=result.destination_kind,
+            scan_path=result.scan_context_path,
+            inventory=result.inventory,
         )
         self._set_inventory_output_text(build_mod_rollback_result_text(result))
         destination_label = (
@@ -6487,11 +6518,10 @@ class MainWindow(QMainWindow):
             result.scan_context_path,
             result.inventory,
         )
-        self._render_inventory(result.inventory)
-        self._set_current_scan_target(result.destination_kind)
-        self._set_scan_context(
-            result.scan_context_path,
-            self._scan_target_label(result.destination_kind),
+        self._show_inventory_for_context(
+            target_kind=result.destination_kind,
+            scan_path=result.scan_context_path,
+            inventory=result.inventory,
         )
         self._set_archive_output_text(build_archive_restore_result_text(result))
         self._refresh_archived_entries_after_change()
@@ -6710,18 +6740,36 @@ class MainWindow(QMainWindow):
             update_status=True,
         )
 
-    def _render_inventory(self, inventory: ModsInventory) -> None:
+    def _render_inventory(
+        self,
+        inventory: ModsInventory,
+        *,
+        context_target: str | None = None,
+        context_scan_path: Path | None = None,
+    ) -> None:
         self._current_inventory = inventory
-        self._current_update_report = None
+        cached_report = self._cached_update_report_for_context(
+            target_kind=context_target,
+            scan_path=context_scan_path,
+        )
+        self._current_update_report = cached_report
         self._guided_update_unique_ids = tuple()
         was_sorting = self._mods_table.isSortingEnabled()
         self._mods_table.setSortingEnabled(False)
-        current_target = self._current_scan_target()
-        current_scan_result = self._cached_scan_result_for_target(current_target)
+        current_target = context_target or self._current_scan_target()
+        current_scan_result = (
+            self._cached_scan_result_for_target(current_target)
+            if context_scan_path is None
+            else None
+        )
         inventory_root = (
-            Path(os.path.abspath(os.path.normpath(str(current_scan_result.scan_path.expanduser()))))
-            if current_scan_result is not None
-            else self._configured_scan_path_for_target(current_target)
+            Path(os.path.abspath(os.path.normpath(str(context_scan_path.expanduser()))))
+            if context_scan_path is not None
+            else (
+                Path(os.path.abspath(os.path.normpath(str(current_scan_result.scan_path.expanduser()))))
+                if current_scan_result is not None
+                else self._configured_scan_path_for_target(current_target)
+            )
         )
         row_entries = _build_inventory_row_entries(
             inventory=inventory,
@@ -6853,6 +6901,14 @@ class MainWindow(QMainWindow):
         self._refresh_detected_intakes_for_current_inventory()
         self._refresh_discovery_correlations()
         self._refresh_workflow_surface_states()
+        if cached_report is not None:
+            self._apply_update_report(
+                cached_report,
+                context_target=context_target,
+                context_scan_path=context_scan_path,
+            )
+        else:
+            self._refresh_selected_mod_update_guidance()
 
     def _inventory_mod_row_state_text(
         self,
@@ -6907,8 +6963,139 @@ class MainWindow(QMainWindow):
         )
 
     def _show_scan_result(self, result: ScanResult) -> None:
-        self._render_inventory(result.inventory)
+        self._render_inventory(
+            result.inventory,
+            context_target=result.target_kind,
+            context_scan_path=result.scan_path,
+        )
         self._set_scan_context(result.scan_path, self._scan_target_label(result.target_kind))
+
+    def _show_inventory_for_context(
+        self,
+        *,
+        target_kind: str,
+        scan_path: Path,
+        inventory: ModsInventory,
+    ) -> None:
+        self._render_inventory(
+            inventory,
+            context_target=target_kind,
+            context_scan_path=scan_path,
+        )
+        self._set_current_scan_target(target_kind)
+        self._set_scan_context(scan_path, self._scan_target_label(target_kind))
+
+    def _update_report_context_key(
+        self,
+        *,
+        target_kind: str,
+        scan_path: Path,
+    ) -> str:
+        return f"{target_kind}|{_normalized_path_text(str(scan_path))}"
+
+    def _resolved_update_report_context(
+        self,
+        *,
+        target_kind: str | None = None,
+        scan_path: Path | None = None,
+    ) -> tuple[str, Path] | None:
+        effective_target = target_kind or self._current_scan_target()
+        effective_scan_path = scan_path
+        if effective_scan_path is None:
+            cached_result = self._cached_scan_result_for_target(effective_target)
+            if cached_result is not None:
+                effective_scan_path = cached_result.scan_path
+            else:
+                effective_scan_path = self._configured_scan_path_for_target(effective_target)
+        if effective_scan_path is None:
+            return None
+        return effective_target, effective_scan_path
+
+    def _cached_update_report_for_context(
+        self,
+        *,
+        target_kind: str | None = None,
+        scan_path: Path | None = None,
+    ) -> ModUpdateReport | None:
+        resolved_context = self._resolved_update_report_context(
+            target_kind=target_kind,
+            scan_path=scan_path,
+        )
+        if resolved_context is None:
+            return None
+        effective_target, effective_scan_path = resolved_context
+        return self._update_reports_by_context.get(
+            self._update_report_context_key(
+                target_kind=effective_target,
+                scan_path=effective_scan_path,
+            )
+        )
+
+    def _cache_update_report_for_context(
+        self,
+        report: ModUpdateReport,
+        *,
+        target_kind: str | None = None,
+        scan_path: Path | None = None,
+    ) -> None:
+        resolved_context = self._resolved_update_report_context(
+            target_kind=target_kind,
+            scan_path=scan_path,
+        )
+        if resolved_context is None:
+            return
+        effective_target, effective_scan_path = resolved_context
+        self._update_reports_by_context[
+            self._update_report_context_key(
+                target_kind=effective_target,
+                scan_path=effective_scan_path,
+            )
+        ] = report
+
+    def _patch_cached_update_report_after_install(
+        self,
+        *,
+        target_kind: str,
+        scan_path: Path,
+        inventory: ModsInventory,
+        installed_targets: tuple[Path, ...],
+    ) -> None:
+        report = self._cached_update_report_for_context(
+            target_kind=target_kind,
+            scan_path=scan_path,
+        )
+        if report is None or not installed_targets:
+            return
+        installed_target_keys = {_normalized_path_text(str(path)) for path in installed_targets}
+        mods_by_folder = {
+            _normalized_path_text(str(mod.folder_path)): mod for mod in inventory.mods
+        }
+        merged_report = report
+        changed = False
+        for status in report.statuses:
+            folder_key = _normalized_path_text(str(status.folder_path))
+            if folder_key not in installed_target_keys:
+                continue
+            installed_mod = mods_by_folder.get(folder_key)
+            if installed_mod is None or installed_mod.version == status.installed_version:
+                continue
+            merged_report = _merge_status_into_update_report(
+                merged_report,
+                replace(
+                    status,
+                    installed_version=installed_mod.version,
+                    remote_version=status.remote_version or installed_mod.version,
+                    state="up_to_date",
+                    message="Installed version now matches the tracked update result.",
+                ),
+            )
+            changed = True
+        if changed:
+            self._cache_update_report_for_context(
+                merged_report,
+                target_kind=target_kind,
+                scan_path=scan_path,
+            )
 
     def _configured_scan_path_for_target(self, target: str) -> Path | None:
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
@@ -7510,10 +7697,21 @@ class MainWindow(QMainWindow):
         self._set_inventory_output_text(_build_sandbox_profile_delete_text(result))
         self._set_status(f"Sandbox profile deleted: {result.profile.name}")
 
-    def _apply_update_report(self, report: ModUpdateReport) -> None:
+    def _apply_update_report(
+        self,
+        report: ModUpdateReport,
+        *,
+        context_target: str | None = None,
+        context_scan_path: Path | None = None,
+    ) -> None:
         if self._current_inventory is None:
             return
         self._current_update_report = report
+        self._cache_update_report_for_context(
+            report,
+            target_kind=context_target,
+            scan_path=context_scan_path,
+        )
 
         by_folder_text = {str(status.folder_path): status for status in report.statuses}
         mods_by_folder_text = _inventory_mods_by_folder_text(self._current_inventory)
@@ -7601,7 +7799,11 @@ class MainWindow(QMainWindow):
             name_item.setData(_ROLE_MOD_UPDATE_STATUS, status)
             name_item.setData(
                 _ROLE_REMOTE_LINK,
-                status.remote_link.page_url if status.remote_link is not None else "",
+                (
+                    status.remote_link.page_url
+                    if status.remote_link is not None
+                    else (_manual_source_remote_page_url(saved_intent) or "")
+                ),
             )
             name_item.setData(_ROLE_UPDATE_ACTIONABLE, presentation.actionable)
             name_item.setData(_ROLE_UPDATE_BLOCK_REASON, presentation.blocked_reason)
@@ -9640,6 +9842,7 @@ class MainWindow(QMainWindow):
             mod=selected_mod,
             inventory=current_inventory,
         )
+        manual_remote_page_url = _manual_source_remote_page_url(overlay_intent)
         has_blocked_state = bool(
             status is not None or (isinstance(blocked_reason, str) and blocked_reason.strip())
         )
@@ -9686,6 +9889,44 @@ class MainWindow(QMainWindow):
             self._set_use_suggested_source_state(
                 enabled=False,
                 tooltip="Run Check updates and select a blocked row first.",
+            )
+        elif effective_intent_state == "manual_source_association" and manual_remote_page_url:
+            manual_provider = getattr(overlay_intent, "manual_provider", None)
+            provider_text = f" (provider: {manual_provider})" if manual_provider else ""
+            if is_actionable:
+                if len(actionable_targets) > 1:
+                    target_count = len(actionable_targets)
+                    message = (
+                        f"{target_count} actionable updates selected. "
+                        "Next step: use Open update pages for selected. Cinderleaf will start intake watch if needed."
+                    )
+                else:
+                    message = (
+                        f"{mod_name}: update available via saved manual source. "
+                        "Next step: use Open update page for this selected row. Cinderleaf will start intake watch if needed."
+                    )
+            else:
+                message = (
+                    f"{mod_name}: manual source association is recorded in saved update-source intent. "
+                    "Next step: use Open update page for this selected row."
+                )
+            self._set_inventory_blocked_detail_text(
+                f"Update source intent: manual source association is recorded in app state{provider_text}."
+            )
+            self._set_open_remote_page_state(
+                enabled=True,
+                tooltip=(
+                    f"Open update page for selected mod: {mod_name}. "
+                    "Cinderleaf will start intake watch if needed."
+                ),
+            )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip="A saved manual source already provides a direct update-page action.",
+            )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip="A saved manual source already provides a direct update-page action.",
             )
         elif effective_intent_state is not None:
             intent_state = effective_intent_state

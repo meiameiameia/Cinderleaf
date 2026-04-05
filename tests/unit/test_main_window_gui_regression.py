@@ -2846,7 +2846,7 @@ def test_main_window_use_suggested_source_saves_exact_nexus_match(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Next step: use Open update page for this selected row."
     )
 
 
@@ -3321,6 +3321,102 @@ def test_main_window_actionable_row_marked_no_tracking_overrides_update_availabl
     )
 
 
+def test_main_window_render_inventory_restores_cached_update_report_for_same_context(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    scan_root = Path(r"C:\Mods")
+    main_window._mods_path_input.setText(str(scan_root))
+
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=scan_root,
+    )
+    main_window._apply_update_report(
+        report,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=scan_root,
+    )
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    assert main_window._mods_table.item(alpha_row, 4).text() == "Update available"
+
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=scan_root,
+    )
+    qapp.processEvents()
+
+    assert main_window._current_update_report == report
+    assert main_window._mods_table.item(alpha_row, 4).text() == "Update available"
+
+
+def test_main_window_profile_contexts_restore_their_own_cached_update_reports(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    default_report = _update_report_for_update_actionability_tests()
+    profile_report = ModUpdateReport(
+        statuses=(
+            replace(default_report.statuses[0], state="up_to_date", remote_version="1.0.0"),
+            default_report.statuses[1],
+        )
+    )
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    default_root = Path(r"C:\Mods")
+    profile_root = Path(r"C:\Mods\Profiles\profile_alpha_root")
+    main_window._mods_path_input.setText(str(default_root))
+
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=default_root,
+    )
+    main_window._apply_update_report(
+        default_report,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=default_root,
+    )
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=profile_root,
+    )
+    main_window._apply_update_report(
+        profile_report,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=profile_root,
+    )
+
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=default_root,
+    )
+    qapp.processEvents()
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    assert main_window._mods_table.item(alpha_row, 4).text() == "Update available"
+
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        context_scan_path=profile_root,
+    )
+    qapp.processEvents()
+    assert main_window._mods_table.item(alpha_row, 4).text() == "Up to date"
+
+
 def test_main_window_inventory_guidance_surfaces_persisted_manual_source_intent(
     main_window: MainWindow,
     qapp: QApplication,
@@ -3349,7 +3445,7 @@ def test_main_window_inventory_guidance_surfaces_persisted_manual_source_intent(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Next step: use Open update page for this selected row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3606,14 +3702,14 @@ def test_main_window_inventory_selected_row_can_save_manual_source_association(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Next step: use Open update page for this selected row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
         blocked_detail_label.text()
         == "Update source intent: manual source association is recorded in app state (provider: nexus)."
     )
-    assert open_remote_button.isEnabled() is False
+    assert open_remote_button.isEnabled() is True
     assert (
         main_window._status_strip_label.text()
         == "Saved manual source association for Sample.Beta (provider: nexus)."
@@ -9405,6 +9501,136 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
     assert main_window._findings_box.toPlainText() == "install ok"
 
 
+def test_main_window_install_completion_patches_only_updated_row_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    sandbox_root = Path(r"C:\Sandbox\Mods")
+    main_window._sandbox_mods_path_input.setText(str(sandbox_root))
+    alpha_path = sandbox_root / "AlphaMod"
+    beta_path = sandbox_root / "BetaMod"
+    inventory_before = _mods_inventory(
+        InstalledMod(
+            unique_id="Sample.Alpha",
+            name="Alpha Mod",
+            version="1.0.0",
+            folder_path=alpha_path,
+            manifest_path=alpha_path / "manifest.json",
+            dependencies=tuple(),
+        ),
+        InstalledMod(
+            unique_id="Sample.Beta",
+            name="Beta Mod",
+            version="1.0.0",
+            folder_path=beta_path,
+            manifest_path=beta_path / "manifest.json",
+            dependencies=tuple(),
+        ),
+    )
+    inventory_after = _mods_inventory(
+        InstalledMod(
+            unique_id="Sample.Alpha",
+            name="Alpha Mod",
+            version="1.1.0",
+            folder_path=alpha_path,
+            manifest_path=alpha_path / "manifest.json",
+            dependencies=tuple(),
+        ),
+        InstalledMod(
+            unique_id="Sample.Beta",
+            name="Beta Mod",
+            version="1.0.0",
+            folder_path=beta_path,
+            manifest_path=beta_path / "manifest.json",
+            dependencies=tuple(),
+        ),
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                folder_path=alpha_path,
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+            ModUpdateStatus(
+                unique_id="Sample.Beta",
+                name="Beta Mod",
+                folder_path=beta_path,
+                installed_version="1.0.0",
+                remote_version="1.2.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+        )
+    )
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_root,
+            inventory=inventory_before,
+        )
+    )
+    main_window._render_inventory(
+        inventory_before,
+        context_target=SCAN_TARGET_SANDBOX_MODS,
+        context_scan_path=sandbox_root,
+    )
+    main_window._apply_update_report(
+        report,
+        context_target=SCAN_TARGET_SANDBOX_MODS,
+        context_scan_path=sandbox_root,
+    )
+
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        return QMessageBox.StandardButton.Yes
+
+    def fake_execute(
+        plan: SandboxInstallPlan,
+        *,
+        confirm_real_destination: bool = False,
+    ) -> object:
+        assert plan is sandbox_plan
+        return SimpleNamespace(
+            inventory=inventory_after,
+            destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+            installed_targets=(alpha_path,),
+            archived_targets=tuple(),
+            scan_context_path=sandbox_root,
+        )
+
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
+    monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda operation_name, running_label, started_status, error_title, task_fn, on_success, on_failure=None, **_: on_success(task_fn()),
+    )
+    main_window._pending_install_plan = sandbox_plan
+
+    main_window._on_run_install()
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    beta_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert alpha_row >= 0
+    assert beta_row >= 0
+    assert main_window._mods_table.item(alpha_row, 4).text() == "Up to date"
+    assert main_window._mods_table.item(beta_row, 4).text() == "Update available"
+
+
 def test_main_window_run_install_lock_failure_keeps_dialog_concise_and_details_technical(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -12663,6 +12889,75 @@ def test_main_window_open_remote_page_starts_watch_for_guided_update_when_paths_
     main_window._on_open_remote_page()
 
     assert captured["opened_urls"] == ["https://example.test/alpha"]
+    assert captured["guided_watch_start"] == {
+        "targets": (("Sample.Alpha", "Alpha Mod"),),
+        "busy_button": main_window._open_remote_page_button,
+    }
+
+
+def test_main_window_open_remote_page_uses_saved_manual_source_for_actionable_row(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                folder_path=Path(r"C:\Mods\AlphaMod"),
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+        )
+    )
+    main_window._watched_downloads_path_input.setText(r"C:\Downloads")
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QDesktopServices.openUrl",
+        lambda url: captured.setdefault("opened_urls", []).append(url.toString()) or True,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_start_watch_for_guided_updates",
+        lambda actionable_targets, *, busy_button: captured.setdefault(
+            "guided_watch_start",
+            {
+                "targets": actionable_targets,
+                "busy_button": busy_button,
+            },
+        ),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    main_window._shell_service.set_update_source_intent(
+        "Sample.Alpha",
+        "manual_source_association",
+        manual_provider="nexus",
+        manual_source_key="https://example.test/alpha-manual",
+        manual_source_page_url="https://example.test/alpha-manual",
+    )
+    main_window._refresh_inventory_update_report_view()
+    actionable_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert actionable_row >= 0
+    main_window._mods_table.setCurrentCell(actionable_row, 0)
+    qapp.processEvents()
+
+    open_remote_button = main_window.findChild(
+        QPushButton, "inventory_open_remote_page_button"
+    )
+    assert open_remote_button is not None
+    assert open_remote_button.isEnabled() is True
+
+    main_window._on_open_remote_page()
+
+    assert captured["opened_urls"] == ["https://example.test/alpha-manual"]
     assert captured["guided_watch_start"] == {
         "targets": (("Sample.Alpha", "Alpha Mod"),),
         "busy_button": main_window._open_remote_page_button,
