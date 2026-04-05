@@ -2962,18 +2962,15 @@ class AppShellService:
         sandbox_archive_path_text: str,
         existing_config: AppConfig | None,
     ) -> ModsInventory:
-        excluded_paths = self._resolve_scan_excluded_paths(
+        return self._scan_inventory_with_exclusions(
             scan_target=SCAN_TARGET_SANDBOX_MODS,
             scan_path=sandbox_mods_path,
             configured_archive_text=sandbox_archive_path_text,
             configured_archive_fallback=(
                 existing_config.sandbox_archive_path if existing_config is not None else None
             ),
+            error_prefix="Could not scan sandbox Mods for profiles",
         )
-        try:
-            return scan_mods_directory(sandbox_mods_path, excluded_paths=excluded_paths)
-        except OSError as exc:
-            raise AppShellError(f"Could not scan sandbox Mods for profiles: {exc}") from exc
 
     def _scan_real_inventory_for_profiles(
         self,
@@ -2981,18 +2978,15 @@ class AppShellService:
         real_mods_path: Path,
         existing_config: AppConfig | None,
     ) -> ModsInventory:
-        excluded_paths = self._resolve_scan_excluded_paths(
+        return self._scan_inventory_with_exclusions(
             scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
             scan_path=real_mods_path,
             configured_archive_text="",
             configured_archive_fallback=(
                 existing_config.real_archive_path if existing_config is not None else None
             ),
+            error_prefix="Could not scan real Mods for profiles",
         )
-        try:
-            return scan_mods_directory(real_mods_path, excluded_paths=excluded_paths)
-        except OSError as exc:
-            raise AppShellError(f"Could not scan real Mods for profiles: {exc}") from exc
 
     def _scan_selected_sandbox_profile(
         self,
@@ -3979,31 +3973,24 @@ class AppShellService:
     ) -> ModsCompareResult:
         real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
         sandbox_mods_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
-        real_excluded_paths = self._resolve_scan_excluded_paths(
+        real_inventory = self._scan_inventory_with_exclusions(
             scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
             scan_path=real_mods_path,
             configured_archive_text=real_archive_path_text,
             configured_archive_fallback=(
                 existing_config.real_archive_path if existing_config is not None else None
             ),
+            error_prefix="Could not compare real and sandbox Mods",
         )
-        sandbox_excluded_paths = self._resolve_scan_excluded_paths(
+        sandbox_inventory = self._scan_inventory_with_exclusions(
             scan_target=SCAN_TARGET_SANDBOX_MODS,
             scan_path=sandbox_mods_path,
             configured_archive_text=sandbox_archive_path_text,
             configured_archive_fallback=(
                 existing_config.sandbox_archive_path if existing_config is not None else None
             ),
+            error_prefix="Could not compare real and sandbox Mods",
         )
-
-        try:
-            real_inventory = scan_mods_directory(real_mods_path, excluded_paths=real_excluded_paths)
-            sandbox_inventory = scan_mods_directory(
-                sandbox_mods_path,
-                excluded_paths=sandbox_excluded_paths,
-            )
-        except OSError as exc:
-            raise AppShellError(f"Could not compare real and sandbox Mods: {exc}") from exc
 
         return _build_mods_compare_result(
             real_mods_path=real_mods_path,
@@ -6369,6 +6356,26 @@ class AppShellService:
             deduped.append(path)
 
         return tuple(deduped)
+
+    def _scan_inventory_with_exclusions(
+        self,
+        *,
+        scan_target: ScanTargetKind,
+        scan_path: Path,
+        configured_archive_text: str,
+        configured_archive_fallback: Path | None,
+        error_prefix: str,
+    ) -> ModsInventory:
+        excluded_paths = self._resolve_scan_excluded_paths(
+            scan_target=scan_target,
+            scan_path=scan_path,
+            configured_archive_text=configured_archive_text,
+            configured_archive_fallback=configured_archive_fallback,
+        )
+        try:
+            return scan_mods_directory(scan_path, excluded_paths=excluded_paths)
+        except OSError as exc:
+            raise AppShellError(f"{error_prefix}: {exc}") from exc
 
     @staticmethod
     def _archive_source_for_scan_target(scan_target: ScanTargetKind) -> ArchiveSourceKind:
