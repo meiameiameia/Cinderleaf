@@ -4476,19 +4476,19 @@ class AppShellService:
             )
         )
 
-        update_available_keys: dict[str, str] = {}
+        update_available_statuses: dict[str, ModUpdateStatus] = {}
         if update_report is not None:
             for status in update_report.statuses:
                 if status.state != "update_available":
                     continue
                 key = canonicalize_unique_id(status.unique_id)
-                if key not in update_available_keys:
-                    update_available_keys[key] = status.unique_id
+                if key not in update_available_statuses:
+                    update_available_statuses[key] = status
 
         matched_update_available = _sorted_unique_ids(
             unique_id
             for unique_id in update_candidate_unique_ids
-            if canonicalize_unique_id(unique_id) in update_available_keys
+            if canonicalize_unique_id(unique_id) in update_available_statuses
         )
         guided_keys = {canonicalize_unique_id(value) for value in guided_update_unique_ids}
         matched_guided = _sorted_unique_ids(
@@ -4515,6 +4515,21 @@ class AppShellService:
                 matched_update_available=matched_update_available,
                 matched_guided=matched_guided,
             )
+            if comparison_state == "same_version_installed":
+                remote_version_conflicts = _same_version_remote_update_conflict_details(
+                    comparisons=version_comparisons,
+                    update_available_statuses=update_available_statuses,
+                )
+                if remote_version_conflicts:
+                    detail = remote_version_conflicts[0]
+                    summary = (
+                        f"Downloaded package manifest still matches the installed version in {comparison_target_label}, "
+                        f"even though the remote page currently reports a newer version. {detail}"
+                    )
+                    next_step = (
+                        "Open Install stays available for inspection, but Open as update stays off until the "
+                        "downloaded package itself carries the newer manifest version."
+                    )
 
         return IntakeUpdateCorrelation(
             intake=intake,
@@ -10156,6 +10171,31 @@ def _first_version_comparison_detail(
         f"{target_label}: package {entry.package_version or 'unknown'} could not be compared against "
         f"installed {entry.installed_version or 'unknown'}."
     )
+
+
+def _same_version_remote_update_conflict_details(
+    *,
+    comparisons: tuple[IntakeVersionComparison, ...],
+    update_available_statuses: Mapping[str, ModUpdateStatus],
+) -> tuple[str, ...]:
+    details: list[str] = []
+    for entry in comparisons:
+        if entry.state != "same" or not entry.installed_unique_id:
+            continue
+        status = update_available_statuses.get(canonicalize_unique_id(entry.installed_unique_id))
+        if status is None or not status.remote_version:
+            continue
+        remote_comparison = compare_versions(
+            entry.installed_version or "",
+            status.remote_version,
+        )
+        if remote_comparison is None or remote_comparison >= 0:
+            continue
+        details.append(
+            f"{entry.installed_unique_id}: installed {entry.installed_version or 'unknown'} matches the package version, "
+            f"but the remote page reports {status.remote_version}."
+        )
+    return tuple(details)
 
 
 def _evaluate_sandbox_plan_dependencies(

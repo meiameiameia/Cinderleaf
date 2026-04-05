@@ -7881,6 +7881,67 @@ def test_correlate_intake_with_updates_new_install_candidate_has_default_flow_me
     assert "plan install" in correlation.next_step.casefold()
 
 
+def test_correlate_intake_with_updates_flags_remote_page_newer_but_package_same_version(
+    tmp_path: Path,
+) -> None:
+    from sdvmm.domain.models import InstalledMod, ModsInventory, PackageModEntry
+
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    mods_root = tmp_path / "Mods"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Exists",
+                name="Sample Exists",
+                version="1.1.0",
+                folder_path=mods_root / "SampleExists",
+                manifest_path=mods_root / "SampleExists" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    intake = _intake_result(
+        package_path=tmp_path / "same-package.zip",
+        classification="update_replace_candidate",
+        matched_installed_unique_ids=tuple(),
+        mods=(
+            PackageModEntry(
+                name="Sample Exists",
+                unique_id="Sample.Exists",
+                version="1.1.0",
+                manifest_path="SampleExists/manifest.json",
+            ),
+        ),
+    )
+    report = _update_report(
+        _update_status(
+            unique_id="Sample.Exists",
+            state="update_available",
+            installed_version="1.1.0",
+            remote_version="1.2.0",
+            folder_path=mods_root / "SampleExists",
+        ),
+    )
+
+    correlation = service.correlate_intake_with_updates(
+        intake=intake,
+        inventory=inventory,
+        comparison_target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        update_report=report,
+        guided_update_unique_ids=tuple(),
+    )
+
+    assert correlation.comparison_state == "same_version_installed"
+    assert correlation.actionable_as_update is False
+    assert "remote page currently reports a newer version" in correlation.summary.casefold()
+    assert "downloaded package itself carries the newer manifest version" in correlation.next_step.casefold()
+
+
 def _create_launchable_game_install(game_path: Path, *, with_smapi: bool = True) -> Path:
     game_path.mkdir()
     (game_path / "Mods").mkdir()
@@ -7936,6 +7997,7 @@ def _intake_result(
         "unusable_package",
     ],
     matched_installed_unique_ids: tuple[str, ...],
+    mods: tuple[PackageModEntry, ...] = tuple(),
 ):
     from sdvmm.domain.models import DownloadsIntakeResult
 
@@ -7943,20 +8005,27 @@ def _intake_result(
         package_path=package_path,
         classification=classification,
         message="test",
-        mods=tuple(),
+        mods=mods,
         matched_installed_unique_ids=matched_installed_unique_ids,
         warnings=tuple(),
         findings=tuple(),
     )
 
 
-def _update_status(*, unique_id: str, state: UpdateState) -> ModUpdateStatus:
+def _update_status(
+    *,
+    unique_id: str,
+    state: UpdateState,
+    installed_version: str = "1.0.0",
+    remote_version: str | None = "2.0.0",
+    folder_path: Path | None = None,
+) -> ModUpdateStatus:
     return ModUpdateStatus(
         unique_id=unique_id,
         name=unique_id,
-        folder_path=Path("/tmp") / unique_id,
-        installed_version="1.0.0",
-        remote_version="2.0.0",
+        folder_path=(folder_path or (Path("/tmp") / unique_id)),
+        installed_version=installed_version,
+        remote_version=remote_version,
         state=state,
         remote_link=None,
         message=None,
