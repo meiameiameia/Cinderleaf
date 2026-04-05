@@ -94,6 +94,7 @@ Priority extractions:
 
 1. Inventory/update row presentation module
 - Move row-state formatting, remote-link overlay behavior, and status label/tooltip mapping out of `MainWindow`.
+- Status: first extraction pass done via dedicated row-application helpers inside `MainWindow`; full module split still pending.
 
 2. Update guidance controller
 - Extract `_refresh_selected_mod_update_guidance(...)` into a focused helper/controller module.
@@ -148,9 +149,9 @@ Add durable checks for:
 
 ## Immediate Next Safe Increment
 
-`inventory/update row presentation extraction`
+`update guidance controller extraction`
 
 Reason:
-- phase 1 now has the measurement groundwork it needed
-- the next biggest concentration risk is still `main_window.py`
-- extracting row presentation logic is a better anti-drift move than immediately piling more behavior into the window class
+- the first row-presentation extraction pass is already landed
+- `_refresh_selected_mod_update_guidance(...)` is still one of the largest concentrated behavior seams in `main_window.py`
+- extracting guidance logic next will reduce future feature drift more than piling additional status logic into the window class
