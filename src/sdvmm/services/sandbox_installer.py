@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import errno
+import json
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 import shutil
+from typing import Any
 import uuid
 import zipfile
 
@@ -93,10 +95,16 @@ def build_sandbox_install_plan(
                 preserved_artifact_names = _config_artifact_names(target_path)
                 if preserved_artifact_names:
                     overwrite_entries_with_preserved_config += 1
-                    warnings.append(
+                    preservation_warning = (
                         "Existing config artifacts will be preserved during replace: "
                         f"{', '.join(preserved_artifact_names)}."
                     )
+                    if "config.json" in preserved_artifact_names:
+                        preservation_warning += (
+                            " When both old and new config.json exist, Cinderleaf adds new default "
+                            "settings without changing existing user values."
+                        )
+                    warnings.append(preservation_warning)
             else:
                 warnings.append("Target folder already exists. Overwrite is disabled for this plan.")
                 can_install = False
@@ -338,7 +346,9 @@ def _build_plan_warnings(
             "Recovery is best-effort per entry and not a full transaction."
         )
         warnings.append(
-            "Overwrite updates preserve existing config artifacts by default when present."
+            "Overwrite updates preserve existing config artifacts by default when present. "
+            "When both old and new config.json exist, Cinderleaf adds new default settings "
+            "without changing existing user values."
         )
 
     if any(not entry.can_install for entry in entries):
@@ -474,6 +484,11 @@ def _restore_preserved_config_artifacts(*, archived_target: Path, target_path: P
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             if destination_path.exists() and destination_path.is_dir():
                 _remove_path(destination_path)
+            if _try_merge_preserved_config_json(
+                archived_config_path=artifact,
+                installed_config_path=destination_path,
+            ):
+                continue
             shutil.copy2(artifact, destination_path)
             continue
 
@@ -489,6 +504,67 @@ def _restore_preserved_config_artifacts(*, archived_target: Path, target_path: P
             if nested_destination_path.exists() and nested_destination_path.is_dir():
                 _remove_path(nested_destination_path)
             shutil.copy2(source_file, nested_destination_path)
+
+
+def _try_merge_preserved_config_json(
+    *,
+    archived_config_path: Path,
+    installed_config_path: Path,
+) -> bool:
+    if archived_config_path.name.casefold() != "config.json":
+        return False
+    if not installed_config_path.exists() or not installed_config_path.is_file():
+        return False
+
+    try:
+        preserved_config = json.loads(archived_config_path.read_text(encoding="utf-8"))
+        installed_config = json.loads(installed_config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+
+    if not isinstance(preserved_config, dict) or not isinstance(installed_config, dict):
+        return False
+
+    merged_config, added_key_count = _merge_json_config_objects(
+        preserved_config,
+        installed_config,
+    )
+    if added_key_count <= 0:
+        return False
+
+    installed_config_path.write_text(
+        json.dumps(merged_config, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def _merge_json_config_objects(
+    preserved_config: dict[str, Any],
+    installed_config: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
+    merged: dict[str, Any] = {}
+    added_key_count = 0
+
+    for key, preserved_value in preserved_config.items():
+        installed_value = installed_config.get(key)
+        if isinstance(preserved_value, dict) and isinstance(installed_value, dict):
+            merged_value, nested_added_key_count = _merge_json_config_objects(
+                preserved_value,
+                installed_value,
+            )
+            merged[key] = merged_value
+            added_key_count += nested_added_key_count
+            continue
+        merged[key] = preserved_value
+
+    for key, installed_value in installed_config.items():
+        if key in merged:
+            continue
+        merged[key] = installed_value
+        added_key_count += 1
+
+    return merged, added_key_count
 
 
 def _move_path(source: Path, destination: Path) -> None:
