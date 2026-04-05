@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 import os
+import re
 import sys
 from types import SimpleNamespace
 from pathlib import Path
@@ -158,6 +159,7 @@ from sdvmm.domain.models import (
 from sdvmm.domain.scan_codes import DIRECT_MOD, MULTI_MOD_CONTAINER, NESTED_MOD_CONTAINER
 from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.domain.dependency_codes import SATISFIED
+from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB, DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.smapi_codes import (
     SMAPI_DETECTED_VERSION_KNOWN,
     SMAPI_NOT_DETECTED_FOR_UPDATE,
@@ -300,6 +302,12 @@ def _inventory_group_member_sort_key(mod: InstalledMod) -> tuple[int, str, str]:
 
 def _inventory_group_base_name(mod: InstalledMod) -> str:
     name = mod.name.strip()
+    while name.startswith("[") and "]" in name:
+        _, _, remainder = name.partition("]")
+        stripped = remainder.strip()
+        if not stripped:
+            break
+        name = stripped
     suffix_start = name.rfind(" (")
     if suffix_start > 0 and name.endswith(")"):
         return name[:suffix_start].strip()
@@ -363,6 +371,43 @@ def _inventory_has_direct_dependency_link(left: InstalledMod, right: InstalledMo
         if dependency.unique_id.strip()
     }
     return right_id in left_deps or left_id in right_deps
+
+
+def _should_restore_no_tracking_when_source_intent_cleared(
+    *,
+    mod: InstalledMod,
+    inventory: ModsInventory,
+) -> bool:
+    if _inventory_effective_update_keys(mod):
+        return False
+    if not (
+        mod.name.strip().startswith("[") or mod.folder_path.name.strip().startswith("[")
+    ):
+        return False
+    base_name = _inventory_group_base_name(mod).strip().casefold()
+    if not base_name:
+        return False
+    mod_path_key = _inventory_path_lookup_key(mod.folder_path)
+    for candidate in inventory.mods + inventory.disabled_mods:
+        if _inventory_path_lookup_key(candidate.folder_path) == mod_path_key:
+            continue
+        if _inventory_group_base_name(candidate).strip().casefold() != base_name:
+            continue
+        if _inventory_effective_update_keys(candidate):
+            return True
+    return False
+
+
+def _synthetic_source_intent_state_for_inventory_mod(
+    *,
+    mod: InstalledMod | None,
+    inventory: ModsInventory,
+) -> str | None:
+    if mod is None:
+        return None
+    if _should_restore_no_tracking_when_source_intent_cleared(mod=mod, inventory=inventory):
+        return "no_tracking"
+    return None
 
 
 def _inventory_depended_on_unique_ids(inventory: ModsInventory) -> set[str]:
@@ -460,6 +505,8 @@ def _update_status_requires_api_key(status: ModUpdateStatus) -> bool:
 
 
 def _update_status_display_label(status: ModUpdateStatus) -> str:
+    if _is_smapi_built_in_unique_id(status.unique_id):
+        return "Built-in"
     if status.state == "update_available":
         return "Update available"
     if status.state == "up_to_date":
@@ -484,6 +531,8 @@ def _update_status_display_label(status: ModUpdateStatus) -> str:
 
 
 def _blocked_reason_for_update_status(status: ModUpdateStatus) -> str:
+    if _is_smapi_built_in_unique_id(status.unique_id):
+        return "This row is bundled with SMAPI and does not need a separate source-repair workflow."
     sanitized_message = _sanitize_update_status_message(status.message)
     if status.state == "up_to_date":
         return "Up to date; no update action required."
@@ -515,6 +564,8 @@ def _blocked_reason_for_update_status(status: ModUpdateStatus) -> str:
 def _diagnostics_text_for_update_status(status: ModUpdateStatus | None) -> str | None:
     if status is None:
         return None
+    if _is_smapi_built_in_unique_id(status.unique_id):
+        return "Source fix: this SMAPI built-in is bundled with SMAPI and does not need a separate remote source."
     if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
         return "Source fix: this row is intentionally marked local/private."
     if status.update_source_diagnostic == MISSING_UPDATE_KEY:
@@ -547,9 +598,210 @@ def _diagnostics_text_for_update_status(status: ModUpdateStatus | None) -> str |
 def _supports_discovery_source_hint(status: ModUpdateStatus) -> bool:
     if status.state not in {"no_remote_link", "metadata_unavailable"}:
         return False
+    if _is_smapi_built_in_unique_id(status.unique_id):
+        return False
     if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
         return False
     return True
+
+
+def _supports_auto_source_suggestion(status: ModUpdateStatus) -> bool:
+    if not _supports_discovery_source_hint(status):
+        return False
+    if _update_status_requires_api_key(status):
+        return False
+    return status.update_source_diagnostic in {
+        MISSING_UPDATE_KEY,
+        UNSUPPORTED_UPDATE_KEY_FORMAT,
+        NO_PROVIDER_MAPPING,
+        REMOTE_METADATA_LOOKUP_FAILED,
+        METADATA_SOURCE_ISSUE,
+    }
+
+
+def _discovery_entry_matches_unique_id(entry: ModDiscoveryEntry, unique_id: str) -> bool:
+    target_key = canonicalize_unique_id(unique_id)
+    for candidate in (entry.unique_id, *entry.alternate_unique_ids):
+        normalized = str(candidate).strip()
+        if normalized and canonicalize_unique_id(normalized) == target_key:
+            return True
+    return False
+
+
+def _github_repo_slug_from_url(url: str) -> str | None:
+    match = re.fullmatch(
+        r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:[/?#].*)?",
+        url.strip(),
+    )
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _nexus_page_url_from_url(url: str) -> str | None:
+    match = re.fullmatch(
+        r"https?://(?:www\.)?nexusmods\.com/[A-Za-z0-9_-]+/mods/\d+(?:[/?#].*)?",
+        url.strip(),
+    )
+    if match is None:
+        return None
+    return url.strip()
+
+
+def _manual_source_association_from_discovery_correlation(
+    correlation: DiscoveryContextCorrelation,
+    *,
+    unique_id: str,
+) -> tuple[str, str, str] | None:
+    entry = correlation.entry
+    if not _discovery_entry_matches_unique_id(entry, unique_id):
+        return None
+
+    page_url = (entry.source_page_url or "").strip()
+    if not page_url:
+        return None
+
+    if entry.source_provider == DISCOVERY_SOURCE_NEXUS:
+        return ("nexus", page_url, page_url)
+
+    if entry.source_provider == DISCOVERY_SOURCE_GITHUB:
+        repo_slug = _github_repo_slug_from_url(page_url)
+        if repo_slug:
+            return ("github", repo_slug, page_url)
+
+    github_repo_slug = _github_repo_slug_from_url(page_url)
+    if github_repo_slug:
+        return ("github", github_repo_slug, page_url)
+
+    nexus_page_url = _nexus_page_url_from_url(page_url)
+    if nexus_page_url:
+        return ("nexus", nexus_page_url, nexus_page_url)
+
+    return None
+
+
+def _best_auto_source_suggestion(
+    *,
+    unique_id: str,
+    correlations: tuple[DiscoveryContextCorrelation, ...],
+) -> tuple[str, str, str] | None:
+    suggestions: dict[tuple[str, str, str], tuple[str, str, str]] = {}
+    for correlation in correlations:
+        suggestion = _manual_source_association_from_discovery_correlation(
+            correlation,
+            unique_id=unique_id,
+        )
+        if suggestion is None:
+            continue
+        key = tuple(part.casefold() for part in suggestion)
+        suggestions.setdefault(key, suggestion)
+    if len(suggestions) != 1:
+        return None
+    return next(iter(suggestions.values()))
+
+
+def _best_manual_source_prefill(
+    *,
+    unique_id: str,
+    correlations: tuple[DiscoveryContextCorrelation, ...],
+) -> tuple[str | None, str | None, str | None] | None:
+    auto_suggestion = _best_auto_source_suggestion(
+        unique_id=unique_id,
+        correlations=correlations,
+    )
+    if auto_suggestion is not None:
+        provider, source_key, page_url = auto_suggestion
+        return provider, source_key, page_url
+
+    for correlation in correlations:
+        entry = correlation.entry
+        if not _discovery_entry_matches_unique_id(entry, unique_id):
+            continue
+        page_url = (entry.source_page_url or "").strip()
+        if not page_url:
+            continue
+        if entry.source_provider == DISCOVERY_SOURCE_NEXUS:
+            return "nexus", None, page_url
+        if entry.source_provider == DISCOVERY_SOURCE_GITHUB:
+            return "github", None, page_url
+        return None, None, page_url
+    return None
+
+
+def _is_smapi_built_in_unique_id(unique_id: str) -> bool:
+    return unique_id.strip().startswith("SMAPI.")
+
+
+def _row_needs_source_repair(
+    *,
+    status: ModUpdateStatus | None,
+    saved_intent_state: str | None,
+) -> bool:
+    if status is None or not _supports_discovery_source_hint(status):
+        return False
+    if saved_intent_state in {"local_private_mod", "no_tracking"}:
+        return False
+    return True
+
+
+def _single_mod_inventory(mod: InstalledMod) -> ModsInventory:
+    return ModsInventory(
+        mods=(mod,),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+
+
+def _inventory_mods_by_folder_text(inventory: ModsInventory) -> dict[str, InstalledMod]:
+    return {
+        _normalized_path_text(str(mod.folder_path)): mod
+        for mod in inventory.mods + inventory.disabled_mods
+    }
+
+
+def _inventory_mod_for_folder_text(
+    *,
+    folder_path_text: str | None,
+    mods_by_folder_text: dict[str, InstalledMod],
+) -> InstalledMod | None:
+    if not isinstance(folder_path_text, str) or not folder_path_text.strip():
+        return None
+    return mods_by_folder_text.get(_normalized_path_text(folder_path_text))
+
+
+def _effective_inventory_source_intent_state(
+    *,
+    saved_intent_state: str | None,
+    mod: InstalledMod | None,
+    inventory: ModsInventory,
+) -> str | None:
+    if saved_intent_state is not None:
+        return saved_intent_state
+    return _synthetic_source_intent_state_for_inventory_mod(mod=mod, inventory=inventory)
+
+
+def _merge_status_into_update_report(
+    report: ModUpdateReport,
+    replacement_status: ModUpdateStatus,
+) -> ModUpdateReport:
+    replacement_key = canonicalize_unique_id(replacement_status.unique_id)
+    replacement_folder = _normalized_path_text(str(replacement_status.folder_path))
+    merged_statuses: list[ModUpdateStatus] = []
+    replaced = False
+    for status in report.statuses:
+        status_key = canonicalize_unique_id(status.unique_id)
+        status_folder = _normalized_path_text(str(status.folder_path))
+        if status_key == replacement_key and status_folder == replacement_folder:
+            merged_statuses.append(replacement_status)
+            replaced = True
+        else:
+            merged_statuses.append(status)
+    if not replaced:
+        merged_statuses.append(replacement_status)
+    return ModUpdateReport(statuses=tuple(merged_statuses))
 
 
 def _inventory_row_status_candidates(
@@ -583,9 +835,31 @@ def _inventory_row_status_candidates(
     return tuple(statuses)
 
 
-def _preferred_inventory_row_status(statuses: tuple[ModUpdateStatus, ...]) -> ModUpdateStatus | None:
+def _preferred_inventory_row_status(
+    statuses: tuple[ModUpdateStatus, ...],
+    *,
+    mods_by_folder_text: dict[str, InstalledMod] | None = None,
+) -> ModUpdateStatus | None:
     if not statuses:
         return None
+
+    statuses_with_declared_keys = tuple(
+        status
+        for status in statuses
+        if mods_by_folder_text is not None
+        and _inventory_effective_update_keys(
+            mods_by_folder_text.get(_normalized_path_text(str(status.folder_path)))
+            or InstalledMod(
+                unique_id=status.unique_id,
+                name=status.name,
+                version=status.installed_version or "",
+                folder_path=status.folder_path,
+                manifest_path=status.folder_path / "manifest.json",
+                dependencies=tuple(),
+            )
+        )
+    )
+    candidate_statuses = statuses_with_declared_keys or statuses
 
     def priority(status: ModUpdateStatus) -> tuple[int, int, str]:
         if status.state == "update_available":
@@ -601,7 +875,7 @@ def _preferred_inventory_row_status(statuses: tuple[ModUpdateStatus, ...]) -> Mo
         has_remote_link = 0 if status.remote_link is not None else 1
         return (rank, has_remote_link, str(status.folder_path).casefold())
 
-    return min(statuses, key=priority)
+    return min(candidate_statuses, key=priority)
 
 
 def _build_inventory_row_entries(
@@ -885,6 +1159,10 @@ class MainWindow(QMainWindow):
         self._mods_update_actionability_filter_combo.addItem("all", "all")
         self._mods_update_actionability_filter_combo.addItem("actionable", "actionable")
         self._mods_update_actionability_filter_combo.addItem("blocked", "blocked")
+        self._mods_update_actionability_filter_combo.addItem(
+            "needs source repair",
+            "needs_source_repair",
+        )
         self._discovery_filter_input = QLineEdit()
         self._discovery_filter_input.setObjectName("discovery_filter_input")
         self._discovery_filter_input.setPlaceholderText("Filter discovery results")
@@ -992,12 +1270,15 @@ class MainWindow(QMainWindow):
         self._manual_source_intent_button.setObjectName(
             "inventory_manual_source_association_button"
         )
+        self._test_source_button = QPushButton("Test source")
+        self._test_source_button.setObjectName("inventory_test_source_button")
         self._clear_source_intent_button = QPushButton("Clear saved intent")
         self._clear_source_intent_button.setObjectName("inventory_clear_source_intent_button")
         for button in (
             self._mark_local_private_button,
             self._disable_tracking_button,
             self._manual_source_intent_button,
+            self._test_source_button,
             self._clear_source_intent_button,
         ):
             _set_secondary_button_style(button)
@@ -1016,6 +1297,7 @@ class MainWindow(QMainWindow):
         inventory_source_intent_buttons_row.addWidget(self._mark_local_private_button)
         inventory_source_intent_buttons_row.addWidget(self._disable_tracking_button)
         inventory_source_intent_buttons_row.addWidget(self._manual_source_intent_button)
+        inventory_source_intent_buttons_row.addWidget(self._test_source_button)
         inventory_source_intent_buttons_row.addWidget(self._clear_source_intent_button)
         inventory_source_intent_buttons_row.addStretch(1)
         inventory_source_intent_actions_layout.addLayout(inventory_source_intent_buttons_row)
@@ -1215,6 +1497,12 @@ class MainWindow(QMainWindow):
         self._find_source_hint_button.setEnabled(False)
         self._find_source_hint_button.setToolTip(
             "Select a blocked mod row to search Discover for SMAPI compatibility hints."
+        )
+        self._use_suggested_source_button = QPushButton("Use suggested source")
+        self._use_suggested_source_button.setObjectName("inventory_use_suggested_source_button")
+        self._use_suggested_source_button.setEnabled(False)
+        self._use_suggested_source_button.setToolTip(
+            "Select a blocked mod row to search Discover, auto-save a safe source when possible, or prefill Manual source from the best available page hint."
         )
         for stats_label in (
             self._mods_filter_stats_label,
@@ -1736,6 +2024,7 @@ class MainWindow(QMainWindow):
         self._manual_source_intent_button.clicked.connect(
             self._on_set_selected_mod_manual_source_intent
         )
+        self._test_source_button.clicked.connect(self._on_test_selected_mod_source)
         self._clear_source_intent_button.clicked.connect(self._on_clear_selected_mod_source_intent)
         self._prepare_selected_updates_button.clicked.connect(self._on_open_selected_update_pages)
         self._sync_selected_to_sandbox_button.clicked.connect(
@@ -2370,6 +2659,9 @@ class MainWindow(QMainWindow):
         self._find_source_hint_button.clicked.connect(self._on_find_selected_mod_source_hint)
         _set_utility_button_style(self._find_source_hint_button)
         source_row.addWidget(self._find_source_hint_button)
+        self._use_suggested_source_button.clicked.connect(self._on_use_selected_mod_suggested_source)
+        _set_utility_button_style(self._use_suggested_source_button)
+        source_row.addWidget(self._use_suggested_source_button)
         inventory_action_band_layout.addLayout(source_row)
         self._remove_mod_button = QPushButton("Archive selected mod")
         self._remove_mod_button.clicked.connect(self._on_remove_selected_mod)
@@ -5219,6 +5511,178 @@ class MainWindow(QMainWindow):
         )
         self._on_search_discovery()
 
+    def _on_use_selected_mod_suggested_source(self) -> None:
+        selected_context = self._selected_inventory_auto_source_context()
+        if selected_context is None:
+            self._set_status(
+                "Select a blocked installed mod row that still needs source repair before using suggested source."
+            )
+            return
+        selected_unique_id, mod_name = selected_context
+        query_text = selected_unique_id.strip() or mod_name.strip()
+        if not query_text:
+            self._set_status("Selected row does not have a usable query for Discover.")
+            return
+        self._discovery_query_input.setText(query_text)
+        self._discovery_filter_input.clear()
+        self._set_status(
+            f"Searching Discover for a suggested source for {selected_unique_id}. "
+            "Cinderleaf will auto-save only an exact high-confidence Nexus or GitHub match."
+        )
+        self._run_background_operation(
+            operation_name="Suggested source search",
+            running_label="Suggested source",
+            started_status="Searching discovery index for a suggested source...",
+            error_title="Suggested source search failed",
+            task_fn=lambda _query_text=query_text: self._shell_service.search_mod_discovery(
+                query_text=_query_text,
+            ),
+            on_success=lambda discovery_result, _selected_unique_id=selected_unique_id, _mod_name=mod_name: self._on_use_selected_mod_suggested_source_completed(
+                discovery_result,
+                selected_unique_id=_selected_unique_id,
+                mod_name=_mod_name,
+            ),
+            busy_button=self._use_suggested_source_button,
+            busy_button_text="Searching...",
+        )
+
+    def _on_use_selected_mod_suggested_source_completed(
+        self,
+        discovery_result: ModDiscoveryResult,
+        *,
+        selected_unique_id: str,
+        mod_name: str,
+    ) -> None:
+        self._on_search_discovery_completed(discovery_result)
+        suggestion = _best_auto_source_suggestion(
+            unique_id=selected_unique_id,
+            correlations=self._discovery_correlations,
+        )
+        if suggestion is not None:
+            provider, source_key, page_url = suggestion
+            try:
+                self._shell_service.set_update_source_intent(
+                    selected_unique_id,
+                    "manual_source_association",
+                    manual_provider=provider,
+                    manual_source_key=source_key,
+                    manual_source_page_url=page_url,
+                )
+            except AppShellError as exc:
+                self._set_status(str(exc))
+                return
+            self._refresh_selected_mod_update_guidance()
+            self._set_status(
+                f"Saved suggested source for {mod_name} ({selected_unique_id}) from Discover (provider: {provider})."
+            )
+            return
+
+        prefill = _best_manual_source_prefill(
+            unique_id=selected_unique_id,
+            correlations=self._discovery_correlations,
+        )
+        if prefill is None:
+            self._context_tabs.setCurrentWidget(self._discovery_page)
+            self._set_status(
+                f"No safe suggested source could be prepared for {selected_unique_id}. "
+                "Review Discover results for hints or save a manual source."
+            )
+            return
+
+        existing_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
+        provider, source_key, page_url = prefill
+        association = self._prompt_selected_mod_manual_source_intent(
+            mod_name=mod_name,
+            unique_id=selected_unique_id,
+            existing_intent=existing_intent,
+            initial_provider=provider,
+            initial_source_key=source_key,
+            initial_page_url=page_url,
+        )
+        if association is None:
+            return
+        saved_association = self._save_manual_source_association(
+            unique_id=selected_unique_id,
+            association=association,
+        )
+        if saved_association is None:
+            return
+        saved_provider, _, _ = saved_association
+        self._refresh_selected_mod_update_guidance()
+        self._set_status(
+            f"Saved manual source association for {mod_name} ({selected_unique_id}) from Discover guidance (provider: {saved_provider})."
+        )
+
+    def _on_test_selected_mod_source(self) -> None:
+        selected_context = self._selected_inventory_source_intent_context()
+        selected_mod = self._selected_inventory_installed_mod()
+        if selected_context is None or selected_mod is None:
+            self._set_status("Select a blocked installed mod row with a saved manual source before testing.")
+            return
+        selected_unique_id, mod_name = selected_context
+        saved_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
+        if getattr(saved_intent, "intent_state", None) != "manual_source_association":
+            self._set_status("Save a manual source association before testing it.")
+            return
+        test_inventory = _single_mod_inventory(selected_mod)
+        self._run_background_operation(
+            operation_name="Source test",
+            running_label="Source test",
+            started_status="Testing the selected manual source association...",
+            error_title="Source test failed",
+            task_fn=lambda _inventory=test_inventory: self._shell_service.check_updates(
+                _inventory,
+                nexus_api_key_text=self._nexus_api_key_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=lambda report, _selected_unique_id=selected_unique_id, _mod_name=mod_name: self._on_test_selected_mod_source_completed(
+                report,
+                selected_unique_id=_selected_unique_id,
+                mod_name=_mod_name,
+            ),
+            busy_button=self._test_source_button,
+            busy_button_text="Testing...",
+        )
+
+    def _on_test_selected_mod_source_completed(
+        self,
+        report: ModUpdateReport,
+        *,
+        selected_unique_id: str,
+        mod_name: str,
+    ) -> None:
+        tested_status = next(
+            (
+                status
+                for status in report.statuses
+                if canonicalize_unique_id(status.unique_id)
+                == canonicalize_unique_id(selected_unique_id)
+            ),
+            None,
+        )
+        if tested_status is None:
+            self._set_status(f"Source test for {mod_name} did not return a usable result.")
+            return
+        if self._current_update_report is not None:
+            merged_report = _merge_status_into_update_report(
+                self._current_update_report,
+                tested_status,
+            )
+            self._apply_update_report(merged_report)
+        else:
+            self._refresh_selected_mod_update_guidance()
+
+        if tested_status.state in {"update_available", "up_to_date", "unable_to_determine"}:
+            self._set_status(
+                f"Source test succeeded for {mod_name} ({selected_unique_id}): {_update_status_display_label(tested_status)}."
+            )
+            return
+
+        self._set_status(
+            f"Source test for {mod_name} ({selected_unique_id}) is still blocked: "
+            f"{_blocked_reason_for_update_status(tested_status)}"
+        )
+
     def _refresh_smapi_troubleshooting_surface(self) -> None:
         active_operation = self._active_operation_name
         if active_operation in {"SMAPI log check", "SMAPI log load", "Startup SMAPI log check"}:
@@ -7005,6 +7469,7 @@ class MainWindow(QMainWindow):
         self._current_update_report = report
 
         by_folder_text = {str(status.folder_path): status for status in report.statuses}
+        mods_by_folder_text = _inventory_mods_by_folder_text(self._current_inventory)
         was_sorting = self._mods_table.isSortingEnabled()
         self._mods_table.setSortingEnabled(False)
         for row in range(self._mods_table.rowCount()):
@@ -7030,7 +7495,8 @@ class MainWindow(QMainWindow):
                 _inventory_row_status_candidates(
                     name_item=name_item,
                     by_folder_text=by_folder_text,
-                )
+                ),
+                mods_by_folder_text=mods_by_folder_text,
             )
             if status is None:
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
@@ -7053,10 +7519,55 @@ class MainWindow(QMainWindow):
                 continue
 
             actionable, blocked_reason = _update_status_actionability(status)
+            unique_id_item = self._mods_table.item(row, 1)
+            version_item = self._mods_table.item(row, 2)
+            selected_mod = _inventory_mod_for_folder_text(
+                folder_path_text=str(status.folder_path),
+                mods_by_folder_text=mods_by_folder_text,
+            )
+            saved_intent = self._resolve_inventory_update_source_intent(status.unique_id)
+            effective_intent_state = _effective_inventory_source_intent_state(
+                saved_intent_state=getattr(saved_intent, "intent_state", None),
+                mod=selected_mod,
+                inventory=self._current_inventory,
+            )
+            if effective_intent_state == "no_tracking":
+                actionable = False
+                _, _, blocked_reason = _inventory_guidance_for_update_source_intent(
+                    mod_name=status.name,
+                    intent_state="no_tracking",
+                    manual_provider=None,
+                )
+            if unique_id_item is not None:
+                unique_id_item.setText(status.unique_id)
+            if version_item is not None:
+                version_item.setText(status.installed_version or "-")
+                if (
+                    name_item.data(_ROLE_MOD_IS_GROUPED) is True
+                    and selected_mod is not None
+                ):
+                    version_item.setToolTip(
+                        "Grouped row currently reflects update status from:\n"
+                        f"- {selected_mod.name} ({selected_mod.unique_id})\n"
+                        f"Installed version: {selected_mod.version}"
+                    )
             self._mods_table.setItem(row, 3, QTableWidgetItem(status.remote_version or "-"))
-            status_item = QTableWidgetItem(_update_status_display_label(status))
+            status_label = (
+                "No tracking"
+                if effective_intent_state == "no_tracking"
+                else _update_status_display_label(status)
+            )
+            status_tooltip = blocked_reason
+            if effective_intent_state == "no_tracking":
+                _, _, status_tooltip = _inventory_guidance_for_update_source_intent(
+                    mod_name=status.name,
+                    intent_state="no_tracking",
+                    manual_provider=None,
+                )
+            effective_blocked_reason = status_tooltip if not actionable else blocked_reason
+            status_item = QTableWidgetItem(status_label)
             status_item.setToolTip(
-                blocked_reason
+                status_tooltip
                 if not actionable
                 else "Actionable: update is available for this mod."
             )
@@ -7067,7 +7578,7 @@ class MainWindow(QMainWindow):
                 status.remote_link.page_url if status.remote_link is not None else "",
             )
             name_item.setData(_ROLE_UPDATE_ACTIONABLE, actionable)
-            name_item.setData(_ROLE_UPDATE_BLOCK_REASON, blocked_reason)
+            name_item.setData(_ROLE_UPDATE_BLOCK_REASON, effective_blocked_reason)
             if actionable:
                 _set_table_row_visual(
                     self._mods_table,
@@ -8771,6 +9282,8 @@ class MainWindow(QMainWindow):
     def _apply_mods_filter(self, *_: object) -> None:
         filter_text = self._mods_filter_input.text()
         actionability_filter = self._current_mods_update_actionability_filter()
+        current_inventory = self._current_inventory_or_empty()
+        mods_by_folder_text = _inventory_mods_by_folder_text(current_inventory)
         visible_count = 0
         for row in range(self._mods_table.rowCount()):
             row_values = []
@@ -8782,11 +9295,37 @@ class MainWindow(QMainWindow):
             is_actionable = bool(
                 name_item is not None and name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
             )
+            needs_source_repair = False
+            if name_item is not None and name_item.data(_ROLE_MOD_IS_ENABLED) is True:
+                status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
+                status = status_data if isinstance(status_data, ModUpdateStatus) else None
+                unique_id_item = self._mods_table.item(row, 1)
+                unique_id = unique_id_item.text().strip() if unique_id_item is not None else ""
+                saved_intent = (
+                    self._resolve_inventory_update_source_intent(unique_id)
+                    if unique_id
+                    else None
+                )
+                mod = _inventory_mod_for_folder_text(
+                    folder_path_text=name_item.data(_ROLE_MOD_FOLDER_PATH),
+                    mods_by_folder_text=mods_by_folder_text,
+                )
+                saved_intent_state = _effective_inventory_source_intent_state(
+                    saved_intent_state=getattr(saved_intent, "intent_state", None),
+                    mod=mod,
+                    inventory=current_inventory,
+                )
+                needs_source_repair = _row_needs_source_repair(
+                    status=status,
+                    saved_intent_state=saved_intent_state,
+                )
             matches_actionability = True
             if actionability_filter == "actionable":
                 matches_actionability = is_actionable
             elif actionability_filter == "blocked":
                 matches_actionability = not is_actionable
+            elif actionability_filter == "needs_source_repair":
+                matches_actionability = needs_source_repair
             matches = matches_text and matches_actionability
             self._mods_table.setRowHidden(row, not matches)
             if matches:
@@ -9000,6 +9539,13 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
             )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip=(
+                    "Select a blocked mod row to search Discover and auto-save "
+                    "a high-confidence Nexus or GitHub source."
+                ),
+            )
             self._refresh_inventory_source_intent_action_state(
                 selected_unique_id=None,
                 selected=False,
@@ -9026,6 +9572,13 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
             )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip=(
+                    "Select a blocked mod row to search Discover and auto-save "
+                    "a high-confidence Nexus or GitHub source."
+                ),
+            )
             self._refresh_inventory_source_intent_action_state(
                 selected_unique_id=None,
                 selected=False,
@@ -9047,15 +9600,29 @@ class MainWindow(QMainWindow):
         is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
         blocked_reason = name_item.data(_ROLE_UPDATE_BLOCK_REASON)
         overlay_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
+        current_inventory = self._current_inventory_or_empty()
+        selected_mod = _inventory_mod_for_folder_text(
+            folder_path_text=name_item.data(_ROLE_MOD_FOLDER_PATH),
+            mods_by_folder_text=_inventory_mods_by_folder_text(current_inventory),
+        )
+        effective_intent_state = _effective_inventory_source_intent_state(
+            saved_intent_state=(
+                getattr(overlay_intent, "intent_state", None)
+                if overlay_intent is not None
+                else None
+            ),
+            mod=selected_mod,
+            inventory=current_inventory,
+        )
         has_blocked_state = bool(
             status is not None or (isinstance(blocked_reason, str) and blocked_reason.strip())
         )
         can_manage_intent = bool(
             is_enabled
             and selected_unique_id
-            and not is_actionable
-            and has_blocked_state
             and status_text != "not_checked"
+            and not _is_smapi_built_in_unique_id(selected_unique_id)
+            and (overlay_intent is not None or is_actionable or has_blocked_state)
         )
 
         if not is_enabled:
@@ -9072,6 +9639,10 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Disabled mod rows do not offer source-hint actions.",
             )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip="Disabled mod rows do not offer suggested-source actions.",
+            )
         elif status is None and status_text == "not_checked":
             message = (
                 f"{mod_name}: run Check updates to evaluate update actionability. "
@@ -9085,6 +9656,43 @@ class MainWindow(QMainWindow):
             self._set_find_source_hint_state(
                 enabled=False,
                 tooltip="Run Check updates and select a blocked row first.",
+            )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip="Run Check updates and select a blocked row first.",
+            )
+        elif effective_intent_state is not None:
+            intent_state = effective_intent_state
+            manual_provider = (
+                getattr(overlay_intent, "manual_provider", None)
+                if overlay_intent is not None
+                else None
+            )
+            message, detail_text, tooltip = _inventory_guidance_for_update_source_intent(
+                mod_name=mod_name,
+                intent_state=intent_state,
+                manual_provider=manual_provider,
+            )
+            self._set_inventory_blocked_detail_text(detail_text)
+            self._set_open_remote_page_state(
+                enabled=False,
+                tooltip=tooltip,
+            )
+            self._set_find_source_hint_state(
+                enabled=False,
+                tooltip=(
+                    "A saved update-source intent is already recorded for this row."
+                    if overlay_intent is not None
+                    else "This companion row is intentionally not tracked as a standalone update source."
+                ),
+            )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip=(
+                    "A saved update-source intent is already recorded for this row."
+                    if overlay_intent is not None
+                    else "This companion row is intentionally not tracked as a standalone update source."
+                ),
             )
         elif is_actionable:
             if len(actionable_targets) > 1:
@@ -9107,20 +9715,9 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Actionable update rows already have a direct update-page action.",
             )
-        elif overlay_intent is not None:
-            message, detail_text, tooltip = _inventory_guidance_for_update_source_intent(
-                mod_name=mod_name,
-                intent_state=overlay_intent.intent_state,
-                manual_provider=overlay_intent.manual_provider,
-            )
-            self._set_inventory_blocked_detail_text(detail_text)
-            self._set_open_remote_page_state(
+            self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip=tooltip,
-            )
-            self._set_find_source_hint_state(
-                enabled=False,
-                tooltip="A saved update-source intent is already recorded for this row.",
+                tooltip="Actionable update rows already have a direct update-page action.",
             )
         elif isinstance(blocked_reason, str) and blocked_reason.strip():
             message = (
@@ -9144,6 +9741,16 @@ class MainWindow(QMainWindow):
                     else "Source hints are available only for blocked source/update rows."
                 ),
             )
+            can_use_suggested_source = status is not None and _supports_auto_source_suggestion(status)
+            self._set_use_suggested_source_state(
+                enabled=can_use_suggested_source,
+                tooltip=(
+                    "Search Discover, auto-save a safe source when possible, or prefill "
+                    "Manual source from the best available page hint."
+                    if can_use_suggested_source
+                    else "Suggested source is available only for blocked rows that still need source repair."
+                ),
+            )
         else:
             message = f"{mod_name}: no update action is currently available."
             self._set_inventory_blocked_detail_text(None)
@@ -9154,6 +9761,10 @@ class MainWindow(QMainWindow):
             self._set_find_source_hint_state(
                 enabled=False,
                 tooltip="Source hints are available only for blocked source/update rows.",
+            )
+            self._set_use_suggested_source_state(
+                enabled=False,
+                tooltip="Suggested source is available only for blocked rows that still need source repair.",
             )
 
         self._refresh_inventory_source_intent_action_state(
@@ -9391,6 +10002,10 @@ class MainWindow(QMainWindow):
         self._find_source_hint_button.setEnabled(enabled)
         self._find_source_hint_button.setToolTip(tooltip)
 
+    def _set_use_suggested_source_state(self, *, enabled: bool, tooltip: str) -> None:
+        self._use_suggested_source_button.setEnabled(enabled)
+        self._use_suggested_source_button.setToolTip(tooltip)
+
     def _smapi_troubleshooting_has_actionable_entries(self) -> bool:
         return bool(
             self._last_smapi_log_report is not None
@@ -9448,7 +10063,28 @@ class MainWindow(QMainWindow):
         has_saved_intent = bool(
             selected_unique_id and self._resolve_inventory_update_source_intent(selected_unique_id) is not None
         )
+        saved_intent = (
+            self._resolve_inventory_update_source_intent(selected_unique_id)
+            if selected_unique_id
+            else None
+        )
+        can_test_source = bool(
+            can_manage_intent
+            and getattr(saved_intent, "intent_state", None) == "manual_source_association"
+        )
+        self._test_source_button.setEnabled(can_test_source)
+        self._test_source_button.setToolTip(
+            "Check the selected row's saved manual source against the current provider metadata."
+            if can_test_source
+            else "Test source is available after saving a manual source association."
+        )
         self._clear_source_intent_button.setEnabled(can_manage_intent and has_saved_intent)
+
+    def _refresh_inventory_update_report_view(self) -> None:
+        if self._current_inventory is not None and self._current_update_report is not None:
+            self._apply_update_report(self._current_update_report)
+        else:
+            self._refresh_selected_mod_update_guidance()
 
     def _selected_inventory_row_unique_id(self) -> str | None:
         row = self._mods_table.currentRow()
@@ -9466,23 +10102,12 @@ class MainWindow(QMainWindow):
             return None
         name_item = self._mods_table.item(row, 0)
         unique_id_item = self._mods_table.item(row, 1)
-        status_item = self._mods_table.item(row, 4)
         if name_item is None or unique_id_item is None:
             return None
         unique_id = unique_id_item.text().strip()
         if not unique_id:
             return None
         if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
-            return None
-        status_text = status_item.text().strip() if status_item is not None else ""
-        status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
-        status = status_data if isinstance(status_data, ModUpdateStatus) else None
-        is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
-        blocked_reason = name_item.data(_ROLE_UPDATE_BLOCK_REASON)
-        has_blocked_state = bool(
-            status is not None or (isinstance(blocked_reason, str) and blocked_reason.strip())
-        )
-        if is_actionable or status_text == "not_checked" or not has_blocked_state:
             return None
         mod_name = name_item.text().strip() or "Selected mod"
         return unique_id, mod_name
@@ -9508,6 +10133,39 @@ class MainWindow(QMainWindow):
             return None
         mod_name = name_item.text().strip() or unique_id
         return unique_id, mod_name
+
+    def _selected_inventory_auto_source_context(self) -> tuple[str, str] | None:
+        row = self._mods_table.currentRow()
+        if row < 0 or self._mods_table.isRowHidden(row) or not self._mods_table.selectedItems():
+            return None
+        name_item = self._mods_table.item(row, 0)
+        unique_id_item = self._mods_table.item(row, 1)
+        if name_item is None or unique_id_item is None:
+            return None
+        if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
+            return None
+        if name_item.data(_ROLE_UPDATE_ACTIONABLE) is True:
+            return None
+        status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
+        status = status_data if isinstance(status_data, ModUpdateStatus) else None
+        if status is None or not _supports_auto_source_suggestion(status):
+            return None
+        unique_id = unique_id_item.text().strip()
+        if not unique_id:
+            return None
+        mod_name = name_item.text().strip() or unique_id
+        return unique_id, mod_name
+
+    def _selected_inventory_installed_mod(self) -> InstalledMod | None:
+        selected_unique_id = self._selected_inventory_row_unique_id()
+        if selected_unique_id is None:
+            return None
+        target_key = canonicalize_unique_id(selected_unique_id)
+        inventory = self._current_inventory_or_empty()
+        for mod in inventory.mods:
+            if canonicalize_unique_id(mod.unique_id) == target_key:
+                return mod
+        return None
 
     def _selected_inventory_mod_folder_paths(self) -> tuple[str, ...]:
         selection_model = self._mods_table.selectionModel()
@@ -9708,7 +10366,7 @@ class MainWindow(QMainWindow):
         except AppShellError as exc:
             self._set_status(str(exc))
             return
-        self._refresh_selected_mod_update_guidance()
+        self._refresh_inventory_update_report_view()
         self._set_status(f"Saved update-source intent for {selected_unique_id}: {intent_state}.")
 
     def _on_mark_selected_mod_local_private(self) -> None:
@@ -9723,22 +10381,51 @@ class MainWindow(QMainWindow):
         mod_name: str,
         unique_id: str,
         existing_intent: object | None,
+        initial_provider: str | None = None,
+        initial_source_key: str | None = None,
+        initial_page_url: str | None = None,
     ) -> tuple[str, str, str | None] | None:
-        initial_provider = None
-        initial_source_key = None
-        initial_page_url = None
+        provider_text = initial_provider
+        source_key_text = initial_source_key
+        page_url_text = initial_page_url
         if existing_intent is not None:
-            initial_provider = getattr(existing_intent, "manual_provider", None)
-            initial_source_key = getattr(existing_intent, "manual_source_key", None)
-            initial_page_url = getattr(existing_intent, "manual_source_page_url", None)
+            provider_text = provider_text or getattr(existing_intent, "manual_provider", None)
+            source_key_text = source_key_text or getattr(existing_intent, "manual_source_key", None)
+            page_url_text = page_url_text or getattr(existing_intent, "manual_source_page_url", None)
         return _prompt_manual_source_association(
             self,
             mod_name=mod_name,
             unique_id=unique_id,
-            initial_provider=initial_provider,
-            initial_source_key=initial_source_key,
-            initial_page_url=initial_page_url,
+            initial_provider=provider_text,
+            initial_source_key=source_key_text,
+            initial_page_url=page_url_text,
         )
+
+    def _save_manual_source_association(
+        self,
+        *,
+        unique_id: str,
+        association: tuple[str, str, str | None],
+    ) -> tuple[str, str, str | None] | None:
+        provider, source_key, page_url = association
+        provider = provider.strip()
+        source_key = source_key.strip()
+        normalized_page_url = page_url.strip() if isinstance(page_url, str) else ""
+        if not provider or not source_key:
+            self._set_status("Manual source association requires provider and source key.")
+            return None
+        try:
+            self._shell_service.set_update_source_intent(
+                unique_id,
+                "manual_source_association",
+                manual_provider=provider,
+                manual_source_key=source_key,
+                manual_source_page_url=normalized_page_url or None,
+            )
+        except AppShellError as exc:
+            self._set_status(str(exc))
+            return None
+        return provider, source_key, normalized_page_url or None
 
     def _on_set_selected_mod_manual_source_intent(self) -> None:
         selected_context = self._selected_inventory_source_intent_context()
@@ -9754,25 +10441,14 @@ class MainWindow(QMainWindow):
         )
         if association is None:
             return
-        provider, source_key, page_url = association
-        provider = provider.strip()
-        source_key = source_key.strip()
-        normalized_page_url = page_url.strip() if isinstance(page_url, str) else ""
-        if not provider or not source_key:
-            self._set_status("Manual source association requires provider and source key.")
+        saved_association = self._save_manual_source_association(
+            unique_id=selected_unique_id,
+            association=association,
+        )
+        if saved_association is None:
             return
-        try:
-            self._shell_service.set_update_source_intent(
-                selected_unique_id,
-                "manual_source_association",
-                manual_provider=provider,
-                manual_source_key=source_key,
-                manual_source_page_url=normalized_page_url or None,
-            )
-        except AppShellError as exc:
-            self._set_status(str(exc))
-            return
-        self._refresh_selected_mod_update_guidance()
+        provider, _, _ = saved_association
+        self._refresh_inventory_update_report_view()
         self._set_status(
             f"Saved manual source association for {selected_unique_id} (provider: {provider})."
         )
@@ -9783,13 +10459,30 @@ class MainWindow(QMainWindow):
             self._set_status("Select a blocked installed mod row to manage saved source intent.")
             return
         selected_unique_id, _ = selected_context
+        existing_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
+        selected_mod = self._selected_inventory_installed_mod()
         try:
-            self._shell_service.clear_update_source_intent(selected_unique_id)
+            if (
+                existing_intent is not None
+                and getattr(existing_intent, "intent_state", None) == "manual_source_association"
+                and selected_mod is not None
+                and _should_restore_no_tracking_when_source_intent_cleared(
+                    mod=selected_mod,
+                    inventory=self._current_inventory_or_empty(),
+                )
+            ):
+                self._shell_service.set_update_source_intent(selected_unique_id, "no_tracking")
+                status_message = (
+                    f"Cleared manual source and disabled standalone tracking for {selected_unique_id}."
+                )
+            else:
+                self._shell_service.clear_update_source_intent(selected_unique_id)
+                status_message = f"Cleared saved update-source intent for {selected_unique_id}."
         except AppShellError as exc:
             self._set_status(str(exc))
             return
-        self._refresh_selected_mod_update_guidance()
-        self._set_status(f"Cleared saved update-source intent for {selected_unique_id}.")
+        self._refresh_inventory_update_report_view()
+        self._set_status(status_message)
 
     def _on_sync_selected_mods_to_sandbox(self) -> None:
         selected_mod_folder_paths = self._selected_inventory_mod_folder_paths()
@@ -10891,6 +11584,7 @@ def _prompt_manual_source_association(
     provider_input = QComboBox()
     provider_input.setObjectName("inventory_manual_source_provider_input")
     provider_input.setEditable(True)
+    provider_input.addItem("")
     for provider_name in ("nexus", "github", "moddrop", "smapi"):
         provider_input.addItem(provider_name)
     if initial_provider:

@@ -53,6 +53,7 @@ from sdvmm.app.shell_service import SandboxModProfileSelectResult
 from sdvmm.domain.install_codes import BLOCKED
 from sdvmm.domain.dependency_codes import SATISFIED
 from sdvmm.domain.discovery_codes import COMPATIBLE
+from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
 from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
@@ -2439,10 +2440,11 @@ def test_main_window_inventory_update_actionability_filter_exists_with_default_a
     action_filter = main_window.findChild(QComboBox, "inventory_update_actionability_filter_combo")
 
     assert action_filter is not None
-    assert action_filter.count() == 3
+    assert action_filter.count() == 4
     assert action_filter.itemText(0) == "all"
     assert action_filter.itemText(1) == "actionable"
     assert action_filter.itemText(2) == "blocked"
+    assert action_filter.itemText(3) == "needs source repair"
     assert action_filter.currentData() == "all"
 
 
@@ -2723,6 +2725,28 @@ def test_main_window_inventory_missing_source_enables_find_source_hint_action(
     assert "SMAPI compatibility" in find_source_hint_button.toolTip()
 
 
+def test_main_window_inventory_missing_source_enables_use_suggested_source_action(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+    assert use_suggested_source_button is not None
+    assert use_suggested_source_button.isEnabled() is True
+    assert "prefill Manual source" in use_suggested_source_button.toolTip()
+
+
 def test_main_window_find_source_hint_moves_blocked_row_into_discover_and_starts_search(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -2759,6 +2783,390 @@ def test_main_window_find_source_hint_moves_blocked_row_into_discover_and_starts
     assert main_window._status_strip_label.text() == (
         "Searching Discover for source hints for Sample.Beta. "
         "SMAPI compatibility suggestions will land in Discover."
+    )
+
+
+def test_main_window_use_suggested_source_saves_exact_nexus_match(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        **_: object,
+    ) -> None:
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "search_mod_discovery",
+        lambda **_: ModDiscoveryResult(
+            query="Sample.Beta",
+            provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+            results=(
+                _discovery_entry("Beta Mod", "Sample.Beta"),
+            ),
+        ),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+    assert use_suggested_source_button is not None
+
+    use_suggested_source_button.click()
+    qapp.processEvents()
+
+    saved_intent = main_window._shell_service.get_update_source_intent("Sample.Beta")
+    assert saved_intent is not None
+    assert saved_intent.intent_state == "manual_source_association"
+    assert saved_intent.manual_provider == "nexus"
+    assert saved_intent.manual_source_key == "https://example.invalid/Sample.Beta"
+    assert saved_intent.manual_source_page_url == "https://example.invalid/Sample.Beta"
+    assert main_window._status_strip_label.text() == (
+        "Saved suggested source for Beta Mod (Sample.Beta) from Discover (provider: nexus)."
+    )
+    assert (
+        main_window._inventory_update_guidance_label.text()
+        == "Beta Mod: manual source association is recorded in saved update-source intent. "
+        "Open remote page is unavailable for this row."
+    )
+
+
+def test_main_window_use_suggested_source_prefills_manual_source_when_only_page_hint_exists(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    captured_prompt: dict[str, object | None] = {}
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        **_: object,
+    ) -> None:
+        on_success(task_fn())
+
+    def _fake_prompt(
+        *,
+        mod_name: str,
+        unique_id: str,
+        existing_intent: object | None,
+        initial_provider: str | None = None,
+        initial_source_key: str | None = None,
+        initial_page_url: str | None = None,
+    ) -> tuple[str, str, str | None] | None:
+        captured_prompt["mod_name"] = mod_name
+        captured_prompt["unique_id"] = unique_id
+        captured_prompt["initial_provider"] = initial_provider
+        captured_prompt["initial_source_key"] = initial_source_key
+        captured_prompt["initial_page_url"] = initial_page_url
+        return None
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window,
+        "_prompt_selected_mod_manual_source_intent",
+        _fake_prompt,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "search_mod_discovery",
+        lambda **_: ModDiscoveryResult(
+            query="Sample.Beta",
+            provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+            results=(
+                ModDiscoveryEntry(
+                    name="Beta Mod",
+                    unique_id="Sample.Beta",
+                    author="Sample Author",
+                    provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+                    source_provider=DISCOVERY_SOURCE_GITHUB,
+                    source_page_url="https://example.invalid/not-a-github-slug",
+                    compatibility_state=COMPATIBLE,
+                    compatibility_status="Compatible",
+                    compatibility_summary="Works with current SMAPI.",
+                ),
+            ),
+        ),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+    assert use_suggested_source_button is not None
+
+    use_suggested_source_button.click()
+    qapp.processEvents()
+
+    assert captured_prompt == {
+        "mod_name": "Beta Mod",
+        "unique_id": "Sample.Beta",
+        "initial_provider": "github",
+        "initial_source_key": None,
+        "initial_page_url": "https://example.invalid/not-a-github-slug",
+    }
+    assert main_window._shell_service.get_update_source_intent("Sample.Beta") is None
+
+
+def test_main_window_use_suggested_source_accepts_safe_github_custom_url(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        **_: object,
+    ) -> None:
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "search_mod_discovery",
+        lambda **_: ModDiscoveryResult(
+            query="Sample.Beta",
+            provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+            results=(
+                ModDiscoveryEntry(
+                    name="Beta Mod",
+                    unique_id="Sample.Beta",
+                    author="Sample Author",
+                    provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+                    source_provider="custom_url",
+                    source_page_url="https://github.com/example/beta-mod",
+                    compatibility_state=COMPATIBLE,
+                    compatibility_status="Compatible",
+                    compatibility_summary="Works with current SMAPI.",
+                ),
+            ),
+        ),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+    assert use_suggested_source_button is not None
+
+    use_suggested_source_button.click()
+    qapp.processEvents()
+
+    saved_intent = main_window._shell_service.get_update_source_intent("Sample.Beta")
+    assert saved_intent is not None
+    assert saved_intent.manual_provider == "github"
+    assert saved_intent.manual_source_key == "example/beta-mod"
+    assert saved_intent.manual_source_page_url == "https://github.com/example/beta-mod"
+
+
+def test_main_window_use_suggested_source_prefills_manual_source_dialog_from_page_hint(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    captured_prompt: dict[str, object | None] = {}
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        **_: object,
+    ) -> None:
+        on_success(task_fn())
+
+    def _fake_prompt(
+        *,
+        mod_name: str,
+        unique_id: str,
+        existing_intent: object | None,
+        initial_provider: str | None = None,
+        initial_source_key: str | None = None,
+        initial_page_url: str | None = None,
+    ) -> tuple[str, str, str | None] | None:
+        captured_prompt["mod_name"] = mod_name
+        captured_prompt["unique_id"] = unique_id
+        captured_prompt["initial_provider"] = initial_provider
+        captured_prompt["initial_source_key"] = initial_source_key
+        captured_prompt["initial_page_url"] = initial_page_url
+        return None
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window,
+        "_prompt_selected_mod_manual_source_intent",
+        _fake_prompt,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "search_mod_discovery",
+        lambda **_: ModDiscoveryResult(
+            query="Sample.Beta",
+            provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+            results=(
+                ModDiscoveryEntry(
+                    name="Beta Mod",
+                    unique_id="Sample.Beta",
+                    author="Sample Author",
+                    provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+                    source_provider="custom_url",
+                    source_page_url="https://mods.example.test/beta-mod",
+                    compatibility_state=COMPATIBLE,
+                    compatibility_status="Compatible",
+                    compatibility_summary="Works with current SMAPI.",
+                ),
+            ),
+        ),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+    assert use_suggested_source_button is not None
+    assert use_suggested_source_button.isEnabled() is True
+
+    use_suggested_source_button.click()
+    qapp.processEvents()
+
+    assert captured_prompt == {
+        "mod_name": "Beta Mod",
+        "unique_id": "Sample.Beta",
+        "initial_provider": None,
+        "initial_source_key": None,
+        "initial_page_url": "https://mods.example.test/beta-mod",
+    }
+    assert main_window._shell_service.get_update_source_intent("Sample.Beta") is None
+
+
+def test_main_window_built_in_rows_do_not_offer_source_repair_actions(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _mods_inventory(
+        _installed_mod_for_update_ui(
+            name="Save Backup",
+            unique_id="SMAPI.SaveBackup",
+            folder_name="SaveBackup",
+        )
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="SMAPI.SaveBackup",
+                name="Save Backup",
+                folder_path=Path(r"C:\Mods\SaveBackup"),
+                installed_version="4.5.2",
+                remote_version=None,
+                state="no_remote_link",
+                remote_link=None,
+                update_source_diagnostic=MISSING_UPDATE_KEY,
+                message="No remote link available.",
+            ),
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    built_in_row = _find_mod_row(main_window._mods_table, "Save Backup")
+    assert built_in_row >= 0
+    main_window._mods_table.setCurrentCell(built_in_row, 0)
+    qapp.processEvents()
+
+    find_source_hint_button = main_window.findChild(
+        QPushButton, "inventory_find_source_hint_button"
+    )
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+    manual_source_button = main_window.findChild(
+        QPushButton, "inventory_manual_source_association_button"
+    )
+    test_source_button = main_window.findChild(
+        QPushButton, "inventory_test_source_button"
+    )
+    clear_source_intent_button = main_window.findChild(
+        QPushButton, "inventory_clear_source_intent_button"
+    )
+    assert find_source_hint_button is not None
+    assert use_suggested_source_button is not None
+    assert manual_source_button is not None
+    assert test_source_button is not None
+    assert clear_source_intent_button is not None
+
+    assert main_window._mods_table.item(built_in_row, 4).text() == "Built-in"
+    assert find_source_hint_button.isEnabled() is False
+    assert use_suggested_source_button.isEnabled() is False
+    assert manual_source_button.isEnabled() is False
+    assert test_source_button.isEnabled() is False
+    assert clear_source_intent_button.isEnabled() is False
+    assert main_window._inventory_update_guidance_label.text() == (
+        "Save Backup: This row is bundled with SMAPI and does not need a separate source-repair workflow. "
+        "Open remote page is unavailable for this row."
+    )
+    blocked_detail_label = main_window.findChild(
+        QLabel, "inventory_update_blocked_detail_label"
+    )
+    assert blocked_detail_label is not None
+    assert blocked_detail_label.text() == (
+        "Source fix: this SMAPI built-in is bundled with SMAPI and does not need a separate remote source."
     )
 
 
@@ -2871,6 +3279,39 @@ def test_main_window_inventory_guidance_surfaces_persisted_no_tracking_intent(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: update tracking is intentionally disabled in saved update-source intent. "
+        "Open remote page is unavailable for this row."
+    )
+    assert blocked_detail_label.isVisible() is True
+    assert (
+        blocked_detail_label.text()
+        == "Update source intent: no-tracking is recorded in app state."
+    )
+
+
+def test_main_window_actionable_row_marked_no_tracking_overrides_update_available(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    blocked_detail_label = main_window.findChild(
+        QLabel, "inventory_update_blocked_detail_label"
+    )
+    assert blocked_detail_label is not None
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    main_window._shell_service.set_update_source_intent("Sample.Alpha", "no_tracking")
+    main_window._refresh_inventory_update_report_view()
+    actionable_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert actionable_row >= 0
+    main_window._mods_table.setCurrentCell(actionable_row, 0)
+    qapp.processEvents()
+
+    assert main_window._mods_table.item(actionable_row, 4).text() == "No tracking"
+    assert (
+        main_window._inventory_update_guidance_label.text()
+        == "Alpha Mod: update tracking is intentionally disabled in saved update-source intent. "
         "Open remote page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
@@ -3484,6 +3925,13 @@ def test_main_window_inventory_update_actionability_filter_modes_show_expected_s
     assert _visible_row_count(main_window._mods_table) == 2
     assert set(_visible_mod_names(main_window._mods_table)) == {"Beta Mod", "Gamma Mod"}
 
+    main_window._mods_update_actionability_filter_combo.setCurrentText(
+        "needs source repair"
+    )
+    qapp.processEvents()
+    assert _visible_row_count(main_window._mods_table) == 1
+    assert _visible_mod_names(main_window._mods_table) == ("Beta Mod",)
+
 
 def test_main_window_inventory_blocked_update_rows_show_non_empty_reason_tooltip(
     main_window: MainWindow,
@@ -3529,6 +3977,265 @@ def test_main_window_inventory_search_filter_still_works_with_update_actionabili
     qapp.processEvents()
     assert _visible_row_count(main_window._mods_table) == 2
     assert set(_visible_mod_names(main_window._mods_table)) == {"Beta Mod", "Gamma Mod"}
+
+
+def test_main_window_test_source_rechecks_saved_manual_source_association(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        **_: object,
+    ) -> None:
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "check_updates",
+        lambda inventory, **_: ModUpdateReport(
+            statuses=(
+                ModUpdateStatus(
+                    unique_id="Sample.Beta",
+                    name="Beta Mod",
+                    folder_path=Path(r"C:\Mods\BetaMod"),
+                    installed_version="1.0.0",
+                    remote_version="1.1.0",
+                    state="update_available",
+                    remote_link=None,
+                    message="Update available.",
+                ),
+            )
+        ),
+    )
+    main_window._shell_service.set_update_source_intent(
+        "Sample.Beta",
+        "manual_source_association",
+        manual_provider="github",
+        manual_source_key="example/beta-mod",
+        manual_source_page_url="https://github.com/example/beta-mod",
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    test_source_button = main_window.findChild(
+        QPushButton, "inventory_test_source_button"
+    )
+    assert test_source_button is not None
+    assert test_source_button.isEnabled() is True
+
+    test_source_button.click()
+    qapp.processEvents()
+
+    assert main_window._mods_table.item(blocked_row, 4).text() == "Update available"
+    assert main_window._status_strip_label.text() == (
+        "Source test succeeded for Beta Mod (Sample.Beta): Update available."
+    )
+
+
+def test_main_window_manual_source_association_can_be_edited_after_it_becomes_actionable(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    manual_source_button = main_window.findChild(
+        QPushButton, "inventory_manual_source_association_button"
+    )
+
+    assert manual_source_button is not None
+
+    main_window._shell_service.set_update_source_intent(
+        "Sample.Alpha",
+        "manual_source_association",
+        manual_provider="nexus",
+        manual_source_key="11111",
+        manual_source_page_url="https://example.test/mods/11111",
+    )
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    actionable_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert actionable_row >= 0
+    main_window._mods_table.setCurrentCell(actionable_row, 0)
+    qapp.processEvents()
+
+    monkeypatch.setattr(
+        main_window,
+        "_prompt_selected_mod_manual_source_intent",
+        lambda **_: ("nexus", "22222", "https://example.test/mods/22222"),
+    )
+
+    assert manual_source_button.isEnabled() is True
+    manual_source_button.click()
+    qapp.processEvents()
+
+    saved_intent = main_window._shell_service.get_update_source_intent("Sample.Alpha")
+    assert saved_intent is not None
+    assert saved_intent.manual_source_key == "22222"
+    assert saved_intent.manual_source_page_url == "https://example.test/mods/22222"
+    assert (
+        main_window._status_strip_label.text()
+        == "Saved manual source association for Sample.Alpha (provider: nexus)."
+    )
+
+
+def test_main_window_saved_source_intent_can_be_cleared_after_it_becomes_actionable(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    clear_source_intent_button = main_window.findChild(
+        QPushButton, "inventory_clear_source_intent_button"
+    )
+
+    assert clear_source_intent_button is not None
+
+    main_window._shell_service.set_update_source_intent(
+        "Sample.Alpha",
+        "manual_source_association",
+        manual_provider="nexus",
+        manual_source_key="11111",
+        manual_source_page_url="https://example.test/mods/11111",
+    )
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    actionable_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert actionable_row >= 0
+    main_window._mods_table.setCurrentCell(actionable_row, 0)
+    qapp.processEvents()
+
+    assert clear_source_intent_button.isEnabled() is True
+    clear_source_intent_button.click()
+    qapp.processEvents()
+
+    assert main_window._shell_service.get_update_source_intent("Sample.Alpha") is None
+    assert (
+        main_window._status_strip_label.text()
+        == "Cleared saved update-source intent for Sample.Alpha."
+    )
+
+
+def test_main_window_clearing_manual_source_for_companion_component_restores_no_tracking(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    real_mods_root = Path(r"C:\Mods")
+    content_path = real_mods_root / "[CP] ResourceChickens"
+    ftm_path = real_mods_root / "[FTM] ResourceChickens"
+    inventory = _mods_inventory(
+        InstalledMod(
+            unique_id="UncleArya.ResourceChickens",
+            name="Resource Chickens",
+            version="1.0.1",
+            folder_path=content_path,
+            manifest_path=content_path / "manifest.json",
+            dependencies=tuple(),
+            update_keys=("Nexus:21800",),
+        ),
+        InstalledMod(
+            unique_id="UncleArya.ResourceChickensFTM",
+            name="[FTM] Resource Chickens",
+            version="0.4.0",
+            folder_path=ftm_path,
+            manifest_path=ftm_path / "manifest.json",
+            dependencies=tuple(),
+        ),
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="UncleArya.ResourceChickens",
+                name="Resource Chickens",
+                folder_path=content_path,
+                installed_version="1.0.1",
+                remote_version="1.0.1",
+                state="up_to_date",
+                remote_link=RemoteModLink(
+                    provider="nexus",
+                    key="21800",
+                    page_url="https://example.test/mods/21800",
+                    metadata_url=None,
+                ),
+                message="Installed version is up to date.",
+            ),
+            ModUpdateStatus(
+                unique_id="UncleArya.ResourceChickensFTM",
+                name="[FTM] Resource Chickens",
+                folder_path=ftm_path,
+                installed_version="0.4.0",
+                remote_version=None,
+                state="no_remote_link",
+                remote_link=None,
+                update_source_diagnostic=MISSING_UPDATE_KEY,
+                message="No remote link available.",
+            ),
+        )
+    )
+    clear_source_intent_button = main_window.findChild(
+        QPushButton, "inventory_clear_source_intent_button"
+    )
+    blocked_detail_label = main_window.findChild(
+        QLabel, "inventory_update_blocked_detail_label"
+    )
+
+    assert clear_source_intent_button is not None
+    assert blocked_detail_label is not None
+
+    main_window._shell_service.set_update_source_intent(
+        "UncleArya.ResourceChickensFTM",
+        "manual_source_association",
+        manual_provider="nexus",
+        manual_source_key="21800",
+        manual_source_page_url="https://example.test/mods/21800",
+    )
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    ftm_row = _find_mod_row(main_window._mods_table, "[FTM] Resource Chickens")
+    assert ftm_row >= 0
+    main_window._mods_table.setCurrentCell(ftm_row, 0)
+    qapp.processEvents()
+
+    assert clear_source_intent_button.isEnabled() is True
+    clear_source_intent_button.click()
+    qapp.processEvents()
+
+    saved_intent = main_window._shell_service.get_update_source_intent(
+        "UncleArya.ResourceChickensFTM"
+    )
+    assert saved_intent is not None
+    assert saved_intent.intent_state == "no_tracking"
+    assert main_window._mods_table.item(ftm_row, 4).text() == "No tracking"
+    assert (
+        main_window._inventory_update_guidance_label.text()
+        == "[FTM] Resource Chickens: update tracking is intentionally disabled in saved update-source intent. "
+        "Open remote page is unavailable for this row."
+    )
+    assert blocked_detail_label.isVisible() is True
+    assert (
+        blocked_detail_label.text()
+        == "Update source intent: no-tracking is recorded in app state."
+    )
+    assert (
+        main_window._status_strip_label.text()
+        == "Cleared manual source and disabled standalone tracking for UncleArya.ResourceChickensFTM."
+    )
 
 
 def test_main_window_renders_disabled_sandbox_mod_rows_with_checkbox_state(
@@ -9353,6 +10060,121 @@ def test_main_window_groups_top_level_paired_components_with_single_sided_update
         str(content_path),
     )
     assert type_item.text() == "Grouped mod"
+
+
+def test_main_window_grouped_row_prefers_declared_update_key_member_status(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    content_path = real_mods_root / "[CP] ResourceChickens"
+    ftm_path = real_mods_root / "[FTM] ResourceChickens"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="UncleArya.ResourceChickens",
+                name="Resource Chickens",
+                version="1.0.1",
+                folder_path=content_path,
+                manifest_path=content_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="UncleArya.ResourceChickensFTM",
+                        required=False,
+                    ),
+                ),
+                update_keys=("Nexus:21800",),
+            ),
+            InstalledMod(
+                unique_id="UncleArya.ResourceChickensFTM",
+                name="[FTM] Resource Chickens",
+                version="0.4.0",
+                folder_path=ftm_path,
+                manifest_path=ftm_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Esca.FarmTypeManager",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="UncleArya.ResourceChickens",
+                        required=False,
+                    ),
+                ),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=content_path,
+                mod_paths=(content_path,),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=ftm_path,
+                mod_paths=(ftm_path,),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="UncleArya.ResourceChickens",
+                name="Resource Chickens",
+                folder_path=content_path,
+                installed_version="1.0.1",
+                remote_version="1.0.1",
+                state="up_to_date",
+                remote_link=None,
+                message="Installed version is up to date.",
+            ),
+            ModUpdateStatus(
+                unique_id="UncleArya.ResourceChickensFTM",
+                name="[FTM] Resource Chickens",
+                folder_path=ftm_path,
+                installed_version="0.4.0",
+                remote_version="1.0.1",
+                state="update_available",
+                remote_link=None,
+                message="Remote version is newer than installed version.",
+            ),
+        ),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    qapp.processEvents()
+
+    assert main_window._mods_table.rowCount() == 1
+    assert main_window._mods_table.item(0, 0).text() == "Resource Chickens (+1 more)"
+    assert main_window._mods_table.item(0, 1).text() == "UncleArya.ResourceChickens"
+    assert main_window._mods_table.item(0, 2).text() == "1.0.1"
+    assert main_window._mods_table.item(0, 3).text() == "1.0.1"
+    assert main_window._mods_table.item(0, 4).text() == "Up to date"
 
 
 def test_main_window_grouped_row_rollback_reports_not_available(
