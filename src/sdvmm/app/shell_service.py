@@ -5993,38 +5993,30 @@ class AppShellService:
         real_mods_path: Path,
         selected_mod_folder_paths_text: Iterable[str],
     ) -> tuple[Path, ...]:
-        deduplicated_paths: list[Path] = []
-        seen_keys: set[str] = set()
-        for raw_value in selected_mod_folder_paths_text:
-            path_text = str(raw_value).strip()
-            if not path_text:
-                continue
-            source_path = Path(path_text).expanduser()
-            key = str(source_path.resolve(strict=False))
-            if os.name == "nt":
-                key = key.casefold()
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            deduplicated_paths.append(source_path)
-
-        if not deduplicated_paths:
-            raise AppShellError("Select at least one installed mod row to sync to sandbox.")
-
-        validated_paths = [
-            self._parse_and_validate_selected_mod_path(
-                mods_path=real_mods_path,
-                mod_folder_path_text=str(source_path),
-            )
-            for source_path in deduplicated_paths
-        ]
-        return tuple(validated_paths)
+        return self._resolve_selected_mod_paths(
+            mods_path=real_mods_path,
+            selected_mod_folder_paths_text=selected_mod_folder_paths_text,
+            empty_selection_message="Select at least one installed mod row to sync to sandbox.",
+        )
 
     def _resolve_selected_sandbox_mod_paths(
         self,
         *,
         sandbox_mods_path: Path,
         selected_mod_folder_paths_text: Iterable[str],
+    ) -> tuple[Path, ...]:
+        return self._resolve_selected_mod_paths(
+            mods_path=sandbox_mods_path,
+            selected_mod_folder_paths_text=selected_mod_folder_paths_text,
+            empty_selection_message="Select at least one installed sandbox mod row to promote.",
+        )
+
+    def _resolve_selected_mod_paths(
+        self,
+        *,
+        mods_path: Path,
+        selected_mod_folder_paths_text: Iterable[str],
+        empty_selection_message: str,
     ) -> tuple[Path, ...]:
         deduplicated_paths: list[Path] = []
         seen_keys: set[str] = set()
@@ -6042,11 +6034,11 @@ class AppShellService:
             deduplicated_paths.append(source_path)
 
         if not deduplicated_paths:
-            raise AppShellError("Select at least one installed sandbox mod row to promote.")
+            raise AppShellError(empty_selection_message)
 
         validated_paths = [
             self._parse_and_validate_selected_mod_path(
-                mods_path=sandbox_mods_path,
+                mods_path=mods_path,
                 mod_folder_path_text=str(source_path),
             )
             for source_path in deduplicated_paths
