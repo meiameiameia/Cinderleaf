@@ -287,6 +287,14 @@ class _InventoryUpdatePresentation:
     style_kind: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedInventoryUpdateRowState:
+    status: ModUpdateStatus
+    presentation: _InventoryUpdatePresentation
+    remote_page_url: str
+    version_tooltip: str
+
+
 class _ComboBoxWheelGuard(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if (
@@ -7834,28 +7842,14 @@ class MainWindow(QMainWindow):
             if name_item is None:
                 continue
             if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
-                self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
-                status_item = QTableWidgetItem("disabled")
-                status_item.setToolTip(
-                    "This mod is disabled. Re-enable it before update and source actions."
-                )
-                self._mods_table.setItem(row, 4, status_item)
-                name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
-                name_item.setData(_ROLE_REMOTE_LINK, "")
-                name_item.setData(_ROLE_UPDATE_ACTIONABLE, False)
-                name_item.setData(
-                    _ROLE_UPDATE_BLOCK_REASON,
-                    "This mod is disabled. Re-enable it before update and source actions.",
-                )
+                self._apply_disabled_inventory_update_row(row=row, name_item=name_item)
                 continue
-            status = _preferred_inventory_row_status(
-                _inventory_row_status_candidates(
-                    name_item=name_item,
-                    by_folder_text=by_folder_text,
-                ),
+            resolved_row = self._resolve_inventory_update_row_state(
+                name_item=name_item,
+                by_folder_text=by_folder_text,
                 mods_by_folder_text=mods_by_folder_text,
             )
-            if status is None:
+            if resolved_row is None:
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
                 status_item = QTableWidgetItem("Metadata unavailable")
                 reason = "Metadata unavailable for this mod in the latest update check."
@@ -7874,81 +7868,133 @@ class MainWindow(QMainWindow):
                     column_foregrounds={4: "#e3bf91"},
                 )
                 continue
-
-            unique_id_item = self._mods_table.item(row, 1)
-            version_item = self._mods_table.item(row, 2)
-            selected_mod = _inventory_mod_for_folder_text(
-                folder_path_text=str(status.folder_path),
-                mods_by_folder_text=mods_by_folder_text,
+            self._apply_resolved_inventory_update_row(
+                row=row,
+                name_item=name_item,
+                resolved_row=resolved_row,
             )
-            saved_intent = self._resolve_inventory_update_source_intent(status.unique_id)
-            effective_intent_state = _effective_inventory_source_intent_state(
-                saved_intent_state=getattr(saved_intent, "intent_state", None),
-                mod=selected_mod,
-                inventory=self._current_inventory,
-            )
-            presentation = _inventory_update_presentation(
-                status=status,
-                effective_intent_state=effective_intent_state,
-            )
-            if unique_id_item is not None:
-                unique_id_item.setText(status.unique_id)
-            if version_item is not None:
-                version_item.setText(status.installed_version or "-")
-                if (
-                    name_item.data(_ROLE_MOD_IS_GROUPED) is True
-                    and selected_mod is not None
-                ):
-                    version_item.setToolTip(
-                        "Grouped row currently reflects update status from:\n"
-                        f"- {selected_mod.name} ({selected_mod.unique_id})\n"
-                        f"Installed version: {selected_mod.version}"
-                    )
-            self._mods_table.setItem(row, 3, QTableWidgetItem(status.remote_version or "-"))
-            status_item = QTableWidgetItem(presentation.status_label)
-            status_item.setToolTip(presentation.status_tooltip)
-            self._mods_table.setItem(row, 4, status_item)
-            name_item.setData(_ROLE_MOD_UPDATE_STATUS, status)
-            name_item.setData(
-                _ROLE_REMOTE_LINK,
-                (
-                    status.remote_link.page_url
-                    if status.remote_link is not None
-                    else (_manual_source_remote_page_url(saved_intent) or "")
-                ),
-            )
-            name_item.setData(_ROLE_UPDATE_ACTIONABLE, presentation.actionable)
-            name_item.setData(_ROLE_UPDATE_BLOCK_REASON, presentation.blocked_reason)
-            if presentation.style_kind == "actionable":
-                _set_table_row_visual(
-                    self._mods_table,
-                    row,
-                    background="#19231c",
-                    foreground="#ebefe6",
-                    bold_columns=(0, 4),
-                    column_foregrounds={3: "#f2d492", 4: "#cbe7c1"},
-                )
-            elif presentation.style_kind == "up_to_date":
-                _set_table_row_visual(
-                    self._mods_table,
-                    row,
-                    background="#171d1a",
-                    foreground="#d6dbd5",
-                    bold_columns=(0,),
-                    column_foregrounds={4: "#9cc38f"},
-                )
-            else:
-                _set_table_row_visual(
-                    self._mods_table,
-                    row,
-                    background="#211c19",
-                    foreground="#e2d6ca",
-                    bold_columns=(0,),
-                    column_foregrounds={4: "#d7ba92"},
-                )
         self._mods_table.setSortingEnabled(was_sorting)
         self._apply_mods_filter()
         self._refresh_workflow_surface_states()
+
+    def _apply_disabled_inventory_update_row(
+        self,
+        *,
+        row: int,
+        name_item: QTableWidgetItem,
+    ) -> None:
+        reason = "This mod is disabled. Re-enable it before update and source actions."
+        self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
+        status_item = QTableWidgetItem("disabled")
+        status_item.setToolTip(reason)
+        self._mods_table.setItem(row, 4, status_item)
+        name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
+        name_item.setData(_ROLE_REMOTE_LINK, "")
+        name_item.setData(_ROLE_UPDATE_ACTIONABLE, False)
+        name_item.setData(_ROLE_UPDATE_BLOCK_REASON, reason)
+
+    def _resolve_inventory_update_row_state(
+        self,
+        *,
+        name_item: QTableWidgetItem,
+        by_folder_text: dict[str, ModUpdateStatus],
+        mods_by_folder_text: dict[str, InstalledMod],
+    ) -> _ResolvedInventoryUpdateRowState | None:
+        if self._current_inventory is None:
+            return None
+        status = _preferred_inventory_row_status(
+            _inventory_row_status_candidates(
+                name_item=name_item,
+                by_folder_text=by_folder_text,
+            ),
+            mods_by_folder_text=mods_by_folder_text,
+        )
+        if status is None:
+            return None
+        selected_mod = _inventory_mod_for_folder_text(
+            folder_path_text=str(status.folder_path),
+            mods_by_folder_text=mods_by_folder_text,
+        )
+        saved_intent = self._resolve_inventory_update_source_intent(status.unique_id)
+        effective_intent_state = _effective_inventory_source_intent_state(
+            saved_intent_state=getattr(saved_intent, "intent_state", None),
+            mod=selected_mod,
+            inventory=self._current_inventory,
+        )
+        presentation = _inventory_update_presentation(
+            status=status,
+            effective_intent_state=effective_intent_state,
+        )
+        version_tooltip = ""
+        if name_item.data(_ROLE_MOD_IS_GROUPED) is True and selected_mod is not None:
+            version_tooltip = (
+                "Grouped row currently reflects update status from:\n"
+                f"- {selected_mod.name} ({selected_mod.unique_id})\n"
+                f"Installed version: {selected_mod.version}"
+            )
+        remote_page_url = (
+            status.remote_link.page_url
+            if status.remote_link is not None
+            else (_manual_source_remote_page_url(saved_intent) or "")
+        )
+        return _ResolvedInventoryUpdateRowState(
+            status=status,
+            presentation=presentation,
+            remote_page_url=remote_page_url,
+            version_tooltip=version_tooltip,
+        )
+
+    def _apply_resolved_inventory_update_row(
+        self,
+        *,
+        row: int,
+        name_item: QTableWidgetItem,
+        resolved_row: _ResolvedInventoryUpdateRowState,
+    ) -> None:
+        status = resolved_row.status
+        presentation = resolved_row.presentation
+        unique_id_item = self._mods_table.item(row, 1)
+        version_item = self._mods_table.item(row, 2)
+        if unique_id_item is not None:
+            unique_id_item.setText(status.unique_id)
+        if version_item is not None:
+            version_item.setText(status.installed_version or "-")
+            version_item.setToolTip(resolved_row.version_tooltip)
+        self._mods_table.setItem(row, 3, QTableWidgetItem(status.remote_version or "-"))
+        status_item = QTableWidgetItem(presentation.status_label)
+        status_item.setToolTip(presentation.status_tooltip)
+        self._mods_table.setItem(row, 4, status_item)
+        name_item.setData(_ROLE_MOD_UPDATE_STATUS, status)
+        name_item.setData(_ROLE_REMOTE_LINK, resolved_row.remote_page_url)
+        name_item.setData(_ROLE_UPDATE_ACTIONABLE, presentation.actionable)
+        name_item.setData(_ROLE_UPDATE_BLOCK_REASON, presentation.blocked_reason)
+        if presentation.style_kind == "actionable":
+            _set_table_row_visual(
+                self._mods_table,
+                row,
+                background="#19231c",
+                foreground="#ebefe6",
+                bold_columns=(0, 4),
+                column_foregrounds={3: "#f2d492", 4: "#cbe7c1"},
+            )
+        elif presentation.style_kind == "up_to_date":
+            _set_table_row_visual(
+                self._mods_table,
+                row,
+                background="#171d1a",
+                foreground="#d6dbd5",
+                bold_columns=(0,),
+                column_foregrounds={4: "#9cc38f"},
+            )
+        else:
+            _set_table_row_visual(
+                self._mods_table,
+                row,
+                background="#211c19",
+                foreground="#e2d6ca",
+                bold_columns=(0,),
+                column_foregrounds={4: "#d7ba92"},
+            )
 
     def _render_discovery_results(
         self,
