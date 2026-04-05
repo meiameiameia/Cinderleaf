@@ -254,6 +254,13 @@ class _InstallPlanRuntime:
 
 
 @dataclass(frozen=True, slots=True)
+class _InstallDestinationContext:
+    destination_mods_path: Path
+    destination_archive_path: Path
+    configured_real_mods_path: Path | None
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxModProfileCreateResult:
     profile: SandboxModProfile
     profiles: SandboxModProfileCatalog
@@ -4629,40 +4636,27 @@ class AppShellService:
             nexus_api_key_text=nexus_api_key_text,
             existing_config=existing_config,
         )
-
-        destination_mods_path, destination_archive_path = self._resolve_install_destination_paths(
+        destination_context = self._resolve_safe_install_destination_context(
             install_target=install_target,
             configured_mods_path_text=configured_mods_path_text,
             sandbox_mods_path_text=sandbox_mods_path_text,
             real_archive_path_text=real_archive_path_text,
             sandbox_archive_path_text=sandbox_archive_path_text,
+            configured_real_mods_path=configured_real_mods_path,
         )
-
-        effective_real_mods_path = configured_real_mods_path
-        if effective_real_mods_path is None and configured_mods_path_text.strip():
-            effective_real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
-
-        safety = self.evaluate_install_target_safety(
-            install_target=install_target,
-            destination_mods_path=destination_mods_path,
-            configured_real_mods_path=effective_real_mods_path,
-        )
-        if not safety.allowed:
-            assert safety.message is not None
-            raise AppShellError(safety.message)
 
         try:
             installed_inventory = _scan_inventory_with_archive_exclusions(
-                destination_mods_path,
-                archive_path=destination_archive_path,
+                destination_context.destination_mods_path,
+                archive_path=destination_context.destination_archive_path,
             )
         except OSError as exc:
             raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
 
         return _InstallPlanRuntime(
             nexus_api_key=nexus_api_key,
-            destination_mods_path=destination_mods_path,
-            destination_archive_path=destination_archive_path,
+            destination_mods_path=destination_context.destination_mods_path,
+            destination_archive_path=destination_context.destination_archive_path,
             installed_inventory=installed_inventory,
         )
 
@@ -4947,26 +4941,15 @@ class AppShellService:
         sandbox_archive_path_text: str,
         mod_folder_path_text: str,
     ) -> ModRemovalPlan:
-        destination_mods_path, destination_archive_path = self._resolve_install_destination_paths(
+        destination_context = self._resolve_safe_install_destination_context(
             install_target=scan_target,
             configured_mods_path_text=configured_mods_path_text,
             sandbox_mods_path_text=sandbox_mods_path_text,
             real_archive_path_text=real_archive_path_text,
             sandbox_archive_path_text=sandbox_archive_path_text,
         )
-
-        configured_real_mods_path: Path | None = None
-        if configured_mods_path_text.strip():
-            configured_real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
-
-        safety = self.evaluate_install_target_safety(
-            install_target=scan_target,
-            destination_mods_path=destination_mods_path,
-            configured_real_mods_path=configured_real_mods_path,
-        )
-        if not safety.allowed:
-            assert safety.message is not None
-            raise AppShellError(safety.message)
+        destination_mods_path = destination_context.destination_mods_path
+        destination_archive_path = destination_context.destination_archive_path
 
         raw_target = mod_folder_path_text.strip()
         if not raw_target:
@@ -5116,26 +5099,17 @@ class AppShellService:
             raise AppShellError(f"Unknown archive source: {source_kind}")
 
         restore_target = self._infer_restore_target_from_source(source_kind)
-        destination_mods_path, destination_archive_path = self._resolve_install_destination_paths(
+        destination_context = self._resolve_safe_install_destination_context(
             install_target=restore_target,
             configured_mods_path_text=configured_mods_path_text,
             sandbox_mods_path_text=sandbox_mods_path_text,
             real_archive_path_text=real_archive_path_text,
             sandbox_archive_path_text=sandbox_archive_path_text,
-        )
-
-        configured_real_mods_path = self._resolve_optional_real_mods_path(
-            configured_mods_path_text=configured_mods_path_text,
             existing_config=existing_config,
+            use_existing_config_for_real_mods_path=True,
         )
-        safety = self.evaluate_install_target_safety(
-            install_target=restore_target,
-            destination_mods_path=destination_mods_path,
-            configured_real_mods_path=configured_real_mods_path,
-        )
-        if not safety.allowed:
-            assert safety.message is not None
-            raise AppShellError(safety.message)
+        destination_mods_path = destination_context.destination_mods_path
+        destination_archive_path = destination_context.destination_archive_path
 
         archived_entry = self._resolve_archived_entry(
             source_kind=source_kind,
@@ -6231,6 +6205,53 @@ class AppShellService:
             return sandbox_mods_path, sandbox_archive_path
 
         raise AppShellError(f"Unknown install target: {install_target}")
+
+    def _resolve_safe_install_destination_context(
+        self,
+        *,
+        install_target: InstallTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        configured_real_mods_path: Path | None = None,
+        existing_config: AppConfig | None = None,
+        use_existing_config_for_real_mods_path: bool = False,
+    ) -> _InstallDestinationContext:
+        destination_mods_path, destination_archive_path = self._resolve_install_destination_paths(
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+        )
+
+        effective_real_mods_path = configured_real_mods_path
+        if effective_real_mods_path is None:
+            if use_existing_config_for_real_mods_path:
+                effective_real_mods_path = self._resolve_optional_real_mods_path(
+                    configured_mods_path_text=configured_mods_path_text,
+                    existing_config=existing_config,
+                )
+            elif configured_mods_path_text.strip():
+                effective_real_mods_path = self._parse_and_validate_mods_path(
+                    configured_mods_path_text
+                )
+
+        safety = self.evaluate_install_target_safety(
+            install_target=install_target,
+            destination_mods_path=destination_mods_path,
+            configured_real_mods_path=effective_real_mods_path,
+        )
+        if not safety.allowed:
+            assert safety.message is not None
+            raise AppShellError(safety.message)
+
+        return _InstallDestinationContext(
+            destination_mods_path=destination_mods_path,
+            destination_archive_path=destination_archive_path,
+            configured_real_mods_path=effective_real_mods_path,
+        )
 
     @staticmethod
     def _infer_restore_target_from_source(source_kind: ArchiveSourceKind) -> InstallTargetKind:
