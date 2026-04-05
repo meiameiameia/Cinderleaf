@@ -70,23 +70,21 @@ Status:
 - shared remote metadata cache per update run: done
 - persisted update freshness cache: done
 - startup mod update auto-check for startup-scanned contexts: done
+- measured network/update instrumentation: done
 
 Next slices:
 
-1. Measured network/update instrumentation
-- Add timing around:
-  - update check total duration
-  - number of remote links resolved
-  - number of unique remote fetches
-  - cache hits vs misses
-
-2. Cache freshness UX
+1. Cache freshness UX
 - Surface when the current update state came from fresh cached metadata versus a live fetch.
 - Keep the UI truthful without cluttering the inventory table.
 
-3. Startup auto-check desktop polish
+2. Startup auto-check desktop polish
 - Validate and tune startup update-check behavior on the real desktop workflow.
 - Ensure status text and source switching feel calm when startup checks finish.
+
+3. Optional concurrency only if diagnostics justify it
+- Use the new diagnostics fields to confirm whether cold update checks are still bottlenecked by serial remote fetches.
+- Only consider bounded concurrency after cache reuse and cache hit rates are understood.
 
 ### Phase 2: Library UI Decomposition
 
@@ -150,9 +148,9 @@ Add durable checks for:
 
 ## Immediate Next Safe Increment
 
-`measured update-check timing and cache instrumentation`
+`inventory/update row presentation extraction`
 
 Reason:
-- it is the next honest performance step after deduplication, persistence, and startup auto-check are already in place
-- it reduces guesswork before further optimization or concurrency
-- it strengthens the roadmap so future slices are driven by evidence instead of intuition
+- phase 1 now has the measurement groundwork it needed
+- the next biggest concentration risk is still `main_window.py`
+- extracting row presentation logic is a better anti-drift move than immediately piling more behavior into the window class
