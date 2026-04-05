@@ -1371,9 +1371,9 @@ class AppShellService:
                 )
 
             try:
-                inventory = scan_mods_directory(
+                inventory = _scan_inventory_with_archive_exclusions(
                     destination_mods_path,
-                    excluded_paths=(archive_path, destination_mods_path / _LEGACY_ARCHIVE_DIRNAME),
+                    archive_path=archive_path,
                 )
             except OSError as exc:
                 raise AppShellError(f"Recovery execution scan failed: {exc}") from exc
@@ -3763,12 +3763,9 @@ class AppShellService:
                 raise AppShellError(
                     f"Sandbox promotion preview contains a blocked entry: {entry.target_path}"
                 )
-            inventory = scan_mods_directory(
+            inventory = _scan_inventory_with_archive_exclusions(
                 preview.real_mods_path,
-                excluded_paths=(
-                    preview.archive_path,
-                    preview.real_mods_path / _LEGACY_ARCHIVE_DIRNAME,
-                ),
+                archive_path=preview.archive_path,
             )
             result = SandboxInstallResult(
                 plan=preview.plan,
