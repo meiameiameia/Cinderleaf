@@ -261,6 +261,15 @@ class _InstallDestinationContext:
 
 
 @dataclass(frozen=True, slots=True)
+class _ModRollbackContext:
+    source_kind: ArchiveSourceKind
+    mods_path: Path
+    archive_path: Path
+    target_mod_path: Path
+    unique_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxModProfileCreateResult:
     profile: SandboxModProfile
     profiles: SandboxModProfileCatalog
@@ -5313,45 +5322,17 @@ class AppShellService:
         mod_unique_id_text: str,
         existing_config: AppConfig | None = None,
     ) -> tuple[ArchivedModEntry, ...]:
-        source_kind = self._archive_source_for_scan_target(scan_target)
-        mods_path, archive_path = self._resolve_install_destination_paths(
-            install_target=scan_target,
+        _ = existing_config
+        rollback_context = self._resolve_mod_rollback_context(
+            scan_target=scan_target,
             configured_mods_path_text=configured_mods_path_text,
             sandbox_mods_path_text=sandbox_mods_path_text,
             real_archive_path_text=real_archive_path_text,
             sandbox_archive_path_text=sandbox_archive_path_text,
-        )
-        target_mod_path = self._parse_and_validate_selected_mod_path(
-            mods_path=mods_path,
             mod_folder_path_text=mod_folder_path_text,
+            mod_unique_id_text=mod_unique_id_text,
         )
-        unique_id = mod_unique_id_text.strip()
-        if not unique_id:
-            raise AppShellError("Selected installed mod does not include a valid UniqueID.")
-
-        all_entries = list_archived_mod_entries(
-            archive_root=archive_path,
-            source_kind=source_kind,
-        )
-        unique_key = canonicalize_unique_id(unique_id)
-        folder_key = target_mod_path.name.casefold()
-        candidates = tuple(
-            entry
-            for entry in all_entries
-            if entry.unique_id is not None
-            and canonicalize_unique_id(entry.unique_id) == unique_key
-            and entry.target_folder_name.casefold() == folder_key
-        )
-        return tuple(
-            sorted(
-                candidates,
-                key=lambda entry: (
-                    _version_sort_key(entry.version),
-                    entry.archived_folder_name.casefold(),
-                ),
-                reverse=True,
-            )
-        )
+        return self._list_mod_rollback_candidates_for_context(rollback_context)
 
     def build_mod_rollback_plan(
         self,
@@ -5368,36 +5349,22 @@ class AppShellService:
         existing_config: AppConfig | None = None,
     ) -> ModRollbackPlan:
         _ = existing_config
-        source_kind = self._archive_source_for_scan_target(scan_target)
-        mods_path, archive_path = self._resolve_install_destination_paths(
-            install_target=scan_target,
+        rollback_context = self._resolve_mod_rollback_context(
+            scan_target=scan_target,
             configured_mods_path_text=configured_mods_path_text,
             sandbox_mods_path_text=sandbox_mods_path_text,
             real_archive_path_text=real_archive_path_text,
             sandbox_archive_path_text=sandbox_archive_path_text,
-        )
-        target_mod_path = self._parse_and_validate_selected_mod_path(
-            mods_path=mods_path,
             mod_folder_path_text=mod_folder_path_text,
+            mod_unique_id_text=mod_unique_id_text,
         )
-        unique_id = mod_unique_id_text.strip()
-        if not unique_id:
-            raise AppShellError("Selected installed mod does not include a valid UniqueID.")
 
         candidate_path_text = archived_candidate_path_text.strip()
         if not candidate_path_text:
             raise AppShellError("Select an archived rollback candidate first.")
         candidate_path = Path(candidate_path_text).expanduser()
 
-        candidates = self.list_mod_rollback_candidates(
-            scan_target=scan_target,
-            configured_mods_path_text=configured_mods_path_text,
-            sandbox_mods_path_text=sandbox_mods_path_text,
-            real_archive_path_text=real_archive_path_text,
-            sandbox_archive_path_text=sandbox_archive_path_text,
-            mod_folder_path_text=str(target_mod_path),
-            mod_unique_id_text=unique_id,
-        )
+        candidates = self._list_mod_rollback_candidates_for_context(rollback_context)
         selected_candidate: ArchivedModEntry | None = None
         for candidate in candidates:
             if _paths_deterministically_match(candidate.archived_path, candidate_path):
@@ -5409,15 +5376,15 @@ class AppShellService:
             )
 
         current_archive_path = allocate_archive_destination(
-            archive_root=archive_path,
-            target_folder_name=target_mod_path.name,
+            archive_root=rollback_context.archive_path,
+            target_folder_name=rollback_context.target_mod_path.name,
         )
         return ModRollbackPlan(
             destination_kind=scan_target,
-            mods_path=mods_path,
-            archive_path=archive_path,
-            current_mod_path=target_mod_path,
-            current_unique_id=unique_id,
+            mods_path=rollback_context.mods_path,
+            archive_path=rollback_context.archive_path,
+            current_mod_path=rollback_context.target_mod_path,
+            current_unique_id=rollback_context.unique_id,
             current_version=mod_version_text.strip() or "<unknown>",
             rollback_entry=selected_candidate,
             current_archive_path=current_archive_path,
@@ -6251,6 +6218,69 @@ class AppShellService:
             destination_mods_path=destination_mods_path,
             destination_archive_path=destination_archive_path,
             configured_real_mods_path=effective_real_mods_path,
+        )
+
+    def _resolve_mod_rollback_context(
+        self,
+        *,
+        scan_target: ScanTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        mod_folder_path_text: str,
+        mod_unique_id_text: str,
+    ) -> _ModRollbackContext:
+        source_kind = self._archive_source_for_scan_target(scan_target)
+        mods_path, archive_path = self._resolve_install_destination_paths(
+            install_target=scan_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+        )
+        target_mod_path = self._parse_and_validate_selected_mod_path(
+            mods_path=mods_path,
+            mod_folder_path_text=mod_folder_path_text,
+        )
+        unique_id = mod_unique_id_text.strip()
+        if not unique_id:
+            raise AppShellError("Selected installed mod does not include a valid UniqueID.")
+
+        return _ModRollbackContext(
+            source_kind=source_kind,
+            mods_path=mods_path,
+            archive_path=archive_path,
+            target_mod_path=target_mod_path,
+            unique_id=unique_id,
+        )
+
+    @staticmethod
+    def _list_mod_rollback_candidates_for_context(
+        rollback_context: _ModRollbackContext,
+    ) -> tuple[ArchivedModEntry, ...]:
+        all_entries = list_archived_mod_entries(
+            archive_root=rollback_context.archive_path,
+            source_kind=rollback_context.source_kind,
+        )
+        unique_key = canonicalize_unique_id(rollback_context.unique_id)
+        folder_key = rollback_context.target_mod_path.name.casefold()
+        candidates = tuple(
+            entry
+            for entry in all_entries
+            if entry.unique_id is not None
+            and canonicalize_unique_id(entry.unique_id) == unique_key
+            and entry.target_folder_name.casefold() == folder_key
+        )
+        return tuple(
+            sorted(
+                candidates,
+                key=lambda entry: (
+                    _version_sort_key(entry.version),
+                    entry.archived_folder_name.casefold(),
+                ),
+                reverse=True,
+            )
         )
 
     @staticmethod
