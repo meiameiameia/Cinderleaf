@@ -8,6 +8,8 @@ import pytest
 from sdvmm.domain.models import (
     InstalledMod,
     ModsInventory,
+    RemoteMetadataCacheEntry,
+    RemoteMetadataPayloadCache,
     UpdateSourceIntentOverlay,
     UpdateSourceIntentRecord,
 )
@@ -28,6 +30,7 @@ from sdvmm.services.update_metadata import (
     MetadataFetchError,
     check_nexus_connection,
     check_updates_for_inventory,
+    check_updates_for_inventory_with_cache,
     compare_versions,
     resolve_remote_link,
 )
@@ -360,6 +363,67 @@ def test_duplicate_link_failures_share_one_remote_fetch_attempt(
 
     assert [status.state for status in report.statuses] == ["metadata_unavailable", "metadata_unavailable"]
     assert fetcher.calls == [(url, {"apikey": "test-api-key"})]
+
+
+def test_fresh_persisted_remote_metadata_cache_skips_refetch() -> None:
+    mod = _mod(unique_id="Sample.GitHub", version="1.0.0", update_keys=("GitHub:owner/repo",))
+    inventory = _inventory((mod,))
+    persisted_cache = RemoteMetadataPayloadCache(
+        entries=(
+            RemoteMetadataCacheEntry(
+                provider="github",
+                metadata_target="https://api.github.com/repos/owner/repo/releases/latest",
+                auth_scope="",
+                fetched_at_epoch_seconds=95.0,
+                payload={"tag_name": "v1.1.0"},
+            ),
+        )
+    )
+    fetcher = StubFetcher()
+
+    report, updated_cache = check_updates_for_inventory_with_cache(
+        inventory,
+        fetcher=fetcher,
+        persisted_remote_metadata_cache=persisted_cache,
+        now_epoch_seconds=100.0,
+        freshness_window_seconds=10.0,
+    )
+
+    assert report.statuses[0].state == "update_available"
+    assert fetcher.calls == []
+    assert updated_cache == persisted_cache
+
+
+def test_stale_persisted_remote_metadata_cache_refetches_and_refreshes_timestamp() -> None:
+    mod = _mod(unique_id="Sample.GitHub", version="1.0.0", update_keys=("GitHub:owner/repo",))
+    inventory = _inventory((mod,))
+    persisted_cache = RemoteMetadataPayloadCache(
+        entries=(
+            RemoteMetadataCacheEntry(
+                provider="github",
+                metadata_target="https://api.github.com/repos/owner/repo/releases/latest",
+                auth_scope="",
+                fetched_at_epoch_seconds=50.0,
+                payload={"tag_name": "v1.0.1"},
+            ),
+        )
+    )
+    url = "https://api.github.com/repos/owner/repo/releases/latest"
+    fetcher = StubFetcher(payloads={url: {"tag_name": "v1.2.0"}})
+
+    report, updated_cache = check_updates_for_inventory_with_cache(
+        inventory,
+        fetcher=fetcher,
+        persisted_remote_metadata_cache=persisted_cache,
+        now_epoch_seconds=100.0,
+        freshness_window_seconds=10.0,
+    )
+
+    assert report.statuses[0].state == "update_available"
+    assert fetcher.calls == [(url, {})]
+    assert len(updated_cache.entries) == 1
+    assert updated_cache.entries[0].fetched_at_epoch_seconds >= 100.0
+    assert updated_cache.entries[0].payload == {"tag_name": "v1.2.0"}
 
 
 def test_missing_update_key_sets_typed_no_link_diagnostic() -> None:

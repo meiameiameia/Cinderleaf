@@ -13,6 +13,8 @@ from sdvmm.domain.models import (
     InstallOperationRecord,
     RecoveryExecutionHistory,
     RecoveryExecutionRecord,
+    RemoteMetadataCacheEntry,
+    RemoteMetadataPayloadCache,
     SandboxModProfile,
     SandboxModProfileCatalog,
     SandboxModProfileEntry,
@@ -26,6 +28,8 @@ INSTALL_OPERATION_HISTORY_VERSION = 1
 INSTALL_OPERATION_HISTORY_FILENAME = "install-operation-history.json"
 RECOVERY_EXECUTION_HISTORY_VERSION = 1
 RECOVERY_EXECUTION_HISTORY_FILENAME = "recovery-execution-history.json"
+REMOTE_METADATA_CACHE_VERSION = 1
+REMOTE_METADATA_CACHE_FILENAME = "update-metadata-cache.json"
 MOD_PROFILE_CATALOG_VERSION = 2
 SANDBOX_MOD_PROFILE_CATALOG_FILENAME = "sandbox-mod-profiles.json"
 REAL_MOD_PROFILE_CATALOG_FILENAME = "real-mod-profiles.json"
@@ -142,6 +146,10 @@ def recovery_execution_history_file(state_file: Path) -> Path:
     return state_file.parent / RECOVERY_EXECUTION_HISTORY_FILENAME
 
 
+def remote_metadata_cache_file(state_file: Path) -> Path:
+    return state_file.parent / REMOTE_METADATA_CACHE_FILENAME
+
+
 def update_source_intent_overlay_file(state_file: Path) -> Path:
     return state_file.parent / UPDATE_SOURCE_INTENT_OVERLAY_FILENAME
 
@@ -242,6 +250,41 @@ def append_recovery_execution_record(
     updated = RecoveryExecutionHistory(operations=(*history.operations, operation))
     save_recovery_execution_history(history_file, updated)
     return updated
+
+
+def load_remote_metadata_cache(cache_file: Path) -> RemoteMetadataPayloadCache:
+    if not cache_file.exists():
+        return RemoteMetadataPayloadCache(entries=tuple())
+
+    raw = _load_json_object(history_file=cache_file, subject="remote metadata cache")
+    version = raw.get("version")
+    if version != REMOTE_METADATA_CACHE_VERSION:
+        raise AppStateStoreError(
+            "Unsupported remote metadata cache version: "
+            f"{version!r}; expected {REMOTE_METADATA_CACHE_VERSION}"
+        )
+
+    entries_raw = raw.get("entries")
+    if not isinstance(entries_raw, list):
+        raise AppStateStoreError("entries must be an array")
+
+    entries = tuple(
+        _parse_remote_metadata_cache_entry(item, index) for index, item in enumerate(entries_raw)
+    )
+    return RemoteMetadataPayloadCache(entries=entries)
+
+
+def save_remote_metadata_cache(
+    cache_file: Path,
+    cache: RemoteMetadataPayloadCache,
+) -> None:
+    payload = {
+        "version": REMOTE_METADATA_CACHE_VERSION,
+        "entries": [_serialize_remote_metadata_cache_entry(entry) for entry in cache.entries],
+    }
+
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(cache_file, payload)
 
 
 def load_sandbox_mod_profile_catalog(
@@ -646,6 +689,27 @@ def _serialize_update_source_intent_record(
     }
 
 
+def _serialize_remote_metadata_cache_entry(
+    entry: RemoteMetadataCacheEntry,
+) -> dict[str, object]:
+    if not entry.provider.strip():
+        raise AppStateStoreError("remote metadata cache entry provider must be non-empty")
+    if not entry.metadata_target.strip():
+        raise AppStateStoreError("remote metadata cache entry metadata_target must be non-empty")
+    if not isinstance(entry.fetched_at_epoch_seconds, (int, float)):
+        raise AppStateStoreError("remote metadata cache entry fetched_at_epoch_seconds must be numeric")
+    if not isinstance(entry.payload, dict):
+        raise AppStateStoreError("remote metadata cache entry payload must be an object")
+
+    return {
+        "provider": entry.provider,
+        "metadata_target": entry.metadata_target,
+        "auth_scope": entry.auth_scope,
+        "fetched_at_epoch_seconds": entry.fetched_at_epoch_seconds,
+        "payload": entry.payload,
+    }
+
+
 def _parse_update_source_intent_record(data: object, index: int) -> UpdateSourceIntentRecord:
     if not isinstance(data, dict):
         raise AppStateStoreError(f"records[{index}] must be an object")
@@ -680,6 +744,37 @@ def _parse_update_source_intent_record(data: object, index: int) -> UpdateSource
             "manual_source_page_url",
             prefix=f"records[{index}]",
         ),
+    )
+
+
+def _parse_remote_metadata_cache_entry(data: object, index: int) -> RemoteMetadataCacheEntry:
+    if not isinstance(data, dict):
+        raise AppStateStoreError(f"entries[{index}] must be an object")
+
+    fetched_at_epoch_seconds = data.get("fetched_at_epoch_seconds")
+    if not isinstance(fetched_at_epoch_seconds, (int, float)):
+        raise AppStateStoreError(f"entries[{index}].fetched_at_epoch_seconds must be numeric")
+
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
+        raise AppStateStoreError(f"entries[{index}].payload must be an object")
+
+    auth_scope = data.get("auth_scope")
+    if auth_scope is None:
+        auth_scope = ""
+    if not isinstance(auth_scope, str):
+        raise AppStateStoreError(f"entries[{index}].auth_scope must be a string")
+
+    return RemoteMetadataCacheEntry(
+        provider=_require_non_empty_string(data, "provider", prefix=f"entries[{index}]"),
+        metadata_target=_require_non_empty_string(
+            data,
+            "metadata_target",
+            prefix=f"entries[{index}]",
+        ),
+        auth_scope=auth_scope,
+        fetched_at_epoch_seconds=float(fetched_at_epoch_seconds),
+        payload=payload,
     )
 
 

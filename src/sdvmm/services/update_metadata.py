@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 import json
 import os
 import re
+import time
 from html import unescape
 from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError, URLError
@@ -16,6 +17,8 @@ from sdvmm.domain.models import (
     ModsInventory,
     NexusIntegrationStatus,
     RemoteModLink,
+    RemoteMetadataCacheEntry,
+    RemoteMetadataPayloadCache,
     UpdateSourceIntentOverlay,
     UpdateSourceIntentRecord,
 )
@@ -59,6 +62,7 @@ RESPONSE_MISSING_VERSION = "response_missing_version"
 UNEXPECTED_PROVIDER_RESPONSE = "unexpected_provider_response"
 UNSUPPORTED_PROVIDER = "unsupported_provider"
 INCOMPLETE_MANUAL_SOURCE_ASSOCIATION = "incomplete_manual_source_association"
+DEFAULT_REMOTE_METADATA_CACHE_FRESHNESS_SECONDS = 900.0
 
 
 class MetadataFetchError(ValueError):
@@ -324,7 +328,15 @@ _PROVIDER_ADAPTERS: tuple[MetadataProviderAdapter, ...] = (
 )
 _PROVIDERS_BY_NAME = {adapter.provider: adapter for adapter in _PROVIDER_ADAPTERS}
 _RemotePayloadCacheKey = tuple[str, str, str]
-_RemotePayloadCacheValue = dict[str, Any] | MetadataFetchError
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedRemotePayload:
+    payload: dict[str, Any]
+    fetched_at_epoch_seconds: float
+
+
+_RemotePayloadCacheValue = _CachedRemotePayload | MetadataFetchError
 
 
 def check_updates_for_inventory(
@@ -335,9 +347,35 @@ def check_updates_for_inventory(
     nexus_api_key: str | None = None,
     update_source_intent_overlay: UpdateSourceIntentOverlay | None = None,
 ) -> ModUpdateReport:
+    report, _ = check_updates_for_inventory_with_cache(
+        inventory,
+        fetcher=fetcher,
+        timeout_seconds=timeout_seconds,
+        nexus_api_key=nexus_api_key,
+        update_source_intent_overlay=update_source_intent_overlay,
+    )
+    return report
+
+
+def check_updates_for_inventory_with_cache(
+    inventory: ModsInventory,
+    *,
+    fetcher: JsonMetadataFetcher | None = None,
+    timeout_seconds: float = 8.0,
+    nexus_api_key: str | None = None,
+    update_source_intent_overlay: UpdateSourceIntentOverlay | None = None,
+    persisted_remote_metadata_cache: RemoteMetadataPayloadCache | None = None,
+    freshness_window_seconds: float = DEFAULT_REMOTE_METADATA_CACHE_FRESHNESS_SECONDS,
+    now_epoch_seconds: float | None = None,
+) -> tuple[ModUpdateReport, RemoteMetadataPayloadCache]:
     active_fetcher = fetcher or UrllibJsonMetadataFetcher()
     overlay_by_unique_id = _overlay_records_by_unique_id(update_source_intent_overlay)
-    remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue] = {}
+    resolved_now = time.time() if now_epoch_seconds is None else now_epoch_seconds
+    remote_payload_cache = _seed_remote_payload_cache(
+        persisted_remote_metadata_cache=persisted_remote_metadata_cache,
+        freshness_window_seconds=freshness_window_seconds,
+        now_epoch_seconds=resolved_now,
+    )
 
     statuses: list[ModUpdateStatus] = []
     for mod in inventory.mods:
@@ -347,6 +385,7 @@ def check_updates_for_inventory(
                 fetcher=active_fetcher,
                 timeout_seconds=timeout_seconds,
                 nexus_api_key=nexus_api_key,
+                cache_write_epoch_seconds=resolved_now,
                 remote_payload_cache=remote_payload_cache,
                 update_source_intent=overlay_by_unique_id.get(
                     canonicalize_unique_id(mod.unique_id)
@@ -355,7 +394,10 @@ def check_updates_for_inventory(
         )
 
     statuses.sort(key=lambda status: (status.name.casefold(), status.folder_path.name.casefold()))
-    return ModUpdateReport(statuses=tuple(statuses))
+    return (
+        ModUpdateReport(statuses=tuple(statuses)),
+        _build_persisted_remote_metadata_cache(remote_payload_cache),
+    )
 
 
 def check_nexus_connection(
@@ -484,6 +526,7 @@ def _check_single_mod(
     fetcher: JsonMetadataFetcher,
     timeout_seconds: float,
     nexus_api_key: str | None,
+    cache_write_epoch_seconds: float,
     remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
     update_source_intent: UpdateSourceIntentRecord | None,
 ) -> ModUpdateStatus:
@@ -555,6 +598,7 @@ def _check_single_mod(
                 fetcher=fetcher,
                 timeout_seconds=timeout_seconds,
                 nexus_api_key=nexus_api_key,
+                cache_write_epoch_seconds=cache_write_epoch_seconds,
                 remote_payload_cache=remote_payload_cache,
             )
         except MetadataFetchError as exc:
@@ -649,6 +693,7 @@ def _fetch_payload_with_cache(
     fetcher: JsonMetadataFetcher,
     timeout_seconds: float,
     nexus_api_key: str | None,
+    cache_write_epoch_seconds: float,
     remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
 ) -> dict[str, Any]:
     cache_key = _remote_payload_cache_key(link, nexus_api_key)
@@ -656,7 +701,7 @@ def _fetch_payload_with_cache(
     if cached is not None:
         if isinstance(cached, MetadataFetchError):
             raise MetadataFetchError(cached.reason, cached.message)
-        return cached
+        return cached.payload
 
     try:
         payload = provider.fetch_payload(
@@ -669,7 +714,10 @@ def _fetch_payload_with_cache(
         remote_payload_cache[cache_key] = MetadataFetchError(exc.reason, exc.message)
         raise
 
-    remote_payload_cache[cache_key] = payload
+    remote_payload_cache[cache_key] = _CachedRemotePayload(
+        payload=payload,
+        fetched_at_epoch_seconds=cache_write_epoch_seconds,
+    )
     return payload
 
 
@@ -683,7 +731,50 @@ def _remote_payload_cache_key(
         auth_marker = normalize_nexus_api_key(nexus_api_key) or normalize_nexus_api_key(
             os.getenv(NEXUS_API_KEY_ENV, "")
         )
-    return (link.provider, metadata_target, auth_marker or "")
+    return (link.provider, metadata_target, "authenticated" if auth_marker else "")
+
+
+def _seed_remote_payload_cache(
+    *,
+    persisted_remote_metadata_cache: RemoteMetadataPayloadCache | None,
+    freshness_window_seconds: float,
+    now_epoch_seconds: float,
+) -> dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue]:
+    seeded: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue] = {}
+    if persisted_remote_metadata_cache is None:
+        return seeded
+
+    for entry in persisted_remote_metadata_cache.entries:
+        age_seconds = now_epoch_seconds - entry.fetched_at_epoch_seconds
+        if age_seconds < 0:
+            age_seconds = 0
+        if age_seconds > freshness_window_seconds:
+            continue
+        seeded[(entry.provider, entry.metadata_target, entry.auth_scope)] = _CachedRemotePayload(
+            payload=dict(entry.payload),
+            fetched_at_epoch_seconds=entry.fetched_at_epoch_seconds,
+        )
+    return seeded
+
+
+def _build_persisted_remote_metadata_cache(
+    remote_payload_cache: Mapping[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
+) -> RemoteMetadataPayloadCache:
+    entries: list[RemoteMetadataCacheEntry] = []
+    for (provider, metadata_target, auth_scope), cached in remote_payload_cache.items():
+        if isinstance(cached, MetadataFetchError):
+            continue
+        entries.append(
+            RemoteMetadataCacheEntry(
+                provider=provider,
+                metadata_target=metadata_target,
+                auth_scope=auth_scope,
+                fetched_at_epoch_seconds=cached.fetched_at_epoch_seconds,
+                payload=dict(cached.payload),
+            )
+        )
+    entries.sort(key=lambda entry: (entry.provider, entry.metadata_target, entry.auth_scope))
+    return RemoteMetadataPayloadCache(entries=tuple(entries))
 
 
 def _parse_update_key(raw_key: str) -> tuple[str | None, str]:

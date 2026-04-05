@@ -14,6 +14,8 @@ from sdvmm.domain.models import (
     InstallOperationRecord,
     RecoveryExecutionHistory,
     RecoveryExecutionRecord,
+    RemoteMetadataCacheEntry,
+    RemoteMetadataPayloadCache,
     UpdateSourceIntentOverlay,
     UpdateSourceIntentRecord,
 )
@@ -24,6 +26,8 @@ from sdvmm.services.app_state_store import (
     INSTALL_OPERATION_HISTORY_VERSION,
     RECOVERY_EXECUTION_HISTORY_FILENAME,
     RECOVERY_EXECUTION_HISTORY_VERSION,
+    REMOTE_METADATA_CACHE_FILENAME,
+    REMOTE_METADATA_CACHE_VERSION,
     UPDATE_SOURCE_INTENT_OVERLAY_FILENAME,
     UPDATE_SOURCE_INTENT_OVERLAY_VERSION,
     AppStateStoreError,
@@ -32,11 +36,14 @@ from sdvmm.services.app_state_store import (
     install_operation_history_file,
     load_app_config,
     load_install_operation_history,
+    load_remote_metadata_cache,
     load_recovery_execution_history,
     load_update_source_intent_overlay,
     recovery_execution_history_file,
+    remote_metadata_cache_file,
     save_app_config,
     save_install_operation_history,
+    save_remote_metadata_cache,
     save_recovery_execution_history,
     save_update_source_intent_overlay,
     update_source_intent_overlay_file,
@@ -441,6 +448,68 @@ def test_recovery_execution_history_round_trip(tmp_path: Path) -> None:
     assert payload["operations"][0]["related_install_operation_id"] == operation.related_install_operation_id
     assert payload["operations"][0]["destination_kind"] == operation.destination_kind
     assert payload["operations"][0]["outcome_status"] == "completed"
+
+
+def test_remote_metadata_cache_round_trip(tmp_path: Path) -> None:
+    cache_file = tmp_path / "state" / REMOTE_METADATA_CACHE_FILENAME
+    cache = RemoteMetadataPayloadCache(
+        entries=(
+            RemoteMetadataCacheEntry(
+                provider="github",
+                metadata_target="https://api.github.com/repos/owner/repo/releases/latest",
+                auth_scope="",
+                fetched_at_epoch_seconds=123.0,
+                payload={"tag_name": "v1.2.0"},
+            ),
+            RemoteMetadataCacheEntry(
+                provider="nexus",
+                metadata_target="https://api.nexusmods.com/v1/games/stardewvalley/mods/12345.json",
+                auth_scope="authenticated",
+                fetched_at_epoch_seconds=456.0,
+                payload={"version": "1.2.0"},
+            ),
+        )
+    )
+
+    save_remote_metadata_cache(cache_file, cache)
+    loaded = load_remote_metadata_cache(cache_file)
+
+    assert loaded == cache
+
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert payload["version"] == REMOTE_METADATA_CACHE_VERSION
+    assert payload["entries"][0]["provider"] == "github"
+    assert payload["entries"][1]["auth_scope"] == "authenticated"
+
+
+def test_remote_metadata_cache_file_uses_state_directory(tmp_path: Path) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+
+    assert remote_metadata_cache_file(state_file) == (
+        tmp_path / "state" / REMOTE_METADATA_CACHE_FILENAME
+    )
+
+
+def test_load_remote_metadata_cache_returns_empty_when_file_missing(tmp_path: Path) -> None:
+    cache_file = tmp_path / "state" / REMOTE_METADATA_CACHE_FILENAME
+
+    assert load_remote_metadata_cache(cache_file) == RemoteMetadataPayloadCache(entries=tuple())
+
+
+def test_load_remote_metadata_cache_rejects_unsupported_version(tmp_path: Path) -> None:
+    cache_file = tmp_path / REMOTE_METADATA_CACHE_FILENAME
+    cache_file.write_text(
+        json.dumps(
+            {
+                "version": 999,
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AppStateStoreError, match="Unsupported remote metadata cache version"):
+        load_remote_metadata_cache(cache_file)
 
 
 def test_update_source_intent_overlay_round_trip(tmp_path: Path) -> None:

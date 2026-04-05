@@ -60,6 +60,7 @@ from sdvmm.domain.models import (
     InstallRecoveryPlanSummary,
     RecoveryExecutionHistory,
     RecoveryExecutionRecord,
+    RemoteMetadataPayloadCache,
     SandboxModProfile,
     SandboxModProfileCatalog,
     SandboxModProfileEntry,
@@ -110,12 +111,15 @@ from sdvmm.services.app_state_store import (
     load_real_mod_profile_catalog,
     load_recovery_execution_history,
     load_app_config,
+    load_remote_metadata_cache,
     load_sandbox_mod_profile_catalog,
     real_mod_profile_catalog_file,
     recovery_execution_history_file,
+    remote_metadata_cache_file,
     save_real_mod_profile_catalog,
     sandbox_mod_profile_catalog_file,
     save_app_config,
+    save_remote_metadata_cache,
     save_sandbox_mod_profile_catalog,
     load_update_source_intent_overlay,
     save_update_source_intent_overlay,
@@ -158,9 +162,9 @@ from sdvmm.services.archive_manager import (
     restore_archived_mod_entry,
 )
 from sdvmm.services.update_metadata import (
+    check_updates_for_inventory_with_cache,
     NEXUS_API_KEY_ENV,
     check_nexus_connection,
-    check_updates_for_inventory,
     mask_api_key,
     normalize_nexus_api_key,
 )
@@ -635,6 +639,12 @@ class AppShellService:
             return load_update_source_intent_overlay(self._update_source_intent_overlay_file)
         except AppStateStoreError as exc:
             raise AppShellError(f"Could not load update-source intent overlay: {exc}") from exc
+
+    def load_remote_metadata_cache(self) -> RemoteMetadataPayloadCache:
+        try:
+            return load_remote_metadata_cache(self._remote_metadata_cache_file)
+        except AppStateStoreError:
+            return RemoteMetadataPayloadCache(entries=tuple())
 
     def get_update_source_intent(self, unique_id: str) -> UpdateSourceIntentRecord | None:
         canonical_unique_id = _require_canonical_unique_id(unique_id)
@@ -4077,14 +4087,21 @@ class AppShellService:
             existing_config=existing_config,
         )
         update_source_intent_overlay = self.load_update_source_intent_overlay()
+        remote_metadata_cache = self.load_remote_metadata_cache()
         try:
-            return check_updates_for_inventory(
+            report, updated_cache = check_updates_for_inventory_with_cache(
                 inventory,
                 nexus_api_key=nexus_api_key,
                 update_source_intent_overlay=update_source_intent_overlay,
+                persisted_remote_metadata_cache=remote_metadata_cache,
             )
         except OSError as exc:
             raise AppShellError(f"Could not check remote metadata: {exc}") from exc
+        try:
+            save_remote_metadata_cache(self._remote_metadata_cache_file, updated_cache)
+        except AppStateStoreError:
+            pass
+        return report
 
     def _enrich_package_inspection_result(
         self,
@@ -7087,6 +7104,10 @@ class AppShellService:
     @property
     def _update_source_intent_overlay_file(self) -> Path:
         return update_source_intent_overlay_file(self._state_file)
+
+    @property
+    def _remote_metadata_cache_file(self) -> Path:
+        return remote_metadata_cache_file(self._state_file)
 
     @property
     def _sandbox_mod_profile_catalog_file(self) -> Path:

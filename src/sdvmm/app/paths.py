@@ -8,11 +8,13 @@ _APP_DIRNAME = "sdvmm"
 _APP_STATE_FILENAME = "app-state.json"
 _INSTALL_HISTORY_FILENAME = "install-operation-history.json"
 _RECOVERY_HISTORY_FILENAME = "recovery-execution-history.json"
+_REMOTE_METADATA_CACHE_FILENAME = "update-metadata-cache.json"
 _STARDEW_VALLEY_DIRNAME = "StardewValley"
 _PERSISTED_STATE_FILENAMES = (
     _APP_STATE_FILENAME,
     _INSTALL_HISTORY_FILENAME,
     _RECOVERY_HISTORY_FILENAME,
+    _REMOTE_METADATA_CACHE_FILENAME,
 )
 
 

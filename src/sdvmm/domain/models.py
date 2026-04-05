@@ -303,6 +303,20 @@ class ModUpdateReport:
     statuses: tuple[ModUpdateStatus, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class RemoteMetadataCacheEntry:
+    provider: str
+    metadata_target: str
+    auth_scope: str
+    fetched_at_epoch_seconds: float
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteMetadataPayloadCache:
+    entries: tuple[RemoteMetadataCacheEntry, ...]
+
+
 ModsCompareState = Literal[
     "only_in_real",
     "only_in_sandbox",

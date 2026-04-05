@@ -44,6 +44,7 @@ from sdvmm.domain.models import (
     PackageFinding,
     PackageWarning,
     RemoteModLink,
+    RemoteMetadataPayloadCache,
     RestoreImportPlanningItem,
     RestoreImportPlanningResult,
     SandboxInstallPlan,
@@ -7043,14 +7044,23 @@ def test_check_updates_passes_resolved_nexus_key_to_metadata_service(
         timeout_seconds: float = 8.0,
         nexus_api_key: str | None = None,
         update_source_intent_overlay: UpdateSourceIntentOverlay | None = None,
-    ) -> ModUpdateReport:
+        persisted_remote_metadata_cache: RemoteMetadataPayloadCache | None = None,
+        freshness_window_seconds: float = 900.0,
+        now_epoch_seconds: float | None = None,
+    ) -> tuple[ModUpdateReport, RemoteMetadataPayloadCache]:
         captured["inventory"] = incoming_inventory
         captured["nexus_api_key"] = nexus_api_key
         captured["update_source_intent_overlay"] = update_source_intent_overlay
-        return ModUpdateReport(statuses=tuple())
+        captured["persisted_remote_metadata_cache"] = persisted_remote_metadata_cache
+        _ = fetcher, timeout_seconds, freshness_window_seconds, now_epoch_seconds
+        return ModUpdateReport(statuses=tuple()), RemoteMetadataPayloadCache(entries=tuple())
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(shell_service_module, "check_updates_for_inventory", _fake_check_updates_for_inventory)
+    monkeypatch.setattr(
+        shell_service_module,
+        "check_updates_for_inventory_with_cache",
+        _fake_check_updates_for_inventory,
+    )
     try:
         config = AppConfig(
             game_path=tmp_path,
@@ -7069,6 +7079,7 @@ def test_check_updates_passes_resolved_nexus_key_to_metadata_service(
     assert captured["inventory"] is inventory
     assert captured["nexus_api_key"] == "persisted-nexus-key"
     assert captured["update_source_intent_overlay"] == UpdateSourceIntentOverlay(records=tuple())
+    assert captured["persisted_remote_metadata_cache"] == RemoteMetadataPayloadCache(entries=tuple())
 
 
 def test_check_updates_passes_manual_source_association_overlay_to_metadata_service(
@@ -7092,14 +7103,23 @@ def test_check_updates_passes_manual_source_association_overlay_to_metadata_serv
         timeout_seconds: float = 8.0,
         nexus_api_key: str | None = None,
         update_source_intent_overlay: UpdateSourceIntentOverlay | None = None,
-    ) -> ModUpdateReport:
+        persisted_remote_metadata_cache: RemoteMetadataPayloadCache | None = None,
+        freshness_window_seconds: float = 900.0,
+        now_epoch_seconds: float | None = None,
+    ) -> tuple[ModUpdateReport, RemoteMetadataPayloadCache]:
         captured["inventory"] = incoming_inventory
         captured["nexus_api_key"] = nexus_api_key
         captured["update_source_intent_overlay"] = update_source_intent_overlay
-        return ModUpdateReport(statuses=tuple())
+        captured["persisted_remote_metadata_cache"] = persisted_remote_metadata_cache
+        _ = fetcher, timeout_seconds, freshness_window_seconds, now_epoch_seconds
+        return ModUpdateReport(statuses=tuple()), RemoteMetadataPayloadCache(entries=tuple())
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(shell_service_module, "check_updates_for_inventory", _fake_check_updates_for_inventory)
+    monkeypatch.setattr(
+        shell_service_module,
+        "check_updates_for_inventory_with_cache",
+        _fake_check_updates_for_inventory,
+    )
     try:
         _ = service.check_updates(inventory)
     finally:
@@ -7108,6 +7128,7 @@ def test_check_updates_passes_manual_source_association_overlay_to_metadata_serv
     assert captured["inventory"] is inventory
     assert captured["nexus_api_key"] is None
     assert captured["update_source_intent_overlay"] == saved_overlay
+    assert captured["persisted_remote_metadata_cache"] == RemoteMetadataPayloadCache(entries=tuple())
 
 
 def test_search_mod_discovery_delegates_to_discovery_service(tmp_path: Path) -> None:
