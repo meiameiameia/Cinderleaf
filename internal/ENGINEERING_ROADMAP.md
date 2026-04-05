@@ -2,15 +2,15 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-05`
+Last refreshed: `2026-04-05` after startup auto-check and update-cache work
 
 ## Baseline
 
-- Full unit baseline: `683 passed`
+- Full unit baseline: `692 passed`
 - Largest Python files:
-  - `src/sdvmm/ui/main_window.py`: `12299` lines
-  - `src/sdvmm/app/shell_service.py`: `9850` lines
-  - `src/sdvmm/app/inventory_presenter.py`: `1124` lines
+  - `src/sdvmm/ui/main_window.py`: `13483` lines
+  - `src/sdvmm/app/shell_service.py`: `10801` lines
+  - `src/sdvmm/app/inventory_presenter.py`: `1305` lines
 - Largest current UI orchestration hotspots:
   - `MainWindow.__init__`: `994` lines
   - `MainWindow._build_layout`: `981` lines
@@ -67,28 +67,26 @@ Goal: make `Check for updates` fast enough and stable enough to support startup 
 Status:
 - update-report persistence by inventory context: done
 - single-row patching after install instead of clearing whole report: done
+- shared remote metadata cache per update run: done
+- persisted update freshness cache: done
+- startup mod update auto-check for startup-scanned contexts: done
 
 Next slices:
 
-1. Shared remote metadata cache per update run
-- Deduplicate remote fetches by canonical remote link key during one `check_updates_for_inventory(...)` call.
-- If multiple installed rows resolve to the same remote source, fetch once and reuse the payload.
-
-2. Persisted update freshness cache
-- Store last-known update report and a freshness timestamp per inventory context.
-- Reuse fresh cached results on profile switches and scan rerenders.
-
-3. Startup mod update auto-check
-- Only after freshness caching exists.
-- Run in the background for the active scanned context.
-- Skip network work when cached data is still fresh enough.
-
-4. Measured network/update instrumentation
+1. Measured network/update instrumentation
 - Add timing around:
   - update check total duration
   - number of remote links resolved
   - number of unique remote fetches
   - cache hits vs misses
+
+2. Cache freshness UX
+- Surface when the current update state came from fresh cached metadata versus a live fetch.
+- Keep the UI truthful without cluttering the inventory table.
+
+3. Startup auto-check desktop polish
+- Validate and tune startup update-check behavior on the real desktop workflow.
+- Ensure status text and source switching feel calm when startup checks finish.
 
 ### Phase 2: Library UI Decomposition
 
@@ -147,15 +145,14 @@ Add durable checks for:
 - Do not add broad concurrency to update checks before deduplication and cache instrumentation exist.
 - Do not split `main_window.py` by random widget sections alone; extract behavior seams, not only layout code.
 - Do not rewrite `shell_service.py` wholesale.
-- Do not add startup mod update auto-check until cached freshness and persistence are in place.
+- Do not add broad concurrency to update checks until instrumentation shows the remaining bottleneck after cache reuse.
 - Do not widen roadmap items into packaging/release changes unless a later audit shows that startup/frozen-app behavior is the real bottleneck.
 
 ## Immediate Next Safe Increment
 
-`per-run remote metadata cache for update checks`
+`measured update-check timing and cache instrumentation`
 
 Reason:
-- it directly targets the slowest user-visible workflow
-- it is measurable
-- it does not require UI redesign first
-- it is the cleanest prerequisite for future startup auto-checking
+- it is the next honest performance step after deduplication, persistence, and startup auto-check are already in place
+- it reduces guesswork before further optimization or concurrency
+- it strengthens the roadmap so future slices are driven by evidence instead of intuition
