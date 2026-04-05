@@ -5696,24 +5696,16 @@ class AppShellService:
         selected_mod_folder_paths_text: Iterable[str],
         existing_config: AppConfig | None,
     ) -> tuple[Path, Path, tuple[Path, ...]]:
-        real_mods_path = self._resolve_optional_real_mods_path(
+        real_mods_path, sandbox_mods_path = self._resolve_distinct_real_and_sandbox_mods_paths(
             configured_mods_path_text=configured_mods_path_text,
-            existing_config=existing_config,
-        )
-        if real_mods_path is None:
-            raise AppShellError("Configured real Mods directory is required for sandbox sync.")
-
-        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
             sandbox_mods_path_text=sandbox_mods_path_text,
             existing_config=existing_config,
-        )
-        if sandbox_mods_path is None:
-            raise AppShellError("Sandbox Mods directory is required for sandbox sync.")
-
-        if _paths_deterministically_match(real_mods_path, sandbox_mods_path):
-            raise AppShellError(
+            missing_real_message="Configured real Mods directory is required for sandbox sync.",
+            missing_sandbox_message="Sandbox Mods directory is required for sandbox sync.",
+            same_path_message=(
                 "Sandbox sync is blocked: sandbox Mods path matches the configured real Mods path."
-            )
+            ),
+        )
 
         source_paths = self._resolve_selected_real_mod_paths(
             real_mods_path=real_mods_path,
@@ -5748,24 +5740,16 @@ class AppShellService:
         selected_mod_folder_paths_text: Iterable[str],
         existing_config: AppConfig | None,
     ) -> tuple[Path, Path, Path, tuple[Path, ...], ModsInventory]:
-        real_mods_path = self._resolve_optional_real_mods_path(
+        real_mods_path, sandbox_mods_path = self._resolve_distinct_real_and_sandbox_mods_paths(
             configured_mods_path_text=configured_mods_path_text,
-            existing_config=existing_config,
-        )
-        if real_mods_path is None:
-            raise AppShellError("Configured real Mods directory is required for sandbox promotion.")
-
-        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
             sandbox_mods_path_text=sandbox_mods_path_text,
             existing_config=existing_config,
-        )
-        if sandbox_mods_path is None:
-            raise AppShellError("Sandbox Mods directory is required for sandbox promotion.")
-
-        if _paths_deterministically_match(real_mods_path, sandbox_mods_path):
-            raise AppShellError(
+            missing_real_message="Configured real Mods directory is required for sandbox promotion.",
+            missing_sandbox_message="Sandbox Mods directory is required for sandbox promotion.",
+            same_path_message=(
                 "Sandbox promotion is blocked: sandbox Mods path matches the configured real Mods path."
-            )
+            ),
+        )
 
         archive_path = self._parse_and_validate_archive_path(
             archive_path_text=real_archive_path_text,
@@ -5783,6 +5767,35 @@ class AppShellService:
             excluded_paths=(sandbox_mods_path / _LEGACY_ARCHIVE_DIRNAME,),
         )
         return real_mods_path, sandbox_mods_path, archive_path, source_paths, source_inventory
+
+    def _resolve_distinct_real_and_sandbox_mods_paths(
+        self,
+        *,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        existing_config: AppConfig | None,
+        missing_real_message: str,
+        missing_sandbox_message: str,
+        same_path_message: str,
+    ) -> tuple[Path, Path]:
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is None:
+            raise AppShellError(missing_real_message)
+
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is None:
+            raise AppShellError(missing_sandbox_message)
+
+        if _paths_deterministically_match(real_mods_path, sandbox_mods_path):
+            raise AppShellError(same_path_message)
+
+        return real_mods_path, sandbox_mods_path
 
     def _build_sandbox_mods_promotion_plan(
         self,
