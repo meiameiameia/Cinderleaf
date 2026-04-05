@@ -1182,6 +1182,10 @@ class MainWindow(QMainWindow):
         self._startup_auto_scan_queue: list[str] = []
         self._startup_auto_scan_failures: list[str] = []
         self._startup_auto_scan_status_restore_text: str | None = None
+        self._startup_update_check_started = False
+        self._startup_update_check_queue: list[tuple[str, Path]] = []
+        self._startup_update_check_failures: list[str] = []
+        self._startup_update_check_status_restore_text: str | None = None
         self._preserve_package_selection_on_zip_path_change = False
         self._preserve_package_inspection_on_zip_path_change = False
         self._auto_overwrite_package_path: str | None = None
@@ -3855,6 +3859,102 @@ class MainWindow(QMainWindow):
             return
         if restore_status:
             self._set_status(restore_status)
+        QTimer.singleShot(0, self._maybe_start_startup_update_checks)
+
+    def _maybe_start_startup_update_checks(self) -> None:
+        if self._startup_update_check_started:
+            return
+        if self._active_operation_name is not None:
+            QTimer.singleShot(150, self._maybe_start_startup_update_checks)
+            return
+
+        queue = list(self._startup_update_check_candidates())
+        if not queue:
+            return
+
+        self._startup_update_check_started = True
+        self._startup_update_check_queue = queue
+        self._startup_update_check_failures = []
+        status_text = self._status_strip_label.text().strip()
+        self._startup_update_check_status_restore_text = status_text or None
+        self._run_next_startup_update_check()
+
+    def _startup_update_check_candidates(self) -> tuple[tuple[str, Path], ...]:
+        candidates: list[tuple[str, Path]] = []
+        for target in self._startup_auto_scan_candidates():
+            cached_result = self._cached_scan_result_for_target(target)
+            if cached_result is None:
+                continue
+            candidates.append((target, cached_result.scan_path))
+        return tuple(candidates)
+
+    def _run_next_startup_update_check(self) -> None:
+        if not self._startup_update_check_queue:
+            self._finalize_startup_update_checks()
+            return
+
+        target_kind, scan_path = self._startup_update_check_queue.pop(0)
+        cached_result = self._cached_scan_result_for_target(target_kind)
+        if cached_result is None or cached_result.scan_path != scan_path:
+            QTimer.singleShot(0, self._run_next_startup_update_check)
+            return
+
+        target_label = self._scan_target_label(target_kind)
+        inventory = cached_result.inventory
+        nexus_api_key_text = self._nexus_api_key_input.text()
+        config = self._config
+        self._run_background_operation(
+            operation_name=f"Startup {target_label} update check",
+            running_label=f"Startup {target_label} update check",
+            started_status="Checking mod update status on startup...",
+            error_title=f"Startup {target_label} update check failed",
+            task_fn=lambda: self._shell_service.check_updates(
+                inventory,
+                nexus_api_key_text=nexus_api_key_text,
+                existing_config=config,
+            ),
+            on_success=lambda report, _target=target_kind, _scan_path=scan_path: (
+                self._on_startup_update_check_completed(report, _target, _scan_path)
+            ),
+            on_failure=lambda message, _target=target_kind: (
+                self._on_startup_update_check_failed(message, _target)
+            ),
+            show_error_dialog=False,
+        )
+
+    def _on_startup_update_check_completed(
+        self,
+        report: ModUpdateReport,
+        target_kind: str,
+        scan_path: Path,
+    ) -> None:
+        self._cache_update_report_for_context(
+            report,
+            target_kind=target_kind,
+            scan_path=scan_path,
+        )
+        resolved_context = self._resolved_update_report_context()
+        if resolved_context == (target_kind, scan_path):
+            self._handle_completed_update_report(report, status_message=None)
+        QTimer.singleShot(0, self._run_next_startup_update_check)
+
+    def _on_startup_update_check_failed(self, message: str, target_kind: str) -> None:
+        self._startup_update_check_failures.append(
+            f"{self._scan_target_label(target_kind)} update check failed: {message}"
+        )
+        QTimer.singleShot(0, self._run_next_startup_update_check)
+
+    def _finalize_startup_update_checks(self) -> None:
+        restore_status = self._startup_update_check_status_restore_text
+        failures = tuple(self._startup_update_check_failures)
+        self._startup_update_check_queue = []
+        self._startup_update_check_failures = []
+        self._startup_update_check_status_restore_text = None
+        if failures:
+            self._set_status(failures[0])
+            return
+        if restore_status:
+            self._set_status(restore_status)
 
     def _on_browse_game(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -5387,11 +5487,23 @@ class MainWindow(QMainWindow):
         )
 
     def _on_check_updates_completed(self, report: ModUpdateReport) -> None:
+        self._handle_completed_update_report(
+            report,
+            status_message=f"Update check complete: {len(report.statuses)} mod(s)",
+        )
+
+    def _handle_completed_update_report(
+        self,
+        report: ModUpdateReport,
+        *,
+        status_message: str | None,
+    ) -> None:
         self._apply_update_report(report)
         self._set_inventory_output_text(build_update_report_text(report))
         self._recompute_intake_correlations()
         self._refresh_discovery_correlations()
-        self._set_status(f"Update check complete: {len(report.statuses)} mod(s)")
+        if status_message is not None:
+            self._set_status(status_message)
         self._sync_guided_update_intake_handoff(
             allow_auto_select=False,
             update_output=False,

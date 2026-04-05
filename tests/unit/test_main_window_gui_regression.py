@@ -424,6 +424,44 @@ def test_main_window_startup_auto_scans_real_and_sandbox_without_switching_selec
             )
         ),
     )
+    real_update_report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.RealAlpha",
+                name="Real Alpha",
+                folder_path=real_mods / "RealAlpha",
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=RemoteModLink(
+                    provider="nexus",
+                    key="123",
+                    page_url="https://example.test/real-alpha",
+                    metadata_url=None,
+                ),
+                message="Real Alpha has an update.",
+            ),
+        )
+    )
+    sandbox_update_report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.SandboxBeta",
+                name="Sandbox Beta",
+                folder_path=sandbox_mods / "SandboxBeta",
+                installed_version="2.0.0",
+                remote_version="2.0.0",
+                state="up_to_date",
+                remote_link=RemoteModLink(
+                    provider="github",
+                    key="owner/repo",
+                    page_url="https://example.test/sandbox-beta",
+                    metadata_url=None,
+                ),
+                message="Sandbox Beta is up to date.",
+            ),
+        )
+    )
     captured: list[str] = []
 
     def _fake_run_background_operation(**kwargs) -> None:
@@ -447,13 +485,22 @@ def test_main_window_startup_auto_scans_real_and_sandbox_without_switching_selec
         if operation_name == "Startup sandbox Mods directory scan":
             kwargs["on_success"](sandbox_scan_result)
             return
+        if operation_name == "Startup real Mods directory update check":
+            kwargs["on_success"](real_update_report)
+            return
+        if operation_name == "Startup sandbox Mods directory update check":
+            kwargs["on_success"](sandbox_update_report)
+            return
         raise AssertionError(f"Unexpected startup operation: {operation_name}")
 
     monkeypatch.setattr(window, "_run_background_operation", _fake_run_background_operation)
 
     window.show()
-    for _ in range(8):
+    expected_operation_count = 8
+    for _ in range(16):
         qapp.processEvents()
+        if len(captured) >= expected_operation_count:
+            break
 
     assert captured == [
         "Startup environment check",
@@ -462,16 +509,34 @@ def test_main_window_startup_auto_scans_real_and_sandbox_without_switching_selec
         "Startup app update check",
         "Startup real Mods directory scan",
         "Startup sandbox Mods directory scan",
+        "Startup real Mods directory update check",
+        "Startup sandbox Mods directory update check",
     ]
     assert window._current_scan_target() == SCAN_TARGET_CONFIGURED_REAL_MODS
     assert window._current_inventory is not None
     assert tuple(mod.unique_id for mod in window._current_inventory.mods) == ("Sample.RealAlpha",)
+    assert window._current_update_report == real_update_report
     assert set(window._scan_results_by_target) == {
         SCAN_TARGET_CONFIGURED_REAL_MODS,
         SCAN_TARGET_SANDBOX_MODS,
     }
     assert window._status_strip_label.text() == "Cinderleaf is up to date."
     assert window._startup_checks_completed is True
+
+    captured_before_switch = len(captured)
+    sandbox_index = window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    window._scan_target_combo.setCurrentIndex(sandbox_index)
+    qapp.processEvents()
+    assert len(captured) == captured_before_switch
+    assert window._current_update_report == sandbox_update_report
+
+    real_index = window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    window._scan_target_combo.setCurrentIndex(real_index)
+    qapp.processEvents()
+    assert len(captured) == captured_before_switch
+    assert window._current_update_report == real_update_report
 
     captured.clear()
     sandbox_index = window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
