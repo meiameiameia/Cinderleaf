@@ -270,6 +270,14 @@ class _ModRollbackContext:
 
 
 @dataclass(frozen=True, slots=True)
+class _ModsCompareScanContext:
+    real_mods_path: Path
+    sandbox_mods_path: Path
+    real_inventory: ModsInventory
+    sandbox_inventory: ModsInventory
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxModProfileCreateResult:
     profile: SandboxModProfile
     profiles: SandboxModProfileCatalog
@@ -3971,32 +3979,18 @@ class AppShellService:
         sandbox_archive_path_text: str = "",
         existing_config: AppConfig | None = None,
     ) -> ModsCompareResult:
-        real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
-        sandbox_mods_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
-        real_inventory = self._scan_inventory_with_exclusions(
-            scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
-            scan_path=real_mods_path,
-            configured_archive_text=real_archive_path_text,
-            configured_archive_fallback=(
-                existing_config.real_archive_path if existing_config is not None else None
-            ),
-            error_prefix="Could not compare real and sandbox Mods",
+        compare_context = self._resolve_mods_compare_scan_context(
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
         )
-        sandbox_inventory = self._scan_inventory_with_exclusions(
-            scan_target=SCAN_TARGET_SANDBOX_MODS,
-            scan_path=sandbox_mods_path,
-            configured_archive_text=sandbox_archive_path_text,
-            configured_archive_fallback=(
-                existing_config.sandbox_archive_path if existing_config is not None else None
-            ),
-            error_prefix="Could not compare real and sandbox Mods",
-        )
-
         return _build_mods_compare_result(
-            real_mods_path=real_mods_path,
-            sandbox_mods_path=sandbox_mods_path,
-            real_inventory=real_inventory,
-            sandbox_inventory=sandbox_inventory,
+            real_mods_path=compare_context.real_mods_path,
+            sandbox_mods_path=compare_context.sandbox_mods_path,
+            real_inventory=compare_context.real_inventory,
+            sandbox_inventory=compare_context.sandbox_inventory,
         )
 
     def inspect_zip(self, package_path_text: str) -> PackageInspectionResult:
@@ -6376,6 +6370,42 @@ class AppShellService:
             return scan_mods_directory(scan_path, excluded_paths=excluded_paths)
         except OSError as exc:
             raise AppShellError(f"{error_prefix}: {exc}") from exc
+
+    def _resolve_mods_compare_scan_context(
+        self,
+        *,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        existing_config: AppConfig | None,
+    ) -> _ModsCompareScanContext:
+        real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
+        sandbox_mods_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
+        real_inventory = self._scan_inventory_with_exclusions(
+            scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_path,
+            configured_archive_text=real_archive_path_text,
+            configured_archive_fallback=(
+                existing_config.real_archive_path if existing_config is not None else None
+            ),
+            error_prefix="Could not compare real and sandbox Mods",
+        )
+        sandbox_inventory = self._scan_inventory_with_exclusions(
+            scan_target=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_mods_path,
+            configured_archive_text=sandbox_archive_path_text,
+            configured_archive_fallback=(
+                existing_config.sandbox_archive_path if existing_config is not None else None
+            ),
+            error_prefix="Could not compare real and sandbox Mods",
+        )
+        return _ModsCompareScanContext(
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            real_inventory=real_inventory,
+            sandbox_inventory=sandbox_inventory,
+        )
 
     @staticmethod
     def _archive_source_for_scan_target(scan_target: ScanTargetKind) -> ArchiveSourceKind:
