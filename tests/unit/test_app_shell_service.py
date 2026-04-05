@@ -4007,6 +4007,64 @@ def test_build_install_plan_accepts_multiple_package_paths_and_executes_as_a_bat
     assert (sandbox / "Beta" / "file.txt").read_text(encoding="utf-8") == "beta"
 
 
+def test_build_install_plan_batch_scans_destination_inventory_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+
+    alpha_package = tmp_path / "Alpha.zip"
+    with ZipFile(alpha_package, "w") as archive:
+        archive.writestr(
+            "Alpha/manifest.json",
+            '{"Name":"Alpha","UniqueID":"Pkg.Alpha","Version":"1.0.0"}',
+        )
+
+    beta_package = tmp_path / "Beta.zip"
+    with ZipFile(beta_package, "w") as archive:
+        archive.writestr(
+            "Beta/manifest.json",
+            '{"Name":"Beta","UniqueID":"Pkg.Beta","Version":"2.0.0"}',
+        )
+
+    original_scan_mods_directory = shell_service_module.scan_mods_directory
+    scan_calls: list[Path] = []
+
+    def _counting_scan_mods_directory(
+        mods_path: Path,
+        *,
+        excluded_paths: tuple[Path, ...] = tuple(),
+    ):
+        scan_calls.append(mods_path)
+        return original_scan_mods_directory(mods_path, excluded_paths=excluded_paths)
+
+    monkeypatch.setattr(
+        shell_service_module,
+        "scan_mods_directory",
+        _counting_scan_mods_directory,
+    )
+
+    plan = service.build_install_plan(
+        package_paths_text=(str(alpha_package), str(beta_package)),
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(archive_root),
+        allow_overwrite=False,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert len(plan.entries) == 2
+    assert scan_calls == [sandbox]
+
+
 def test_build_install_plan_batch_satisfies_staged_required_dependency(
     tmp_path: Path,
 ) -> None:

@@ -246,6 +246,14 @@ class ScanResult:
 
 
 @dataclass(frozen=True, slots=True)
+class _InstallPlanRuntime:
+    nexus_api_key: str | None
+    destination_mods_path: Path
+    destination_archive_path: Path
+    installed_inventory: ModsInventory
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxModProfileCreateResult:
     profile: SandboxModProfile
     profiles: SandboxModProfileCatalog
@@ -4594,20 +4602,18 @@ class AppShellService:
             existing_config=existing_config,
         )
 
-    def _build_install_plan_for_package_base(
+    def _resolve_install_plan_runtime(
         self,
         *,
-        package_path: Path,
         install_target: InstallTargetKind,
         configured_mods_path_text: str,
         sandbox_mods_path_text: str,
         real_archive_path_text: str,
         sandbox_archive_path_text: str,
-        allow_overwrite: bool,
         configured_real_mods_path: Path | None = None,
         nexus_api_key_text: str = "",
         existing_config: AppConfig | None = None,
-    ) -> SandboxInstallPlan:
+    ) -> _InstallPlanRuntime:
         nexus_api_key = self._resolve_nexus_api_key(
             nexus_api_key_text=nexus_api_key_text,
             existing_config=existing_config,
@@ -4642,20 +4648,57 @@ class AppShellService:
                     destination_mods_path / _LEGACY_ARCHIVE_DIRNAME,
                 ),
             )
+        except OSError as exc:
+            raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
+
+        return _InstallPlanRuntime(
+            nexus_api_key=nexus_api_key,
+            destination_mods_path=destination_mods_path,
+            destination_archive_path=destination_archive_path,
+            installed_inventory=installed_inventory,
+        )
+
+    def _build_install_plan_for_package_base(
+        self,
+        *,
+        package_path: Path,
+        install_target: InstallTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        allow_overwrite: bool,
+        configured_real_mods_path: Path | None = None,
+        nexus_api_key_text: str = "",
+        existing_config: AppConfig | None = None,
+        runtime: _InstallPlanRuntime | None = None,
+    ) -> SandboxInstallPlan:
+        planning_runtime = runtime or self._resolve_install_plan_runtime(
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            configured_real_mods_path=configured_real_mods_path,
+            nexus_api_key_text=nexus_api_key_text,
+            existing_config=existing_config,
+        )
+
+        try:
             plan = build_sandbox_install_plan_service(
                 package_path=package_path,
-                sandbox_mods_path=destination_mods_path,
-                sandbox_archive_path=destination_archive_path,
+                sandbox_mods_path=planning_runtime.destination_mods_path,
+                sandbox_archive_path=planning_runtime.destination_archive_path,
                 allow_overwrite=allow_overwrite,
                 existing_target_paths_by_unique_id=_build_install_target_overrides(
-                    installed_inventory
+                    planning_runtime.installed_inventory
                 ),
             )
             inspected_mods = _inspect_package_mod_entries(package_path)
             remote_requirements = evaluate_remote_requirements_for_package_mods(
                 inspected_mods,
                 source="sandbox_plan",
-                nexus_api_key=nexus_api_key,
+                nexus_api_key=planning_runtime.nexus_api_key,
             )
             return replace(
                 plan,
@@ -4680,7 +4723,18 @@ class AppShellService:
         configured_real_mods_path: Path | None = None,
         nexus_api_key_text: str = "",
         existing_config: AppConfig | None = None,
+        runtime: _InstallPlanRuntime | None = None,
     ) -> SandboxInstallPlan:
+        planning_runtime = runtime or self._resolve_install_plan_runtime(
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            configured_real_mods_path=configured_real_mods_path,
+            nexus_api_key_text=nexus_api_key_text,
+            existing_config=existing_config,
+        )
         base_plan = self._build_install_plan_for_package_base(
             package_path=package_path,
             install_target=install_target,
@@ -4692,8 +4746,12 @@ class AppShellService:
             configured_real_mods_path=configured_real_mods_path,
             nexus_api_key_text=nexus_api_key_text,
             existing_config=existing_config,
+            runtime=planning_runtime,
         )
-        return self._apply_install_dependency_preflight(base_plan)
+        return self._apply_install_dependency_preflight(
+            base_plan,
+            installed_inventory=planning_runtime.installed_inventory,
+        )
 
     def _combine_install_plans(
         self,
@@ -4727,11 +4785,15 @@ class AppShellService:
     def _apply_install_dependency_preflight(
         self,
         plan: SandboxInstallPlan,
+        *,
+        installed_inventory: ModsInventory | None = None,
     ) -> SandboxInstallPlan:
-        inventory = scan_mods_directory(
-            plan.sandbox_mods_path,
-            excluded_paths=(plan.sandbox_archive_path, plan.sandbox_mods_path / _LEGACY_ARCHIVE_DIRNAME),
-        )
+        inventory = installed_inventory
+        if inventory is None:
+            inventory = scan_mods_directory(
+                plan.sandbox_mods_path,
+                excluded_paths=(plan.sandbox_archive_path, plan.sandbox_mods_path / _LEGACY_ARCHIVE_DIRNAME),
+            )
         dependency_findings = _evaluate_sandbox_plan_dependencies(
             plan=plan,
             base_findings=plan.dependency_findings,
@@ -4764,6 +4826,16 @@ class AppShellService:
                 self._parse_and_validate_zip_path(path_text)
                 for path_text in selected_package_texts
             )
+            planning_runtime = self._resolve_install_plan_runtime(
+                install_target=install_target,
+                configured_mods_path_text=configured_mods_path_text,
+                sandbox_mods_path_text=sandbox_mods_path_text,
+                real_archive_path_text=real_archive_path_text,
+                sandbox_archive_path_text=sandbox_archive_path_text,
+                configured_real_mods_path=configured_real_mods_path,
+                nexus_api_key_text=nexus_api_key_text,
+                existing_config=existing_config,
+            )
             if len(package_paths) == 1:
                 return self._build_install_plan_for_package(
                     package_path=package_paths[0],
@@ -4776,6 +4848,7 @@ class AppShellService:
                     configured_real_mods_path=configured_real_mods_path,
                     nexus_api_key_text=nexus_api_key_text,
                     existing_config=existing_config,
+                    runtime=planning_runtime,
                 )
 
             batch_plans = tuple(
@@ -4790,6 +4863,7 @@ class AppShellService:
                     configured_real_mods_path=configured_real_mods_path,
                     nexus_api_key_text=nexus_api_key_text,
                     existing_config=existing_config,
+                    runtime=planning_runtime,
                 )
                 for package_path in package_paths
             )
@@ -4798,12 +4872,25 @@ class AppShellService:
                 package_paths=package_paths,
                 destination_kind=install_target,
             )
-            return self._apply_install_dependency_preflight(combined_plan)
+            return self._apply_install_dependency_preflight(
+                combined_plan,
+                installed_inventory=planning_runtime.installed_inventory,
+            )
 
         if not package_path_text.strip():
             raise AppShellError("No package selected for install planning.")
 
         package_path = self._parse_and_validate_zip_path(package_path_text)
+        planning_runtime = self._resolve_install_plan_runtime(
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            configured_real_mods_path=configured_real_mods_path,
+            nexus_api_key_text=nexus_api_key_text,
+            existing_config=existing_config,
+        )
         return self._build_install_plan_for_package(
             package_path=package_path,
             install_target=install_target,
@@ -4815,6 +4902,7 @@ class AppShellService:
             configured_real_mods_path=configured_real_mods_path,
             nexus_api_key_text=nexus_api_key_text,
             existing_config=existing_config,
+            runtime=planning_runtime,
         )
 
     def execute_sandbox_install_plan(
