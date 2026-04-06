@@ -2733,34 +2733,14 @@ class MainWindow(QMainWindow):
         self._migrate_managed_folders_button = migrate_managed_folders_button
         return setup_surface
 
-    def _build_layout(self) -> None:
-        container = QWidget()
-        container.setObjectName("app_shell_root")
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(6, 6, 6, 6)
-        root_layout.setSpacing(5)
-
-        context_group = TopContextSurface(
-            environment_status_label=self._environment_status_label,
-            smapi_update_status_label=self._smapi_update_status_label,
-            smapi_log_status_label=self._smapi_log_status_label,
-            nexus_status_label=self._nexus_status_label,
-            watch_status_label=self._watch_status_label,
-            operation_state_label=self._operation_state_label,
-            sandbox_launch_status_label=self._sandbox_launch_status_label,
-            scan_context_label=self._scan_context_label,
-            install_context_label=self._install_context_label,
-        )
-        self._context_group = context_group
-        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
-        root_layout.addWidget(context_group)
-
-        setup_scroll = self._build_setup_workspace_surface()
-
+    def _build_inventory_controls_tabs(self) -> tuple[QTabWidget, QLabel]:
         inventory_controls_tabs = QTabWidget()
         inventory_controls_tabs.setDocumentMode(True)
         inventory_controls_tabs.setUsesScrollButtons(True)
-        inventory_controls_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        inventory_controls_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
         self._inventory_controls_tabs = inventory_controls_tabs
 
         inventory_tab = QWidget()
@@ -2862,22 +2842,34 @@ class MainWindow(QMainWindow):
         self._check_smapi_update_button.clicked.connect(self._on_check_smapi_update)
         _set_utility_button_style(self._check_smapi_update_button)
         self._check_smapi_update_button.setFixedHeight(24)
-        self._check_smapi_update_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._check_smapi_update_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self._check_smapi_log_button = QPushButton("Check latest SMAPI log")
         self._check_smapi_log_button.clicked.connect(self._on_check_smapi_log)
         _set_utility_button_style(self._check_smapi_log_button)
         self._check_smapi_log_button.setFixedHeight(24)
-        self._check_smapi_log_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._check_smapi_log_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self._load_smapi_log_button = QPushButton("Open SMAPI log")
         self._load_smapi_log_button.clicked.connect(self._on_load_smapi_log)
         _set_utility_button_style(self._load_smapi_log_button)
         self._load_smapi_log_button.setFixedHeight(24)
-        self._load_smapi_log_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._load_smapi_log_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self._open_smapi_page_button = QPushButton("Open SMAPI website")
         self._open_smapi_page_button.clicked.connect(self._on_open_smapi_page)
         _set_utility_button_style(self._open_smapi_page_button)
         self._open_smapi_page_button.setFixedHeight(24)
-        self._open_smapi_page_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._open_smapi_page_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         smapi_primary_row = QWidget()
         smapi_primary_row.setObjectName("mods_smapi_primary_row")
         smapi_primary_row_layout = QHBoxLayout(smapi_primary_row)
@@ -2904,8 +2896,38 @@ class MainWindow(QMainWindow):
         flow_hint_label.setWordWrap(True)
         flow_hint_label.setObjectName("compact_hint_label")
         _set_auxiliary_label_style(flow_hint_label)
-        flow_hint_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        flow_hint_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
         self._inventory_flow_hint_label = flow_hint_label
+        return inventory_controls_tabs, flow_hint_label
+
+    def _build_layout(self) -> None:
+        container = QWidget()
+        container.setObjectName("app_shell_root")
+        root_layout = QVBoxLayout(container)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(5)
+
+        context_group = TopContextSurface(
+            environment_status_label=self._environment_status_label,
+            smapi_update_status_label=self._smapi_update_status_label,
+            smapi_log_status_label=self._smapi_log_status_label,
+            nexus_status_label=self._nexus_status_label,
+            watch_status_label=self._watch_status_label,
+            operation_state_label=self._operation_state_label,
+            sandbox_launch_status_label=self._sandbox_launch_status_label,
+            scan_context_label=self._scan_context_label,
+            install_context_label=self._install_context_label,
+        )
+        self._context_group = context_group
+        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
+        root_layout.addWidget(context_group)
+
+        setup_scroll = self._build_setup_workspace_surface()
+
+        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
 
         context_tabs = QTabWidget()
         context_tabs.setObjectName("workspace_nav_tabs")
