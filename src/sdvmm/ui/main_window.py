@@ -1164,6 +1164,7 @@ class MainWindow(QMainWindow):
         self._shell_service = shell_service
         self._config: AppConfig | None = None
         self._pending_install_plan: SandboxInstallPlan | None = None
+        self._last_install_completion_message: str | None = None
         self._current_inventory: ModsInventory | None = None
         self._scan_results_by_target: dict[str, ScanResult] = {}
         self._update_reports_by_context: dict[str, ModUpdateReport] = {}
@@ -1693,6 +1694,28 @@ class MainWindow(QMainWindow):
             "Filter queue by name or status (e.g. not installed)"
         )
         self._package_queue_filter_input.textChanged.connect(self._refresh_package_queue)
+        self._package_queue_source_filter_combo = QComboBox()
+        self._package_queue_source_filter_combo.setObjectName(
+            "packages_queue_source_filter_combo"
+        )
+        self._package_queue_source_filter_combo.addItem("All watcher paths", "all")
+        self._package_queue_source_filter_combo.addItem("Watched path 1", "watched_path_1")
+        self._package_queue_source_filter_combo.addItem("Watched path 2", "watched_path_2")
+        self._package_queue_source_filter_combo.currentIndexChanged.connect(
+            self._refresh_package_queue
+        )
+        self._package_queue_select_all_button = QPushButton("Select all")
+        self._package_queue_select_all_button.setObjectName("packages_queue_select_all_button")
+        self._package_queue_select_all_button.clicked.connect(
+            self._on_select_all_visible_package_queue_items
+        )
+        self._package_queue_deselect_all_button = QPushButton("Deselect all")
+        self._package_queue_deselect_all_button.setObjectName(
+            "packages_queue_deselect_all_button"
+        )
+        self._package_queue_deselect_all_button.clicked.connect(
+            self._on_deselect_all_visible_package_queue_items
+        )
         self._plan_selected_intake_button = QPushButton("Open Install")
         self._plan_selected_intake_button.setObjectName("packages_open_install_button")
         _set_primary_button_style(self._plan_selected_intake_button)
@@ -3172,7 +3195,16 @@ class MainWindow(QMainWindow):
         queue_filter_label = QLabel("Queue filter")
         queue_filter_label.setObjectName("packages_queue_filter_label")
         detected_layout.addWidget(queue_filter_label, 4, 0)
-        detected_layout.addWidget(self._package_queue_filter_input, 4, 1, 1, 3)
+        detected_layout.addWidget(self._package_queue_filter_input, 4, 1)
+        detected_layout.addWidget(self._package_queue_source_filter_combo, 4, 2)
+        queue_bulk_actions = QWidget()
+        queue_bulk_actions_layout = QHBoxLayout(queue_bulk_actions)
+        queue_bulk_actions_layout.setContentsMargins(0, 0, 0, 0)
+        queue_bulk_actions_layout.setSpacing(8)
+        queue_bulk_actions_layout.addWidget(self._package_queue_select_all_button)
+        queue_bulk_actions_layout.addWidget(self._package_queue_deselect_all_button)
+        queue_bulk_actions_layout.addStretch(1)
+        detected_layout.addWidget(queue_bulk_actions, 4, 3)
         queue_label = QLabel("Watched package queue")
         queue_label.setObjectName("packages_intake_queue_label")
         detected_layout.addWidget(queue_label, 5, 0, 1, 4)
@@ -3199,9 +3231,9 @@ class MainWindow(QMainWindow):
         intake_layout.addStretch(1)
         intake_tab = self._build_page_shell(
             object_name="packages_workspace_page",
-            eyebrow="Watch downloaded zips",
+            eyebrow="Watch downloaded packages",
             title="Packages",
-            subtitle="Watch zip folders, queue packages, and hand the staged batch into Install.",
+            subtitle="Watch package folders, queue packages, and hand the staged batch into Install.",
             body_widget=intake_tab,
             scroll_body=True,
         )
@@ -4055,9 +4087,9 @@ class MainWindow(QMainWindow):
     def _on_browse_zip(self) -> None:
         selected_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Select zip package(s)",
+            "Select package archive(s)",
             self._zip_path_input.text() or "",
-            "Zip packages (*.zip)",
+            "Package archives (*.zip *.rar)",
         )
         if selected_paths:
             self._invalidate_pending_plan()
@@ -5180,13 +5212,22 @@ class MainWindow(QMainWindow):
             )
             self._set_plan_install_output_text(build_sandbox_install_result_text(execution_result))
             if is_real_destination:
+                self._last_install_completion_message = (
+                    f"Installation successful. Real Mods install complete: "
+                    f"{len(execution_result.installed_targets)} target(s)."
+                )
                 self._set_status(
                     f"Real Mods install complete: {len(execution_result.installed_targets)} target(s)"
                 )
             else:
+                self._last_install_completion_message = (
+                    f"Installation successful. Sandbox install complete: "
+                    f"{len(execution_result.installed_targets)} target(s)."
+                )
                 self._set_status(
                     f"Sandbox install complete: {len(execution_result.installed_targets)} target(s)"
                 )
+            self._refresh_workflow_surface_states()
 
         self._run_background_operation(
             operation_name="Install execution",
@@ -5205,6 +5246,7 @@ class MainWindow(QMainWindow):
 
     def _apply_install_plan_review(self, plan: SandboxInstallPlan) -> None:
         review = self._shell_service.review_install_execution(plan)
+        self._last_install_completion_message = None
         self._pending_install_plan = plan if review.allowed else None
         self._set_plan_review_summary_text(_build_plan_review_summary_text(plan, review))
         self._set_plan_review_explanation_text(_build_plan_review_explanation_text(plan, review))
@@ -8615,6 +8657,13 @@ class MainWindow(QMainWindow):
                 "Applying the selected install batch. Results will update when the background write completes.",
             )
             return
+        if self._last_install_completion_message is not None:
+            _set_feedback_label_state(
+                self._plan_install_state_label,
+                "ready",
+                self._last_install_completion_message,
+            )
+            return
         if self._pending_install_plan is not None:
             _set_feedback_label_state(
                 self._plan_install_state_label,
@@ -9263,6 +9312,7 @@ class MainWindow(QMainWindow):
         }
         intake_filter_text = self._intake_filter_input.text()
         queue_filter_text = self._package_queue_filter_input.text()
+        source_filter = self._selected_package_queue_source_filter()
 
         self._package_queue_list.blockSignals(True)
         self._package_queue_list.clear()
@@ -9271,6 +9321,7 @@ class MainWindow(QMainWindow):
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._package_queue_list.addItem(empty_item)
             self._package_queue_list.blockSignals(False)
+            self._refresh_package_queue_bulk_action_state()
             return
 
         visible_count = 0
@@ -9290,6 +9341,8 @@ class MainWindow(QMainWindow):
                 ),
                 intake_filter_text,
             ):
+                continue
+            if not self._package_queue_matches_source_filter(intake, source_filter):
                 continue
             queue_status_values = (
                 _packages_review_target_label(intake, correlation),
@@ -9333,6 +9386,63 @@ class MainWindow(QMainWindow):
             self._package_queue_list.addItem(empty_item)
 
         self._package_queue_list.blockSignals(False)
+        self._refresh_package_queue_bulk_action_state()
+
+    def _selected_package_queue_source_filter(self) -> str:
+        selected = self._package_queue_source_filter_combo.currentData()
+        return selected if isinstance(selected, str) else "all"
+
+    def _package_queue_matches_source_filter(
+        self,
+        intake: DownloadsIntakeResult,
+        source_filter: str,
+    ) -> bool:
+        if source_filter == "all":
+            return True
+        return self._package_queue_source_bucket(intake) == source_filter
+
+    def _package_queue_source_bucket(self, intake: DownloadsIntakeResult) -> str | None:
+        watch_roots = self._configured_watch_root_paths()
+        package_path = intake.package_path.resolve()
+        for index, root in enumerate(watch_roots, start=1):
+            if root is None:
+                continue
+            try:
+                if package_path.is_relative_to(root):
+                    return f"watched_path_{index}"
+            except OSError:
+                continue
+        return None
+
+    def _visible_package_queue_paths(self) -> tuple[Path, ...]:
+        paths: list[Path] = []
+        for row in range(self._package_queue_list.count()):
+            item = self._package_queue_list.item(row)
+            if item is None:
+                continue
+            data = item.data(int(Qt.ItemDataRole.UserRole))
+            if not isinstance(data, int) or data < 0 or data >= len(self._detected_intakes):
+                continue
+            package_path = self._detected_intakes[data].package_path
+            if package_path not in paths:
+                paths.append(package_path)
+        return tuple(paths)
+
+    def _refresh_package_queue_bulk_action_state(self) -> None:
+        visible_paths = self._visible_package_queue_paths()
+        selected_lookup = {
+            self._normalized_package_path_text(str(path))
+            for path in self._selected_zip_package_paths
+        }
+        visible_lookup = {
+            self._normalized_package_path_text(str(path))
+            for path in visible_paths
+        }
+        any_visible = bool(visible_paths)
+        checked_visible = bool(visible_lookup & selected_lookup)
+        all_visible_checked = any_visible and visible_lookup <= selected_lookup
+        self._package_queue_select_all_button.setEnabled(any_visible and not all_visible_checked)
+        self._package_queue_deselect_all_button.setEnabled(checked_visible)
 
     def _selected_package_queue_paths(self) -> tuple[Path, ...]:
         paths: list[Path] = []
@@ -9365,6 +9475,34 @@ class MainWindow(QMainWindow):
             checked_paths,
             current_path=current_path or (checked_paths[0] if checked_paths else None),
         )
+
+    def _on_select_all_visible_package_queue_items(self) -> None:
+        self._set_visible_package_queue_items_checked(True)
+
+    def _on_deselect_all_visible_package_queue_items(self) -> None:
+        self._set_visible_package_queue_items_checked(False)
+
+    def _set_visible_package_queue_items_checked(self, checked: bool) -> None:
+        visible_paths = self._visible_package_queue_paths()
+        if not visible_paths:
+            return
+        updated_paths = list(self._selected_zip_package_paths)
+        visible_lookup = {
+            self._normalized_package_path_text(str(path))
+            for path in visible_paths
+        }
+        if checked:
+            for path in visible_paths:
+                if path not in updated_paths:
+                    updated_paths.append(path)
+        else:
+            updated_paths = [
+                path
+                for path in updated_paths
+                if self._normalized_package_path_text(str(path)) not in visible_lookup
+            ]
+        current_path = updated_paths[0] if updated_paths else None
+        self._set_selected_zip_package_paths(tuple(updated_paths), current_path=current_path)
 
     def _show_package_inspection_results(
         self,
@@ -9476,6 +9614,23 @@ class MainWindow(QMainWindow):
                 configured_paths.append(raw_text)
         return tuple(configured_paths)
 
+    def _configured_watch_root_paths(self) -> tuple[Path | None, Path | None]:
+        resolved_paths: list[Path | None] = []
+        for raw_text in (
+            self._watched_downloads_path_input.text().strip(),
+            self._secondary_watched_downloads_path_input.text().strip(),
+        ):
+            if not raw_text:
+                resolved_paths.append(None)
+                continue
+            try:
+                resolved = Path(raw_text).expanduser().resolve()
+            except OSError:
+                resolved_paths.append(None)
+                continue
+            resolved_paths.append(resolved)
+        return tuple(resolved_paths)
+
     def _watch_sources_summary(self) -> str:
         configured_paths = self._configured_watch_path_texts()
         if not configured_paths:
@@ -9547,6 +9702,7 @@ class MainWindow(QMainWindow):
             )
 
     def _invalidate_pending_plan(self, *_: object) -> None:
+        self._last_install_completion_message = None
         self._pending_install_plan = None
         self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
         self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)

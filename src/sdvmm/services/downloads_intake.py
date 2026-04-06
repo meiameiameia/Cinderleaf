@@ -8,12 +8,13 @@ from sdvmm.domain.models import (
     ModsInventory,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
+from sdvmm.services.archive_tools import list_supported_package_archives
 from sdvmm.services.dependency_preflight import evaluate_package_dependencies
-from sdvmm.services.package_inspector import inspect_zip_package
+from sdvmm.services.package_inspector import inspect_package_archive
 
 
 def initialize_known_zip_paths(watched_path: Path) -> tuple[Path, ...]:
-    return tuple(_list_zip_files(watched_path))
+    return tuple(list_supported_package_archives(watched_path))
 
 
 def poll_watched_directory(
@@ -22,7 +23,7 @@ def poll_watched_directory(
     known_zip_paths: tuple[Path, ...],
     inventory: ModsInventory,
 ) -> DownloadsWatchPollResult:
-    current_zip_paths = _list_zip_files(watched_path)
+    current_zip_paths = list_supported_package_archives(watched_path)
     known_set = {path.resolve() for path in known_zip_paths}
 
     new_paths = [path for path in current_zip_paths if path.resolve() not in known_set]
@@ -42,12 +43,12 @@ def inspect_downloads_intake_package(
     *, package_path: Path, inventory: ModsInventory
 ) -> DownloadsIntakeResult:
     try:
-        inspection = inspect_zip_package(package_path)
+        inspection = inspect_package_archive(package_path)
     except Exception as exc:
         return DownloadsIntakeResult(
             package_path=package_path,
             classification="unusable_package",
-            message=f"Could not inspect zip package: {exc}",
+            message=f"Could not inspect package archive: {exc}",
             mods=tuple(),
             matched_installed_unique_ids=tuple(),
             warnings=tuple(),
@@ -115,15 +116,3 @@ def inspect_downloads_intake_package(
         findings=inspection.findings,
         dependency_findings=dependency_findings,
     )
-
-
-def _list_zip_files(watched_path: Path) -> list[Path]:
-    zip_paths = [
-        item
-        for item in sorted(
-            watched_path.rglob("*"),
-            key=lambda path: str(path.relative_to(watched_path)).lower(),
-        )
-        if item.is_file() and item.suffix.lower() == ".zip"
-    ]
-    return zip_paths

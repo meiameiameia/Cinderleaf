@@ -129,6 +129,8 @@ from sdvmm.services.app_state_store import (
 )
 from sdvmm.services.mod_scanner import scan_mods_directory
 from sdvmm.services.package_inspector import inspect_zip_package
+from sdvmm.services.archive_tools import ArchiveToolError
+from sdvmm.services.package_inspector import inspect_package_archive
 from sdvmm.services.downloads_intake import (
     initialize_known_zip_paths,
     inspect_downloads_intake_package,
@@ -4007,9 +4009,11 @@ class AppShellService:
         package_path = self._parse_and_validate_zip_path(package_path_text)
 
         try:
-            return inspect_zip_package(package_path)
+            return inspect_package_archive(package_path)
         except zipfile.BadZipFile as exc:
-            raise AppShellError(f"File is not a valid zip package: {package_path}") from exc
+            raise AppShellError(f"File is not a valid package archive: {package_path}") from exc
+        except ArchiveToolError as exc:
+            raise AppShellError(f"Could not inspect package archive: {exc}") from exc
         except OSError as exc:
             raise AppShellError(f"Could not inspect package: {exc}") from exc
 
@@ -4036,10 +4040,10 @@ class AppShellService:
         *,
         nexus_api_key_text: str = "",
         existing_config: AppConfig | None = None,
-    ) -> PackageInspectionBatchResult:
+        ) -> PackageInspectionBatchResult:
         path_texts = tuple(text.strip() for text in package_path_texts if text.strip())
         if not path_texts:
-            raise AppShellError("Select one or more zip packages to inspect.")
+            raise AppShellError("Select one or more package archives to inspect.")
 
         entries: list[PackageInspectionBatchEntry] = []
         for package_path_text in path_texts:
@@ -4711,7 +4715,7 @@ class AppShellService:
                 remote_requirements=remote_requirements,
                 destination_kind=install_target,
             )
-        except (SandboxInstallError, zipfile.BadZipFile) as exc:
+        except (SandboxInstallError, zipfile.BadZipFile, ArchiveToolError, ValueError) as exc:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
             raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
@@ -6481,15 +6485,15 @@ class AppShellService:
     def _parse_and_validate_zip_path(package_path_text: str) -> Path:
         raw_value = package_path_text.strip()
         if not raw_value:
-            raise AppShellError("Zip package path is required")
+            raise AppShellError("Package archive path is required")
 
         package_path = Path(raw_value).expanduser()
         if not package_path.exists():
-            raise AppShellError(f"Zip package does not exist: {package_path}")
+            raise AppShellError(f"Package archive does not exist: {package_path}")
         if not package_path.is_file():
-            raise AppShellError(f"Zip package path is not a file: {package_path}")
-        if package_path.suffix.lower() != ".zip":
-            raise AppShellError(f"File is not a .zip package: {package_path}")
+            raise AppShellError(f"Package archive path is not a file: {package_path}")
+        if package_path.suffix.lower() not in {".zip", ".rar"}:
+            raise AppShellError(f"File is not a supported package archive: {package_path}")
 
         return package_path
 
@@ -10797,5 +10801,5 @@ def _remove_directory_link(link_path: Path) -> None:
 
 
 def _inspect_package_mod_entries(package_path: Path) -> tuple[PackageModEntry, ...]:
-    inspection = inspect_zip_package(package_path)
+    inspection = inspect_package_archive(package_path)
     return inspection.mods

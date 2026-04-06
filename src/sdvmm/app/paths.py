@@ -10,6 +10,8 @@ _INSTALL_HISTORY_FILENAME = "install-operation-history.json"
 _RECOVERY_HISTORY_FILENAME = "recovery-execution-history.json"
 _REMOTE_METADATA_CACHE_FILENAME = "update-metadata-cache.json"
 _STARDEW_VALLEY_DIRNAME = "StardewValley"
+_BUNDLED_TOOLS_DIRNAME = "tools"
+_BUNDLED_7ZIP_DIRNAME = "7zip"
 _PERSISTED_STATE_FILENAMES = (
     _APP_STATE_FILENAME,
     _INSTALL_HISTORY_FILENAME,
@@ -87,3 +89,17 @@ def _platform_default_state_dir(home: Path) -> Path:
 
 def _state_root_contains_persisted_state(state_root: Path) -> bool:
     return any((state_root / filename).exists() for filename in _PERSISTED_STATE_FILENAMES)
+
+
+def bundled_tools_root() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / _BUNDLED_TOOLS_DIRNAME
+    return Path(__file__).resolve().parents[3] / "assets" / _BUNDLED_TOOLS_DIRNAME
+
+
+def bundled_7zip_directory() -> Path:
+    return bundled_tools_root() / _BUNDLED_7ZIP_DIRNAME
+
+
+def bundled_7zip_executable() -> Path:
+    return bundled_7zip_directory() / "7z.exe"

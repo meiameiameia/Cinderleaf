@@ -35,6 +35,17 @@ def test_initialize_known_zip_paths_includes_nested_zip_files(tmp_path: Path) ->
     assert known[0].parent == nested
 
 
+def test_initialize_known_zip_paths_includes_rar_files(tmp_path: Path) -> None:
+    watched = tmp_path / "Downloads"
+    watched.mkdir()
+    (watched / "a.rar").write_bytes(b"rar")
+    _build_zip(watched / "b.zip", {"B/manifest.json": _manifest("B", "Pkg.B", "1.0.0")})
+
+    known = initialize_known_zip_paths(watched)
+
+    assert [path.name for path in known] == ["a.rar", "b.zip"]
+
+
 def test_poll_detects_new_valid_package_and_classifies_new_install(tmp_path: Path) -> None:
     watched = tmp_path / "Downloads"
     watched.mkdir()
@@ -94,6 +105,53 @@ def test_poll_ignores_non_zip_files(tmp_path: Path) -> None:
     )
 
     assert result.intakes == ()
+
+
+def test_poll_detects_new_rar_package(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    watched = tmp_path / "Downloads"
+    watched.mkdir()
+    rar_path = watched / "new_mod.rar"
+    rar_path.write_bytes(b"rar placeholder")
+
+    monkeypatch.setattr(
+        "sdvmm.services.downloads_intake.inspect_package_archive",
+        lambda package_path: type(
+            "Inspection",
+            (),
+            {
+                "package_path": package_path,
+                "mods": (
+                    type(
+                        "Mod",
+                        (),
+                        {
+                            "name": "RAR Mod",
+                            "unique_id": "Pkg.Rar",
+                            "version": "1.0.0",
+                            "manifest_path": "RarMod/manifest.json",
+                            "dependencies": tuple(),
+                            "update_keys": tuple(),
+                        },
+                    )(),
+                ),
+                "warnings": tuple(),
+                "findings": tuple(),
+            },
+        )(),
+    )
+
+    result = poll_watched_directory(
+        watched_path=watched,
+        known_zip_paths=tuple(),
+        inventory=_empty_inventory(),
+    )
+
+    assert len(result.intakes) == 1
+    assert result.intakes[0].package_path == rar_path
+    assert result.intakes[0].classification == "new_install_candidate"
 
 
 def test_poll_handles_invalid_zip_as_unusable_package(tmp_path: Path) -> None:

@@ -41,6 +41,8 @@ from sdvmm.domain.models import (
     NexusIntegrationStatus,
     PackageInspectionBatchEntry,
     PackageInspectionBatchResult,
+    PackageModEntry,
+    PackageInspectionResult,
     PackageFinding,
     PackageWarning,
     RemoteModLink,
@@ -3682,7 +3684,7 @@ def test_inspect_zip_rejects_non_zip_file(tmp_path: Path) -> None:
     text_file = tmp_path / "not_zip.txt"
     text_file.write_text("hello", encoding="utf-8")
 
-    with pytest.raises(AppShellError, match="not a .zip package"):
+    with pytest.raises(AppShellError, match="not a supported package archive"):
         service.inspect_zip(str(text_file))
 
 
@@ -3700,6 +3702,37 @@ def test_inspect_zip_returns_package_result(tmp_path: Path) -> None:
 
     assert len(result.mods) == 1
     assert result.mods[0].unique_id == "Pkg.Zip"
+
+
+def test_inspect_zip_accepts_rar_package_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    package = tmp_path / "single.rar"
+    package.write_bytes(b"rar placeholder")
+
+    monkeypatch.setattr(
+        "sdvmm.app.shell_service.inspect_package_archive",
+        lambda path: PackageInspectionResult(
+            package_path=path,
+            mods=(
+                PackageModEntry(
+                    name="RAR Mod",
+                    unique_id="Pkg.Rar",
+                    version="1.0.0",
+                    manifest_path="RAR/manifest.json",
+                ),
+            ),
+            warnings=tuple(),
+            findings=tuple(),
+        ),
+    )
+
+    result = service.inspect_zip(str(package))
+
+    assert len(result.mods) == 1
+    assert result.mods[0].unique_id == "Pkg.Rar"
 
 
 def test_inspect_zip_with_inventory_context_resolves_content_pack_for_dependency(
@@ -3815,7 +3848,7 @@ def test_inspect_zip_batch_with_inventory_context_keeps_partial_failures_visible
     assert result.entries[0].error_message is None
     assert result.entries[1].inspection is None
     assert result.entries[1].package_path == broken_package
-    assert result.entries[1].error_message == f"File is not a valid zip package: {broken_package}"
+    assert result.entries[1].error_message == f"File is not a valid package archive: {broken_package}"
 
 
 def test_inspect_zip_rejects_invalid_zip_content(tmp_path: Path) -> None:
@@ -3823,7 +3856,7 @@ def test_inspect_zip_rejects_invalid_zip_content(tmp_path: Path) -> None:
     package = tmp_path / "broken.zip"
     package.write_bytes(b"not a real zip")
 
-    with pytest.raises(AppShellError, match="not a valid zip package"):
+    with pytest.raises(AppShellError, match="not a valid package archive"):
         service.inspect_zip(str(package))
 
 

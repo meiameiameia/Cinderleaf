@@ -189,6 +189,33 @@ def test_package_inspection_surfaces_content_pack_for_dependency_without_invento
     assert finding.state == "unresolved_dependency_context"
 
 
+def test_rar_package_is_detected_via_extracted_archive_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package = tmp_path / "mod.rar"
+    package.write_bytes(b"rar placeholder")
+
+    def fake_extract_archive_to_directory(*, archive_path: Path, destination: Path) -> None:
+        assert archive_path == package
+        mod_dir = destination / "RarMod"
+        mod_dir.mkdir(parents=True)
+        (mod_dir / "manifest.json").write_text(
+            '{"Name":"RAR Mod","UniqueID":"Pkg.Rar","Version":"1.0.0"}',
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "sdvmm.services.package_inspector.extract_archive_to_directory",
+        fake_extract_archive_to_directory,
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.mods) == 1
+    assert result.mods[0].unique_id == "Pkg.Rar"
+
+
 def _build_zip(zip_path: Path, files: dict[str, str]) -> Path:
     with ZipFile(zip_path, "w") as archive:
         for path, content in files.items():

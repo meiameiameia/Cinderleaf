@@ -21,6 +21,7 @@ DIST_NAME = f"cinderleaf-{VERSION}-windows-portable"
 APP_ICON_SVG = ROOT / "assets" / "cinderleaf-icon.svg"
 APP_ICON_PNG = ROOT / "assets" / "app-icon.png"
 APP_ICON_ICO = ROOT / "assets" / "cinderleaf.ico"
+SEVEN_ZIP_DIR = ROOT / "assets" / "tools" / "7zip"
 APP_VERSION_FILE = ROOT / "build" / "app-version.txt"
 APP_DISPLAY_NAME = "Cinderleaf"
 APP_SUBTITLE = "for Stardew Valley"
@@ -85,6 +86,11 @@ datas = [
     (str(APP_ICON_PNG), "assets"),
     (str(APP_ICON_ICO), "assets"),
     (str(APP_VERSION_FILE), "."),
+    (str(SEVEN_ZIP_DIR / "7z.exe"), "tools/7zip"),
+    (str(SEVEN_ZIP_DIR / "7z.dll"), "tools/7zip"),
+    (str(SEVEN_ZIP_DIR / "License.txt"), "tools/7zip"),
+    (str(SEVEN_ZIP_DIR / "readme.txt"), "tools/7zip"),
+    (str(SEVEN_ZIP_DIR / "History.txt"), "tools/7zip"),
 ]
 
 a = Analysis(

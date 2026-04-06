@@ -8524,7 +8524,7 @@ def test_main_window_browse_zip_accepts_multiple_selected_packages(
 
     monkeypatch.setattr(
         "sdvmm.ui.main_window.QFileDialog.getOpenFileNames",
-        lambda *args, **kwargs: (selected_paths, "Zip packages (*.zip)"),
+        lambda *args, **kwargs: (selected_paths, "Package archives (*.zip *.rar)"),
     )
     monkeypatch.setattr(
         main_window._shell_service,
@@ -8549,6 +8549,96 @@ def test_main_window_browse_zip_accepts_multiple_selected_packages(
     assert main_window._package_inspection_selector.isHidden() is False
     assert main_window._package_inspection_selector_label.isHidden() is False
     assert "2 packages inspected" in main_window._package_inspection_summary_label.text()
+
+
+def test_main_window_package_queue_source_filter_limits_visible_rows(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    watch_one = Path(r"C:\WatchOne")
+    watch_two = Path(r"C:\WatchTwo")
+    alpha = replace(
+        _intake_result("Alpha.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        package_path=watch_one / "Alpha.zip",
+    )
+    beta = replace(
+        _intake_result("Beta.rar", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+        package_path=watch_two / "Beta.rar",
+    )
+    gamma = replace(
+        _intake_result("Gamma.zip", "new_install_candidate", "Gamma Mod", "Sample.Gamma"),
+        package_path=watch_two / "Gamma.zip",
+    )
+
+    main_window._watched_downloads_path_input.setText(str(watch_one))
+    main_window._secondary_watched_downloads_path_input.setText(str(watch_two))
+    main_window._detected_intakes = (alpha, beta, gamma)
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}")
+        for intake in (alpha, beta, gamma)
+    )
+    main_window._refresh_package_queue()
+    qapp.processEvents()
+
+    source_filter = main_window.findChild(QComboBox, "packages_queue_source_filter_combo")
+    assert source_filter is not None
+
+    source_filter.setCurrentIndex(source_filter.findData("watched_path_2"))
+    qapp.processEvents()
+
+    item_texts = [
+        main_window._package_queue_list.item(index).text()
+        for index in range(main_window._package_queue_list.count())
+    ]
+    assert item_texts == [
+        "Beta.rar [not installed in Real Mods]",
+        "Gamma.zip [not installed in Real Mods]",
+    ]
+
+
+def test_main_window_package_queue_select_and_deselect_all_affect_visible_rows_only(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    watch_one = Path(r"C:\WatchOne")
+    watch_two = Path(r"C:\WatchTwo")
+    alpha = replace(
+        _intake_result("Alpha.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        package_path=watch_one / "Alpha.zip",
+    )
+    beta = replace(
+        _intake_result("Beta.rar", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+        package_path=watch_two / "Beta.rar",
+    )
+    gamma = replace(
+        _intake_result("Gamma.zip", "new_install_candidate", "Gamma Mod", "Sample.Gamma"),
+        package_path=watch_two / "Gamma.zip",
+    )
+
+    main_window._watched_downloads_path_input.setText(str(watch_one))
+    main_window._secondary_watched_downloads_path_input.setText(str(watch_two))
+    main_window._detected_intakes = (alpha, beta, gamma)
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}")
+        for intake in (alpha, beta, gamma)
+    )
+    main_window._refresh_package_queue()
+    qapp.processEvents()
+
+    source_filter = main_window.findChild(QComboBox, "packages_queue_source_filter_combo")
+    assert source_filter is not None
+
+    source_filter.setCurrentIndex(source_filter.findData("watched_path_2"))
+    qapp.processEvents()
+    main_window._on_select_all_visible_package_queue_items()
+
+    assert main_window._selected_zip_package_paths == (beta.package_path, gamma.package_path)
+
+    main_window._package_queue_filter_input.setText("Gamma")
+    qapp.processEvents()
+    main_window._on_deselect_all_visible_package_queue_items()
+
+    assert main_window._selected_zip_package_paths == (beta.package_path,)
 
 
 def test_main_window_zip_selection_summary_reflects_single_manual_path_entry(
@@ -9561,6 +9651,9 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
 
     assert execute_calls == [False]
     assert main_window._status_strip_label.text() == "Sandbox install complete: 1 target(s)"
+    assert main_window._plan_install_state_label.text() == (
+        "Installation successful. Sandbox install complete: 1 target(s)."
+    )
     assert main_window._findings_box.toPlainText() == "install ok"
 
 
@@ -13469,6 +13562,7 @@ def _intake_result(
     unique_id: str,
     *,
     version: str = "1.0.0",
+    package_path: Path | None = None,
 ) -> DownloadsIntakeResult:
     mod_entry = PackageModEntry(
         name=mod_name,
@@ -13477,7 +13571,7 @@ def _intake_result(
         manifest_path=f"/{mod_name}/manifest.json",
     )
     return DownloadsIntakeResult(
-        package_path=Path(r"C:\Downloads") / package_name,
+        package_path=package_path or (Path(r"C:\Downloads") / package_name),
         classification=classification,
         message=f"Detected {package_name}",
         mods=(mod_entry,),

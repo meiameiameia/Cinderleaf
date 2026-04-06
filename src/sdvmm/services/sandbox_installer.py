@@ -7,7 +7,6 @@ from pathlib import Path, PurePosixPath
 import shutil
 from typing import Any
 import uuid
-import zipfile
 
 from sdvmm.domain.install_codes import BLOCKED, INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.models import (
@@ -17,8 +16,10 @@ from sdvmm.domain.models import (
     SandboxInstallResult,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
+from sdvmm.services.archive_tools import ArchiveToolError
+from sdvmm.services.archive_tools import extract_archive_root_to_directory
 from sdvmm.services.mod_scanner import scan_mods_directory
-from sdvmm.services.package_inspector import inspect_zip_package
+from sdvmm.services.package_inspector import inspect_package_archive
 
 _CONFIG_ARTIFACT_NAMES = ("config.json", "config", "configs")
 
@@ -47,7 +48,7 @@ def build_sandbox_install_plan(
     allow_overwrite: bool,
     existing_target_paths_by_unique_id: dict[str, Path] | None = None,
 ) -> SandboxInstallPlan:
-    inspection = inspect_zip_package(package_path)
+    inspection = inspect_package_archive(package_path)
 
     entries: list[SandboxInstallPlanEntry] = []
     overwrite_entries_with_preserved_config = 0
@@ -191,15 +192,14 @@ def execute_sandbox_install_plan(plan: SandboxInstallPlan) -> SandboxInstallResu
             installable_entries_by_package[source_package_path].append(entry)
 
         for package_path in package_order:
-            with zipfile.ZipFile(package_path, "r") as archive:
-                for entry in installable_entries_by_package[package_path]:
-                    staged_target = staging_root / entry.target_path.name
-                    staged_target.mkdir(parents=True, exist_ok=False)
-                    _extract_mod_root(
-                        archive=archive,
-                        source_root=entry.source_root_path,
-                        destination=staged_target,
-                    )
+            for entry in installable_entries_by_package[package_path]:
+                staged_target = staging_root / entry.target_path.name
+                staged_target.mkdir(parents=True, exist_ok=False)
+                _extract_mod_root(
+                    package_path=package_path,
+                    source_root=entry.source_root_path,
+                    destination=staged_target,
+                )
 
         for entry in installable_entries:
             staged_target = staging_root / entry.target_path.name
@@ -579,72 +579,19 @@ def _remove_path(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
-def _extract_mod_root(archive: zipfile.ZipFile, source_root: str, destination: Path) -> None:
-    root = PurePosixPath(source_root)
-    destination_resolved = destination.resolve()
-    extracted_any = False
-
-    for info in sorted(archive.infolist(), key=lambda item: item.filename.lower()):
-        normalized = _normalize_zip_member(info.filename)
-        if normalized is None:
-            continue
-
-        relative = _relative_to_source_root(normalized, root)
-        if relative is None or relative == PurePosixPath("."):
-            continue
-
-        target_path = destination.joinpath(*relative.parts)
-        target_resolved = target_path.resolve()
-        if not target_resolved.is_relative_to(destination_resolved):
-            raise SandboxInstallError(f"Unsafe zip entry path: {info.filename}")
-
-        if info.is_dir():
-            target_path.mkdir(parents=True, exist_ok=True)
-            continue
-
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        with archive.open(info, "r") as src, target_path.open("wb") as dst:
-            shutil.copyfileobj(src, dst)
-        extracted_any = True
-
-    if not extracted_any or not (destination / "manifest.json").exists():
+def _extract_mod_root(package_path: Path, source_root: str, destination: Path) -> None:
+    try:
+        extract_archive_root_to_directory(
+            archive_path=package_path,
+            source_root=source_root,
+            destination=destination,
+        )
+    except ArchiveToolError as exc:
+        raise SandboxInstallError(str(exc)) from exc
+    if not (destination / "manifest.json").exists():
         raise SandboxInstallError(
             f"No usable files extracted for source root '{source_root}'."
         )
-
-
-def _normalize_zip_member(filename: str) -> PurePosixPath | None:
-    normalized = filename.replace("\\", "/").lstrip("/")
-    if not normalized:
-        return None
-
-    path = PurePosixPath(normalized)
-    if any(part == ".." for part in path.parts):
-        raise SandboxInstallError(f"Unsafe zip entry path: {filename}")
-
-    return path
-
-
-def _relative_to_source_root(path: PurePosixPath, source_root: PurePosixPath) -> PurePosixPath | None:
-    if str(source_root) == ".":
-        return path
-
-    path_parts = path.parts
-    root_parts = source_root.parts
-
-    if len(path_parts) < len(root_parts):
-        return None
-
-    if tuple(part.casefold() for part in path_parts[: len(root_parts)]) != tuple(
-        part.casefold() for part in root_parts
-    ):
-        return None
-
-    tail = path_parts[len(root_parts) :]
-    if not tail:
-        return PurePosixPath(".")
-
-    return PurePosixPath(*tail)
 
 
 def _is_likely_windows_lock_error(exc: BaseException) -> bool:
