@@ -3177,6 +3177,60 @@ class MainWindow(QMainWindow):
         self._compare_page = compare_page
         return compare_page
 
+    def _build_discovery_workspace_page(self) -> QWidget:
+        self._search_mods_button = QPushButton("Find mods")
+        self._search_mods_button.setObjectName("discovery_search_button")
+        self._search_mods_button.clicked.connect(self._on_search_discovery)
+        _set_primary_button_style(self._search_mods_button)
+        open_discovered_button = QPushButton("Open mod page")
+        open_discovered_button.clicked.connect(self._on_open_discovered_page)
+        _set_utility_button_style(open_discovered_button)
+        discovery_tab = DiscoveryTabSurface(
+            discovery_query_input=self._discovery_query_input,
+            discovery_filter_input=self._discovery_filter_input,
+            discovery_filter_stats_label=self._discovery_filter_stats_label,
+            discovery_results_state_label=self._discovery_results_state_label,
+            discovery_table=self._discovery_table,
+            discovery_search_button=self._search_mods_button,
+            open_discovered_button=open_discovered_button,
+        )
+        discovery_page_body = QWidget()
+        discovery_page_body.setObjectName("discovery_workspace_body")
+        discovery_page_layout = QVBoxLayout(discovery_page_body)
+        discovery_page_layout.setContentsMargins(0, 0, 0, 0)
+        discovery_page_layout.setSpacing(6)
+        discovery_intro_label = QLabel(
+            "Search for mod pages to source new installs or updates. Opening a page never installs anything by itself."
+        )
+        discovery_intro_label.setObjectName("discovery_intro_label")
+        discovery_intro_label.setWordWrap(True)
+        _set_auxiliary_label_style(discovery_intro_label)
+        discovery_page_layout.addWidget(discovery_tab, 1)
+        discovery_output_group = QGroupBox("Discover detail")
+        discovery_output_group.setObjectName("discovery_output_group")
+        discovery_output_group.setFlat(True)
+        discovery_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        discovery_output_layout = QVBoxLayout(discovery_output_group)
+        discovery_output_layout.setContentsMargins(8, 6, 8, 6)
+        discovery_output_layout.setSpacing(4)
+        discovery_output_layout.addWidget(self._discovery_output_box)
+        discovery_page_layout.addWidget(discovery_output_group)
+        self._discovery_output_group = discovery_output_group
+        discovery_output_group.setVisible(False)
+        discovery_page = self._build_page_shell(
+            object_name="discovery_workspace_page",
+            eyebrow="Source new installs or updates",
+            title="Discover mods",
+            subtitle="Search by name, UniqueID, or author. Opening a source page stays read-only.",
+            body_widget=discovery_page_body,
+            scroll_body=True,
+        )
+        self._discovery_page = discovery_page
+        return discovery_page
+
     def _build_layout(self) -> None:
         container = QWidget()
         container.setObjectName("app_shell_root")
@@ -3218,57 +3272,7 @@ class MainWindow(QMainWindow):
         )
         self._mods_page = mods_page
 
-        self._search_mods_button = QPushButton("Find mods")
-        self._search_mods_button.setObjectName("discovery_search_button")
-        self._search_mods_button.clicked.connect(self._on_search_discovery)
-        _set_primary_button_style(self._search_mods_button)
-        open_discovered_button = QPushButton("Open mod page")
-        open_discovered_button.clicked.connect(self._on_open_discovered_page)
-        _set_utility_button_style(open_discovered_button)
-        discovery_tab = DiscoveryTabSurface(
-            discovery_query_input=self._discovery_query_input,
-            discovery_filter_input=self._discovery_filter_input,
-            discovery_filter_stats_label=self._discovery_filter_stats_label,
-            discovery_results_state_label=self._discovery_results_state_label,
-            discovery_table=self._discovery_table,
-            discovery_search_button=self._search_mods_button,
-            open_discovered_button=open_discovered_button,
-        )
-        discovery_page = QWidget()
-        discovery_page.setObjectName("discovery_workspace_body")
-        discovery_page_layout = QVBoxLayout(discovery_page)
-        discovery_page_layout.setContentsMargins(0, 0, 0, 0)
-        discovery_page_layout.setSpacing(6)
-        discovery_intro_label = QLabel(
-            "Search for mod pages to source new installs or updates. Opening a page never installs anything by itself."
-        )
-        discovery_intro_label.setObjectName("discovery_intro_label")
-        discovery_intro_label.setWordWrap(True)
-        _set_auxiliary_label_style(discovery_intro_label)
-        discovery_page_layout.addWidget(discovery_tab, 1)
-        discovery_output_group = QGroupBox("Discover detail")
-        discovery_output_group.setObjectName("discovery_output_group")
-        discovery_output_group.setFlat(True)
-        discovery_output_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        discovery_output_layout = QVBoxLayout(discovery_output_group)
-        discovery_output_layout.setContentsMargins(8, 6, 8, 6)
-        discovery_output_layout.setSpacing(4)
-        discovery_output_layout.addWidget(self._discovery_output_box)
-        discovery_page_layout.addWidget(discovery_output_group)
-        self._discovery_output_group = discovery_output_group
-        discovery_output_group.setVisible(False)
-        discovery_page = self._build_page_shell(
-            object_name="discovery_workspace_page",
-            eyebrow="Source new installs or updates",
-            title="Discover mods",
-            subtitle="Search by name, UniqueID, or author. Opening a source page stays read-only.",
-            body_widget=discovery_page,
-            scroll_body=True,
-        )
-        self._discovery_page = discovery_page
+        discovery_page = self._build_discovery_workspace_page()
 
         compare_tab = self._build_compare_workspace_page()
 
