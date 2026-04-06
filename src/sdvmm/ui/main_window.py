@@ -311,6 +311,13 @@ class _SelectedInventoryUpdateGuidanceContext:
     can_manage_intent: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _ActionButtonState:
+    enabled: bool
+    tooltip: str
+    visible: bool = True
+
+
 class _ComboBoxWheelGuard(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if (
@@ -10293,22 +10300,35 @@ class MainWindow(QMainWindow):
         button = self._prepare_selected_updates_button
         if actionable_targets is None:
             actionable_targets = self._selected_actionable_update_targets()
+        state = self._resolve_prepare_selected_updates_button_state(
+            actionable_targets=actionable_targets
+        )
+        button.setVisible(state.visible)
+        button.setEnabled(state.enabled)
+        button.setToolTip(state.tooltip)
+
+    def _resolve_prepare_selected_updates_button_state(
+        self,
+        *,
+        actionable_targets: tuple[tuple[str, str], ...],
+    ) -> _ActionButtonState:
         count = len(actionable_targets)
         if count < 2:
-            button.setVisible(False)
-            button.setEnabled(False)
-            button.setToolTip("Select two or more actionable update rows after Check for updates.")
-            return
-
-        button.setVisible(True)
+            return _ActionButtonState(
+                visible=False,
+                enabled=False,
+                tooltip="Select two or more actionable update rows after Check for updates.",
+            )
         if self._active_operation_name is not None:
-            button.setEnabled(False)
-            button.setToolTip("Wait for the active operation to finish before opening selected update pages.")
-            return
-
-        button.setEnabled(True)
-        button.setToolTip(
-            f"Open update pages for {count} selected update targets and start intake watch if needed."
+            return _ActionButtonState(
+                enabled=False,
+                tooltip="Wait for the active operation to finish before opening selected update pages.",
+            )
+        return _ActionButtonState(
+            enabled=True,
+            tooltip=(
+                f"Open update pages for {count} selected update targets and start intake watch if needed."
+            ),
         )
 
     def _prime_guided_update_targets(
@@ -10782,69 +10802,79 @@ class MainWindow(QMainWindow):
         selected_mod_folder_paths = self._selected_inventory_mod_folder_paths()
         has_selection = bool(selected_mod_folder_paths)
         self._inventory_sandbox_sync_actions_widget.setVisible(has_selection)
-        if not has_selection:
-            self._sync_selected_to_sandbox_button.setEnabled(False)
-            self._sync_selected_to_sandbox_button.setToolTip(
-                "Select one or more installed real-mod rows to sync to sandbox."
+        sync_state, promote_state = self._resolve_inventory_sandbox_sync_button_states(
+            selected_mod_folder_paths=selected_mod_folder_paths
+        )
+        self._sync_selected_to_sandbox_button.setEnabled(sync_state.enabled)
+        self._sync_selected_to_sandbox_button.setToolTip(sync_state.tooltip)
+        self._promote_selected_to_real_button.setEnabled(promote_state.enabled)
+        self._promote_selected_to_real_button.setToolTip(promote_state.tooltip)
+
+    def _resolve_inventory_sandbox_sync_button_states(
+        self,
+        *,
+        selected_mod_folder_paths: tuple[str, ...],
+    ) -> tuple[_ActionButtonState, _ActionButtonState]:
+        sync_wrong_target = (
+            "Sync selected to sandbox only works while scanning the configured real Mods path."
+        )
+        promote_wrong_target = (
+            "Promote selected to real Mods only works while scanning sandbox Mods."
+        )
+        if not selected_mod_folder_paths:
+            return (
+                _ActionButtonState(
+                    enabled=False,
+                    tooltip="Select one or more installed real-mod rows to sync to sandbox.",
+                ),
+                _ActionButtonState(
+                    enabled=False,
+                    tooltip="Select one or more installed sandbox-mod rows to promote to the configured real Mods path.",
+                ),
             )
-            self._promote_selected_to_real_button.setEnabled(False)
-            self._promote_selected_to_real_button.setToolTip(
-                "Select one or more installed sandbox-mod rows to promote to the configured real Mods path."
-            )
-            return
 
         if self._active_operation_name is not None:
-            self._sync_selected_to_sandbox_button.setEnabled(False)
-            self._sync_selected_to_sandbox_button.setToolTip(
-                "Wait for the active operation to finish before syncing to sandbox."
+            return (
+                _ActionButtonState(
+                    enabled=False,
+                    tooltip="Wait for the active operation to finish before syncing to sandbox.",
+                ),
+                _ActionButtonState(
+                    enabled=False,
+                    tooltip="Wait for the active operation to finish before promoting to the configured real Mods path.",
+                ),
             )
-            self._promote_selected_to_real_button.setEnabled(False)
-            self._promote_selected_to_real_button.setToolTip(
-                "Wait for the active operation to finish before promoting to the configured real Mods path."
-            )
-            return
 
-        if self._current_scan_target() == SCAN_TARGET_CONFIGURED_REAL_MODS:
+        current_target = self._current_scan_target()
+        if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             active_real_profile = self._active_custom_real_profile()
             if active_real_profile is not None:
-                self._sync_selected_to_sandbox_button.setEnabled(False)
-                self._sync_selected_to_sandbox_button.setToolTip(
-                    f"Sync selected to sandbox is paused while real profile '{active_real_profile.name}' is active."
+                return (
+                    _ActionButtonState(
+                        enabled=False,
+                        tooltip=(
+                            f"Sync selected to sandbox is paused while real profile '{active_real_profile.name}' is active."
+                        ),
+                    ),
+                    _ActionButtonState(enabled=False, tooltip=promote_wrong_target),
                 )
-                self._promote_selected_to_real_button.setEnabled(False)
-                self._promote_selected_to_real_button.setToolTip(
-                    "Promote selected to real Mods only works while scanning sandbox Mods."
-                )
-                return
             readiness = self._shell_service.get_sandbox_mods_sync_readiness(
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
                 selected_mod_folder_paths_text=selected_mod_folder_paths,
                 existing_config=self._config,
             )
-            self._sync_selected_to_sandbox_button.setEnabled(readiness.ready)
-            self._sync_selected_to_sandbox_button.setToolTip(readiness.message)
-            self._promote_selected_to_real_button.setEnabled(False)
-            self._promote_selected_to_real_button.setToolTip(
-                "Promote selected to real Mods only works while scanning sandbox Mods."
+            return (
+                _ActionButtonState(enabled=readiness.ready, tooltip=readiness.message),
+                _ActionButtonState(enabled=False, tooltip=promote_wrong_target),
             )
-            return
 
-        if self._current_scan_target() != SCAN_TARGET_SANDBOX_MODS:
-            self._sync_selected_to_sandbox_button.setEnabled(False)
-            self._sync_selected_to_sandbox_button.setToolTip(
-                "Sync selected to sandbox only works while scanning the configured real Mods path."
+        if current_target != SCAN_TARGET_SANDBOX_MODS:
+            return (
+                _ActionButtonState(enabled=False, tooltip=sync_wrong_target),
+                _ActionButtonState(enabled=False, tooltip=promote_wrong_target),
             )
-            self._promote_selected_to_real_button.setEnabled(False)
-            self._promote_selected_to_real_button.setToolTip(
-                "Promote selected to real Mods only works while scanning sandbox Mods."
-            )
-            return
 
-        self._sync_selected_to_sandbox_button.setEnabled(False)
-        self._sync_selected_to_sandbox_button.setToolTip(
-            "Sync selected to sandbox only works while scanning the configured real Mods path."
-        )
         promotion_readiness = self._shell_service.get_sandbox_mods_promotion_readiness(
             configured_mods_path_text=self._mods_path_input.text(),
             sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -10852,8 +10882,13 @@ class MainWindow(QMainWindow):
             selected_mod_folder_paths_text=selected_mod_folder_paths,
             existing_config=self._config,
         )
-        self._promote_selected_to_real_button.setEnabled(promotion_readiness.ready)
-        self._promote_selected_to_real_button.setToolTip(promotion_readiness.message)
+        return (
+            _ActionButtonState(enabled=False, tooltip=sync_wrong_target),
+            _ActionButtonState(
+                enabled=promotion_readiness.ready,
+                tooltip=promotion_readiness.message,
+            ),
+        )
 
     def _set_selected_mod_update_source_intent(self, intent_state: str) -> None:
         selected_context = self._selected_inventory_source_intent_context()

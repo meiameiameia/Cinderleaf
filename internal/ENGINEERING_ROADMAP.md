@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-05` after startup auto-check, update-cache work, library guidance extraction, and startup workflow cleanup
+Last refreshed: `2026-04-05` after update-cache work, library guidance extraction, startup workflow cleanup, and action-state extraction
 
 ## Baseline
 
@@ -105,6 +105,7 @@ Priority extractions:
 - Pull the startup check chain and startup auto-scan queue out of `MainWindow`.
 
 4. Profile/action state helpers
+- Status: first extraction pass done via shared action-button state resolvers for selected update and sandbox-sync actions; deeper profile-state cleanup still pending.
 - Reduce profile, sandbox-sync, and selected-row action gating code inside the window class.
 
 ### Phase 3: Service Layer Decomposition
@@ -150,10 +151,11 @@ Add durable checks for:
 
 ## Immediate Next Safe Increment
 
-`profile/action state helpers extraction`
+`startup environment check chain extraction`
 
 Reason:
 - the first row-presentation extraction pass is landed
 - the first guidance-controller extraction pass is landed
 - the first startup-workflow extraction pass is landed
-- profile, sandbox-sync, and selected-row action gating are now the next dense `MainWindow` behavior seam
+- the first action-state extraction pass is landed
+- the startup environment/SMAPI/app check chain is now the next concentrated `MainWindow` workflow seam
