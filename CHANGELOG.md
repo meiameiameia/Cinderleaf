@@ -2,6 +2,14 @@
 
 All notable user-facing changes for this repository are tracked here.
 
+## [1.3.0]
+
+- Grouped multi-folder mods more truthfully in `Library`, so related component folders can stay visible and actionable as one logical entry instead of drifting apart.
+- Added better source-repair flows for tracked mods, including clearer `Type`/status guidance, safer manual-source handling, built-in SMAPI exemptions, and discovery-based source hints.
+- Improved update behavior with persisted update status by inventory context, startup auto-checks for warmed inventories, and much faster update checks through cache reuse and cold-target prefetching.
+- Added watcher-path filtering plus visible-row `Select all` / `Deselect all` in `Packages`, and bundled `.rar` archive support in the shipped portable app.
+- Refined install/update workflow polish with clearer success feedback after installs and stronger handling for manual-source update pages and grouped multi-folder updates.
+
 ## [1.2.0]
 
 - Added curated real and sandbox profiles, so you can keep alternate mod sets without changing `Default`, with clearer `not in profile` behavior for mods that are not part of an older custom profile.

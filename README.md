@@ -4,7 +4,7 @@
 
 `for Stardew Valley` is a descriptive subtitle, not an official affiliation. Cinderleaf is an independent community tool and is not affiliated with or endorsed by ConcernedApe.
 
-Current project version: **1.2.0**
+Current project version: **1.3.0**
 
 If you want the full step-by-step walkthrough, start with the [User Manual](docs/USER_GUIDE.md).
 
@@ -37,20 +37,19 @@ If you want the full step-by-step walkthrough, start with the [User Manual](docs
 - restore/import support for bundled mods, mod configs, and exported profile catalogs, with save files left as a manual restore step
 - optional sandbox and testing workflows for safer experiments, heavier tinkering, and mod-author use cases
 
-## New in 1.2.0
+## New in 1.3.0
 
-- Curated real and sandbox profiles are now part of the normal workflow.
-- `Packages` is now watcher-first, and `Install` can plan and apply a batch instead of forcing one package at a time.
-- Batch planning understands staged dependencies better.
-- Backup export now lets you choose what to include, including optional save files.
-- The app has a cleaner identity, clearer workspace names, and stronger low-height polish.
-- SMAPI launch/log handling and profile-operation flow are more reliable.
+- Multi-folder mods behave more like one logical mod in `Library`, including grouped update and archive/remove handling.
+- Source repair is calmer now, with better type/status guidance, safer manual-source editing, and SMAPI-backed source hints.
+- Update checks are faster, startup can warm update statuses automatically, and checked status survives context switches more cleanly.
+- `Packages` now supports watcher-path filtering, visible-row bulk selection, and bundled `.rar` package intake in the portable build.
+- Install and update flows have clearer post-install feedback and smoother manual-source update-page handling.
 
 For the full release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
-These screenshots reflect the `1.2.0` UI.
+These screenshots reflect the current `1.3.0` UI.
 
 ![Cinderleaf library workspace](media/nexus-screenshots/01-library-workspace.png)
 
@@ -75,11 +74,11 @@ These screenshots reflect the `1.2.0` UI.
 The supported public build is a Windows portable zip published on GitHub Releases.
 
 1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Download `cinderleaf-1.2.0-windows-portable.zip`.
+2. Download `cinderleaf-1.3.0-windows-portable.zip`.
 3. Extract it to a normal folder.
 4. Run `Cinderleaf.exe`.
 
-If a checksum file is published with the release, verify `cinderleaf-1.2.0-windows-portable.zip.sha256` before announcing or mirroring the build.
+If a checksum file is published with the release, verify `cinderleaf-1.3.0-windows-portable.zip.sha256` before announcing or mirroring the build.
 
 Good to know:
 
@@ -116,9 +115,9 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.2.0-windows-portable\
-dist\cinderleaf-1.2.0-windows-portable.zip
-dist\cinderleaf-1.2.0-windows-portable.zip.sha256
+dist\cinderleaf-1.3.0-windows-portable\
+dist\cinderleaf-1.3.0-windows-portable.zip
+dist\cinderleaf-1.3.0-windows-portable.zip.sha256
 ```
 
 ## Current limitations

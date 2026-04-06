@@ -1691,7 +1691,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert brand_icon_pixmap.isNull() is False
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
-    assert brand_version.text() == "Version 1.2.0"
+    assert brand_version.text() == "Version 1.3.0"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(0).widget() is brand_header
