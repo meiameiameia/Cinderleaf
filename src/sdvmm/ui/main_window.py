@@ -3408,57 +3408,7 @@ class MainWindow(QMainWindow):
         self._review_output_group.setVisible(False)
         return review_page
 
-    def _build_layout(self) -> None:
-        container = QWidget()
-        container.setObjectName("app_shell_root")
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(6, 6, 6, 6)
-        root_layout.setSpacing(5)
-
-        context_group = TopContextSurface(
-            environment_status_label=self._environment_status_label,
-            smapi_update_status_label=self._smapi_update_status_label,
-            smapi_log_status_label=self._smapi_log_status_label,
-            nexus_status_label=self._nexus_status_label,
-            watch_status_label=self._watch_status_label,
-            operation_state_label=self._operation_state_label,
-            sandbox_launch_status_label=self._sandbox_launch_status_label,
-            scan_context_label=self._scan_context_label,
-            install_context_label=self._install_context_label,
-        )
-        self._context_group = context_group
-        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
-        root_layout.addWidget(context_group)
-
-        setup_scroll = self._build_setup_workspace_surface()
-
-        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
-
-        context_tabs = QTabWidget()
-        context_tabs.setObjectName("workspace_nav_tabs")
-        context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        context_tabs.setUsesScrollButtons(False)
-        context_tabs.setDocumentMode(True)
-        context_tabs.setTabPosition(QTabWidget.TabPosition.West)
-        context_tabs.tabBar().setObjectName("workspace_nav_tabbar")
-        context_tabs.tabBar().hide()
-        self._context_tabs = context_tabs
-        mods_page = self._build_mods_workspace_page(
-            inventory_controls_tabs=inventory_controls_tabs,
-            flow_hint_label=flow_hint_label,
-        )
-        self._mods_page = mods_page
-
-        discovery_page = self._build_discovery_workspace_page()
-
-        compare_tab = self._build_compare_workspace_page()
-
-        intake_tab = self._build_packages_workspace_page()
-
-        archive_page = self._build_archive_workspace_page()
-
-        review_page = self._build_install_workspace_page()
-
+    def _build_recovery_workspace_page(self) -> QWidget:
         recovery_tab = QWidget()
         recovery_tab.setObjectName("recovery_workspace_body")
         recovery_layout = QVBoxLayout(recovery_tab)
@@ -3510,7 +3460,7 @@ class MainWindow(QMainWindow):
         recovery_output_group.setVisible(False)
         recovery_layout.addWidget(recovery_group)
         recovery_layout.addStretch(1)
-        recovery_tab = self._build_page_shell(
+        recovery_page = self._build_page_shell(
             object_name="recovery_tab",
             eyebrow="Recorded rollback path",
             title="Recovery",
@@ -3518,7 +3468,61 @@ class MainWindow(QMainWindow):
             body_widget=recovery_tab,
             scroll_body=True,
         )
-        self._recovery_page = recovery_tab
+        self._recovery_page = recovery_page
+        return recovery_page
+
+    def _build_layout(self) -> None:
+        container = QWidget()
+        container.setObjectName("app_shell_root")
+        root_layout = QVBoxLayout(container)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(5)
+
+        context_group = TopContextSurface(
+            environment_status_label=self._environment_status_label,
+            smapi_update_status_label=self._smapi_update_status_label,
+            smapi_log_status_label=self._smapi_log_status_label,
+            nexus_status_label=self._nexus_status_label,
+            watch_status_label=self._watch_status_label,
+            operation_state_label=self._operation_state_label,
+            sandbox_launch_status_label=self._sandbox_launch_status_label,
+            scan_context_label=self._scan_context_label,
+            install_context_label=self._install_context_label,
+        )
+        self._context_group = context_group
+        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
+        root_layout.addWidget(context_group)
+
+        setup_scroll = self._build_setup_workspace_surface()
+
+        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
+
+        context_tabs = QTabWidget()
+        context_tabs.setObjectName("workspace_nav_tabs")
+        context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        context_tabs.setUsesScrollButtons(False)
+        context_tabs.setDocumentMode(True)
+        context_tabs.setTabPosition(QTabWidget.TabPosition.West)
+        context_tabs.tabBar().setObjectName("workspace_nav_tabbar")
+        context_tabs.tabBar().hide()
+        self._context_tabs = context_tabs
+        mods_page = self._build_mods_workspace_page(
+            inventory_controls_tabs=inventory_controls_tabs,
+            flow_hint_label=flow_hint_label,
+        )
+        self._mods_page = mods_page
+
+        discovery_page = self._build_discovery_workspace_page()
+
+        compare_tab = self._build_compare_workspace_page()
+
+        intake_tab = self._build_packages_workspace_page()
+
+        archive_page = self._build_archive_workspace_page()
+
+        review_page = self._build_install_workspace_page()
+
+        recovery_tab = self._build_recovery_workspace_page()
         setup_page = self._build_page_shell(
             object_name="setup_workspace_page",
             eyebrow="Configure once, reuse everywhere",
