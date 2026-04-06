@@ -3670,7 +3670,7 @@ class MainWindow(QMainWindow):
             self._finish_startup_checks()
             return
 
-        self._run_background_operation(
+        self._run_startup_background_check(
             operation_name="Startup environment check",
             running_label="Startup environment check",
             started_status="Running startup environment checks...",
@@ -3680,7 +3680,6 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_startup_environment_check_completed,
             on_failure=self._on_startup_environment_check_failed,
-            show_error_dialog=False,
         )
 
     def _has_meaningful_startup_game_path(self) -> bool:
@@ -3690,26 +3689,53 @@ class MainWindow(QMainWindow):
         game_path = Path(raw_game_path).expanduser()
         return game_path.exists() and game_path.is_dir()
 
+    def _run_startup_background_check(
+        self,
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn: Callable[[], object],
+        on_success: Callable[[object], None],
+        on_failure: Callable[[str], None],
+    ) -> None:
+        self._run_background_operation(
+            operation_name=operation_name,
+            running_label=running_label,
+            started_status=started_status,
+            error_title=error_title,
+            task_fn=task_fn,
+            on_success=on_success,
+            on_failure=on_failure,
+            show_error_dialog=False,
+        )
+
+    def _advance_startup_checks(self, next_step: Callable[[], None] | None) -> None:
+        if next_step is None:
+            self._finish_startup_checks()
+            return
+        QTimer.singleShot(0, next_step)
+
     def _on_startup_environment_check_completed(
         self,
         status: GameEnvironmentStatus,
     ) -> None:
         self._apply_environment_status(status)
         self._set_status("Startup environment check complete.")
-        if "invalid_game_path" in status.state_codes:
-            self._finish_startup_checks()
-            return
-        QTimer.singleShot(0, self._run_startup_smapi_update_check)
+        self._advance_startup_checks(
+            None if "invalid_game_path" in status.state_codes else self._run_startup_smapi_update_check
+        )
 
     def _on_startup_environment_check_failed(self, message: str) -> None:
         self._set_status(message)
-        self._finish_startup_checks()
+        self._advance_startup_checks(None)
 
     def _run_startup_smapi_update_check(self) -> None:
         if not self._has_meaningful_startup_game_path():
             self._finish_startup_checks()
             return
-        self._run_background_operation(
+        self._run_startup_background_check(
             operation_name="Startup SMAPI update check",
             running_label="Startup SMAPI update check",
             started_status="Checking SMAPI update status on startup...",
@@ -3720,22 +3746,21 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_startup_smapi_update_check_completed,
             on_failure=self._on_startup_smapi_update_check_failed,
-            show_error_dialog=False,
         )
 
     def _on_startup_smapi_update_check_completed(self, status: SmapiUpdateStatus) -> None:
         self._on_check_smapi_update_completed(status)
-        QTimer.singleShot(0, self._run_startup_smapi_log_check)
+        self._advance_startup_checks(self._run_startup_smapi_log_check)
 
     def _on_startup_smapi_update_check_failed(self, message: str) -> None:
         self._set_status(message)
-        QTimer.singleShot(0, self._run_startup_smapi_log_check)
+        self._advance_startup_checks(self._run_startup_smapi_log_check)
 
     def _run_startup_smapi_log_check(self) -> None:
         if not self._has_meaningful_startup_game_path():
             self._finish_startup_checks()
             return
-        self._run_background_operation(
+        self._run_startup_background_check(
             operation_name="Startup SMAPI log check",
             running_label="Startup SMAPI log check",
             started_status="Checking SMAPI log on startup...",
@@ -3746,22 +3771,21 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_startup_smapi_log_check_completed,
             on_failure=self._on_startup_smapi_log_check_failed,
-            show_error_dialog=False,
         )
 
     def _on_startup_smapi_log_check_completed(self, report: SmapiLogReport) -> None:
         self._on_check_smapi_log_completed(report)
-        QTimer.singleShot(0, self._run_startup_app_update_check)
+        self._advance_startup_checks(self._run_startup_app_update_check)
 
     def _on_startup_smapi_log_check_failed(self, message: str) -> None:
         self._set_status(message)
-        QTimer.singleShot(0, self._run_startup_app_update_check)
+        self._advance_startup_checks(self._run_startup_app_update_check)
 
     def _run_startup_app_update_check(self) -> None:
         if not self._has_meaningful_startup_game_path():
             self._finish_startup_checks()
             return
-        self._run_background_operation(
+        self._run_startup_background_check(
             operation_name="Startup app update check",
             running_label="Startup app update check",
             started_status="Checking Cinderleaf release status on startup...",
@@ -3771,17 +3795,16 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_startup_app_update_check_completed,
             on_failure=self._on_startup_app_update_check_failed,
-            show_error_dialog=False,
         )
 
     def _on_startup_app_update_check_completed(self, status: AppUpdateStatus) -> None:
         self._apply_app_update_status(status)
         self._set_status(self._startup_app_update_final_status_text(status=status))
-        self._finish_startup_checks()
+        self._advance_startup_checks(None)
 
     def _on_startup_app_update_check_failed(self, message: str) -> None:
         self._set_status(self._startup_app_update_final_status_text(failure_message=message))
-        self._finish_startup_checks()
+        self._advance_startup_checks(None)
 
     def _finish_startup_checks(self) -> None:
         self._startup_checks_completed = True
