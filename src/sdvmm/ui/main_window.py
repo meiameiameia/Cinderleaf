@@ -2555,28 +2555,7 @@ class MainWindow(QMainWindow):
             button.setChecked(page is current_page)
             button.blockSignals(False)
 
-    def _build_layout(self) -> None:
-        container = QWidget()
-        container.setObjectName("app_shell_root")
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(6, 6, 6, 6)
-        root_layout.setSpacing(5)
-
-        context_group = TopContextSurface(
-            environment_status_label=self._environment_status_label,
-            smapi_update_status_label=self._smapi_update_status_label,
-            smapi_log_status_label=self._smapi_log_status_label,
-            nexus_status_label=self._nexus_status_label,
-            watch_status_label=self._watch_status_label,
-            operation_state_label=self._operation_state_label,
-            sandbox_launch_status_label=self._sandbox_launch_status_label,
-            scan_context_label=self._scan_context_label,
-            install_context_label=self._install_context_label,
-        )
-        self._context_group = context_group
-        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
-        root_layout.addWidget(context_group)
-
+    def _build_setup_workspace_surface(self) -> SetupConfigurationSurface:
         browse_game_button = QPushButton("Choose game folder")
         browse_game_button.clicked.connect(self._on_browse_game)
         _set_utility_button_style(browse_game_button)
@@ -2694,8 +2673,9 @@ class MainWindow(QMainWindow):
         execute_restore_import_button.setEnabled(False)
         execute_restore_import_button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
         _set_secondary_button_style(execute_restore_import_button)
+        self._execute_restore_import_button = execute_restore_import_button
 
-        setup_scroll = SetupConfigurationSurface(
+        setup_surface = SetupConfigurationSurface(
             game_path_input=self._game_path_input,
             mods_path_input=self._mods_path_input,
             sandbox_mods_path_input=self._sandbox_mods_path_input,
@@ -2740,17 +2720,42 @@ class MainWindow(QMainWindow):
             migrate_managed_folders_button=migrate_managed_folders_button,
             setup_output_box=self._setup_output_box,
         )
-        setup_scroll.setObjectName("setup_workspace_tab")
-        self._setup_group = setup_scroll.setup_group
-        self._setup_output_group = setup_scroll.setup_output_group
+        setup_surface.setObjectName("setup_workspace_tab")
+        self._setup_group = setup_surface.setup_group
+        self._setup_output_group = setup_surface.setup_output_group
         self._setup_output_group.setVisible(False)
-        self._setup_managed_group = setup_scroll.managed_group
+        self._setup_managed_group = setup_surface.managed_group
         self._open_managed_sandbox_mods_button = open_managed_sandbox_mods_button
         self._open_managed_sandbox_archive_button = open_managed_sandbox_archive_button
         self._open_managed_real_archive_button = open_managed_real_archive_button
         self._open_managed_real_logs_button = open_managed_real_logs_button
         self._open_managed_sandbox_logs_button = open_managed_sandbox_logs_button
         self._migrate_managed_folders_button = migrate_managed_folders_button
+        return setup_surface
+
+    def _build_layout(self) -> None:
+        container = QWidget()
+        container.setObjectName("app_shell_root")
+        root_layout = QVBoxLayout(container)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(5)
+
+        context_group = TopContextSurface(
+            environment_status_label=self._environment_status_label,
+            smapi_update_status_label=self._smapi_update_status_label,
+            smapi_log_status_label=self._smapi_log_status_label,
+            nexus_status_label=self._nexus_status_label,
+            watch_status_label=self._watch_status_label,
+            operation_state_label=self._operation_state_label,
+            sandbox_launch_status_label=self._sandbox_launch_status_label,
+            scan_context_label=self._scan_context_label,
+            install_context_label=self._install_context_label,
+        )
+        self._context_group = context_group
+        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
+        root_layout.addWidget(context_group)
+
+        setup_scroll = self._build_setup_workspace_surface()
 
         inventory_controls_tabs = QTabWidget()
         inventory_controls_tabs.setDocumentMode(True)
@@ -3508,7 +3513,7 @@ class MainWindow(QMainWindow):
             self._check_smapi_update_button,
             self._check_smapi_log_button,
             self._load_smapi_log_button,
-            check_app_update_button,
+            self._check_app_update_button,
             self._search_mods_button,
             self._remove_mod_button,
             self._rollback_mod_button,
@@ -3517,10 +3522,10 @@ class MainWindow(QMainWindow):
             self._restore_archived_button,
             self._delete_archived_button,
             self._compare_real_vs_sandbox_button,
-            export_backup_button,
-            inspect_backup_button,
-            execute_restore_import_button,
-            migrate_managed_folders_button,
+            self._export_backup_button,
+            self._inspect_backup_button,
+            self._execute_restore_import_button,
+            self._migrate_managed_folders_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
             self._launch_sandbox_dev_button,
@@ -3536,7 +3541,6 @@ class MainWindow(QMainWindow):
         self._refresh_responsive_panel_bounds()
         self._refresh_staged_package_preview()
         self._refresh_install_operation_selector()
-        self._execute_restore_import_button = execute_restore_import_button
         self._refresh_active_backup_bundle_context()
         self._refresh_restore_import_execution_state()
         _set_feedback_label_state(

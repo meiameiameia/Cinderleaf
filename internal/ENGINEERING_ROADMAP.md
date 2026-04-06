@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-06` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, and cold update-check concurrency
+Last refreshed: `2026-04-06` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, cold update-check concurrency, and the first layout/build extraction pass
 
 ## Baseline
 
@@ -107,6 +107,10 @@ Priority extractions:
 - Status: first extraction pass done via shared action-button state resolvers for selected update and sandbox-sync actions; deeper profile-state cleanup still pending.
 - Reduce profile, sandbox-sync, and selected-row action gating code inside the window class.
 
+5. Layout/build decomposition
+- Status: first extraction pass done via dedicated setup workspace surface construction helper inside `MainWindow`; deeper `__init__` and `_build_layout` decomposition is still pending.
+- Keep carving out coherent page/control builders instead of moving random widget lines around.
+
 ### Phase 3: Service Layer Decomposition
 
 Goal: reduce `shell_service.py` from a giant workflow bucket into clearer service seams.
@@ -150,9 +154,10 @@ Add durable checks for:
 
 ## Immediate Next Safe Increment
 
-`layout/build decomposition audit`
+`layout/build decomposition follow-up`
 
 Reason:
 - the update-throughput roadmap work is now materially landed
+- the first setup-surface extraction pass is landed
 - `MainWindow.__init__` and `_build_layout` remain the largest concentrated UI setup seams
-- the next anti-drift win is reducing UI setup concentration before starting another product wave
+- the next anti-drift win is another coherent page/control builder extraction before starting another product wave
