@@ -3780,23 +3780,64 @@ class MainWindow(QMainWindow):
         self._startup_checks_completed = True
         QTimer.singleShot(0, self._maybe_start_startup_auto_scan)
 
-    def _maybe_start_startup_auto_scan(self) -> None:
-        if self._startup_auto_scan_started:
-            return
+    def _try_begin_startup_background_batch(
+        self,
+        *,
+        queue: list[object],
+        started_attr: str,
+        queue_attr: str,
+        failures_attr: str,
+        restore_attr: str,
+        retry_callback: Callable[[], None],
+        start_callback: Callable[[], None],
+    ) -> bool:
+        if getattr(self, started_attr):
+            return False
         if self._active_operation_name is not None:
-            QTimer.singleShot(150, self._maybe_start_startup_auto_scan)
-            return
-
-        queue = list(self._startup_auto_scan_candidates())
+            QTimer.singleShot(150, retry_callback)
+            return False
         if not queue:
-            return
+            return False
 
-        self._startup_auto_scan_started = True
-        self._startup_auto_scan_queue = queue
-        self._startup_auto_scan_failures = []
+        setattr(self, started_attr, True)
+        setattr(self, queue_attr, queue)
+        setattr(self, failures_attr, [])
         status_text = self._status_strip_label.text().strip()
-        self._startup_auto_scan_status_restore_text = status_text or None
-        self._run_next_startup_auto_scan()
+        setattr(self, restore_attr, status_text or None)
+        start_callback()
+        return True
+
+    def _finalize_startup_background_batch(
+        self,
+        *,
+        queue_attr: str,
+        failures_attr: str,
+        restore_attr: str,
+        next_callback: Callable[[], None] | None = None,
+    ) -> None:
+        restore_status = getattr(self, restore_attr)
+        failures = tuple(getattr(self, failures_attr))
+        setattr(self, queue_attr, [])
+        setattr(self, failures_attr, [])
+        setattr(self, restore_attr, None)
+        if failures:
+            self._set_status(failures[0])
+            return
+        if restore_status:
+            self._set_status(restore_status)
+        if next_callback is not None:
+            QTimer.singleShot(0, next_callback)
+
+    def _maybe_start_startup_auto_scan(self) -> None:
+        self._try_begin_startup_background_batch(
+            queue=list(self._startup_auto_scan_candidates()),
+            started_attr="_startup_auto_scan_started",
+            queue_attr="_startup_auto_scan_queue",
+            failures_attr="_startup_auto_scan_failures",
+            restore_attr="_startup_auto_scan_status_restore_text",
+            retry_callback=self._maybe_start_startup_auto_scan,
+            start_callback=self._run_next_startup_auto_scan,
+        )
 
     def _startup_auto_scan_candidates(self) -> tuple[str, ...]:
         if self._config is None:
@@ -3873,35 +3914,23 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._run_next_startup_auto_scan)
 
     def _finalize_startup_auto_scan(self) -> None:
-        restore_status = self._startup_auto_scan_status_restore_text
-        failures = tuple(self._startup_auto_scan_failures)
-        self._startup_auto_scan_queue = []
-        self._startup_auto_scan_failures = []
-        self._startup_auto_scan_status_restore_text = None
-        if failures:
-            self._set_status(failures[0])
-            return
-        if restore_status:
-            self._set_status(restore_status)
-        QTimer.singleShot(0, self._maybe_start_startup_update_checks)
+        self._finalize_startup_background_batch(
+            queue_attr="_startup_auto_scan_queue",
+            failures_attr="_startup_auto_scan_failures",
+            restore_attr="_startup_auto_scan_status_restore_text",
+            next_callback=self._maybe_start_startup_update_checks,
+        )
 
     def _maybe_start_startup_update_checks(self) -> None:
-        if self._startup_update_check_started:
-            return
-        if self._active_operation_name is not None:
-            QTimer.singleShot(150, self._maybe_start_startup_update_checks)
-            return
-
-        queue = list(self._startup_update_check_candidates())
-        if not queue:
-            return
-
-        self._startup_update_check_started = True
-        self._startup_update_check_queue = queue
-        self._startup_update_check_failures = []
-        status_text = self._status_strip_label.text().strip()
-        self._startup_update_check_status_restore_text = status_text or None
-        self._run_next_startup_update_check()
+        self._try_begin_startup_background_batch(
+            queue=list(self._startup_update_check_candidates()),
+            started_attr="_startup_update_check_started",
+            queue_attr="_startup_update_check_queue",
+            failures_attr="_startup_update_check_failures",
+            restore_attr="_startup_update_check_status_restore_text",
+            retry_callback=self._maybe_start_startup_update_checks,
+            start_callback=self._run_next_startup_update_check,
+        )
 
     def _startup_update_check_candidates(self) -> tuple[tuple[str, Path], ...]:
         candidates: list[tuple[str, Path]] = []
@@ -3969,16 +3998,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._run_next_startup_update_check)
 
     def _finalize_startup_update_checks(self) -> None:
-        restore_status = self._startup_update_check_status_restore_text
-        failures = tuple(self._startup_update_check_failures)
-        self._startup_update_check_queue = []
-        self._startup_update_check_failures = []
-        self._startup_update_check_status_restore_text = None
-        if failures:
-            self._set_status(failures[0])
-            return
-        if restore_status:
-            self._set_status(restore_status)
+        self._finalize_startup_background_batch(
+            queue_attr="_startup_update_check_queue",
+            failures_attr="_startup_update_check_failures",
+            restore_attr="_startup_update_check_status_restore_text",
+        )
 
     def _on_browse_game(self) -> None:
         selected = QFileDialog.getExistingDirectory(

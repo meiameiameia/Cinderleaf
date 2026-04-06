@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-05` after startup auto-check, update-cache work, and library guidance extraction
+Last refreshed: `2026-04-05` after startup auto-check, update-cache work, library guidance extraction, and startup workflow cleanup
 
 ## Baseline
 
@@ -101,6 +101,7 @@ Priority extractions:
 - Keep button enabling, guidance text, and source-intent overlay logic together but out of the window class.
 
 3. Startup workflow controller
+- Status: first extraction pass done via shared startup background-batch helpers; full controller/module split still pending.
 - Pull the startup check chain and startup auto-scan queue out of `MainWindow`.
 
 4. Profile/action state helpers
@@ -149,9 +150,10 @@ Add durable checks for:
 
 ## Immediate Next Safe Increment
 
-`startup workflow controller extraction`
+`profile/action state helpers extraction`
 
 Reason:
 - the first row-presentation extraction pass is landed
 - the first guidance-controller extraction pass is landed
-- startup warm-scan and auto-check orchestration is now the next concentrated `MainWindow` workflow seam
+- the first startup-workflow extraction pass is landed
+- profile, sandbox-sync, and selected-row action gating are now the next dense `MainWindow` behavior seam
