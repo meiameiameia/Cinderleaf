@@ -3514,13 +3514,7 @@ class MainWindow(QMainWindow):
         context_tabs.addTab(self._build_recovery_workspace_page(), "Recovery")
         return context_tabs
 
-    def _build_layout(self) -> None:
-        container = QWidget()
-        container.setObjectName("app_shell_root")
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(6, 6, 6, 6)
-        root_layout.setSpacing(5)
-
+    def _build_top_context_surface(self) -> TopContextSurface:
         context_group = TopContextSurface(
             environment_status_label=self._environment_status_label,
             smapi_update_status_label=self._smapi_update_status_label,
@@ -3534,7 +3528,26 @@ class MainWindow(QMainWindow):
         )
         self._context_group = context_group
         _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
-        root_layout.addWidget(context_group)
+        return context_group
+
+    def _build_workspace_shell(self, *, context_tabs: QTabWidget) -> QFrame:
+        workspace_shell = QFrame()
+        workspace_shell.setObjectName("workspace_shell_frame")
+        workspace_shell_layout = QHBoxLayout(workspace_shell)
+        workspace_shell_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_shell_layout.setSpacing(10)
+        workspace_shell_layout.addWidget(self._build_workspace_rail(context_tabs=context_tabs))
+        workspace_shell_layout.addWidget(context_tabs, 1)
+        return workspace_shell
+
+    def _build_layout(self) -> None:
+        container = QWidget()
+        container.setObjectName("app_shell_root")
+        root_layout = QVBoxLayout(container)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(5)
+
+        root_layout.addWidget(self._build_top_context_surface())
 
         setup_scroll = self._build_setup_workspace_surface()
 
@@ -3546,15 +3559,7 @@ class MainWindow(QMainWindow):
             flow_hint_label=flow_hint_label,
         )
 
-        workspace_shell = QFrame()
-        workspace_shell.setObjectName("workspace_shell_frame")
-        workspace_shell_layout = QHBoxLayout(workspace_shell)
-        workspace_shell_layout.setContentsMargins(0, 0, 0, 0)
-        workspace_shell_layout.setSpacing(10)
-        workspace_shell_layout.addWidget(self._build_workspace_rail(context_tabs=context_tabs))
-        workspace_shell_layout.addWidget(context_tabs, 1)
-
-        root_layout.addWidget(workspace_shell, 1)
+        root_layout.addWidget(self._build_workspace_shell(context_tabs=context_tabs), 1)
 
         root_layout.addWidget(self._status_strip_group)
         _apply_surface_shadow(self._status_strip_group, blur_radius=14, y_offset=1, alpha=44)
