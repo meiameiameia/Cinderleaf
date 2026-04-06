@@ -2903,156 +2903,7 @@ class MainWindow(QMainWindow):
         self._inventory_flow_hint_label = flow_hint_label
         return inventory_controls_tabs, flow_hint_label
 
-    def _build_layout(self) -> None:
-        container = QWidget()
-        container.setObjectName("app_shell_root")
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(6, 6, 6, 6)
-        root_layout.setSpacing(5)
-
-        context_group = TopContextSurface(
-            environment_status_label=self._environment_status_label,
-            smapi_update_status_label=self._smapi_update_status_label,
-            smapi_log_status_label=self._smapi_log_status_label,
-            nexus_status_label=self._nexus_status_label,
-            watch_status_label=self._watch_status_label,
-            operation_state_label=self._operation_state_label,
-            sandbox_launch_status_label=self._sandbox_launch_status_label,
-            scan_context_label=self._scan_context_label,
-            install_context_label=self._install_context_label,
-        )
-        self._context_group = context_group
-        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
-        root_layout.addWidget(context_group)
-
-        setup_scroll = self._build_setup_workspace_surface()
-
-        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
-
-        context_tabs = QTabWidget()
-        context_tabs.setObjectName("workspace_nav_tabs")
-        context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        context_tabs.setUsesScrollButtons(False)
-        context_tabs.setDocumentMode(True)
-        context_tabs.setTabPosition(QTabWidget.TabPosition.West)
-        context_tabs.tabBar().setObjectName("workspace_nav_tabbar")
-        context_tabs.tabBar().hide()
-        self._context_tabs = context_tabs
-        mods_page = self._build_mods_workspace_page(
-            inventory_controls_tabs=inventory_controls_tabs,
-            flow_hint_label=flow_hint_label,
-        )
-        self._mods_page = mods_page
-
-        self._search_mods_button = QPushButton("Find mods")
-        self._search_mods_button.setObjectName("discovery_search_button")
-        self._search_mods_button.clicked.connect(self._on_search_discovery)
-        _set_primary_button_style(self._search_mods_button)
-        open_discovered_button = QPushButton("Open mod page")
-        open_discovered_button.clicked.connect(self._on_open_discovered_page)
-        _set_utility_button_style(open_discovered_button)
-        discovery_tab = DiscoveryTabSurface(
-            discovery_query_input=self._discovery_query_input,
-            discovery_filter_input=self._discovery_filter_input,
-            discovery_filter_stats_label=self._discovery_filter_stats_label,
-            discovery_results_state_label=self._discovery_results_state_label,
-            discovery_table=self._discovery_table,
-            discovery_search_button=self._search_mods_button,
-            open_discovered_button=open_discovered_button,
-        )
-        discovery_page = QWidget()
-        discovery_page.setObjectName("discovery_workspace_body")
-        discovery_page_layout = QVBoxLayout(discovery_page)
-        discovery_page_layout.setContentsMargins(0, 0, 0, 0)
-        discovery_page_layout.setSpacing(6)
-        discovery_intro_label = QLabel(
-            "Search for mod pages to source new installs or updates. Opening a page never installs anything by itself."
-        )
-        discovery_intro_label.setObjectName("discovery_intro_label")
-        discovery_intro_label.setWordWrap(True)
-        _set_auxiliary_label_style(discovery_intro_label)
-        discovery_page_layout.addWidget(discovery_tab, 1)
-        discovery_output_group = QGroupBox("Discover detail")
-        discovery_output_group.setObjectName("discovery_output_group")
-        discovery_output_group.setFlat(True)
-        discovery_output_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        discovery_output_layout = QVBoxLayout(discovery_output_group)
-        discovery_output_layout.setContentsMargins(8, 6, 8, 6)
-        discovery_output_layout.setSpacing(4)
-        discovery_output_layout.addWidget(self._discovery_output_box)
-        discovery_page_layout.addWidget(discovery_output_group)
-        self._discovery_output_group = discovery_output_group
-        discovery_output_group.setVisible(False)
-        discovery_page = self._build_page_shell(
-            object_name="discovery_workspace_page",
-            eyebrow="Source new installs or updates",
-            title="Discover mods",
-            subtitle="Search by name, UniqueID, or author. Opening a source page stays read-only.",
-            body_widget=discovery_page,
-            scroll_body=True,
-        )
-        self._discovery_page = discovery_page
-
-        compare_tab = QWidget()
-        compare_tab.setObjectName("compare_workspace_body")
-        compare_layout = QVBoxLayout(compare_tab)
-        compare_layout.setContentsMargins(0, 0, 0, 0)
-        compare_layout.setSpacing(10)
-        compare_actions_widget = QWidget()
-        compare_actions_layout = QHBoxLayout(compare_actions_widget)
-        compare_actions_layout.setContentsMargins(0, 0, 0, 0)
-        compare_actions_layout.setSpacing(10)
-        compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
-        compare_actions_layout.addWidget(_context_caption("Show"))
-        compare_actions_layout.addWidget(self._compare_category_filter_combo)
-        compare_actions_layout.addWidget(self._compare_copy_identity_button)
-        compare_actions_layout.addStretch(1)
-        compare_layout.addWidget(compare_actions_widget)
-        compare_layout.addWidget(self._compare_summary_label)
-        compare_layout.addWidget(self._compare_category_help_label)
-        self._compare_results_table.setVisible(False)
-        compare_results_group = QGroupBox("Compare results")
-        compare_results_group.setObjectName("compare_results_group")
-        compare_results_layout = QVBoxLayout(compare_results_group)
-        compare_results_layout.setContentsMargins(12, 10, 12, 12)
-        compare_results_layout.setSpacing(6)
-        compare_results_layout.addWidget(self._compare_results_table)
-        compare_layout.addWidget(compare_results_group, 1)
-        compare_output_group = QGroupBox("Compare detail")
-        compare_output_group.setObjectName("compare_output_group")
-        compare_output_group.setFlat(True)
-        compare_output_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        compare_output_layout = QVBoxLayout(compare_output_group)
-        compare_output_layout.setContentsMargins(8, 6, 8, 6)
-        compare_output_layout.setSpacing(4)
-        compare_output_layout.addWidget(self._compare_output_box)
-        compare_layout.addWidget(compare_output_group)
-        self._compare_output_group = compare_output_group
-        compare_output_group.setVisible(False)
-        compare_layout.addStretch(1)
-        self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
-        self._compare_category_filter_combo.currentIndexChanged.connect(
-            self._apply_compare_results_filter
-        )
-        self._compare_copy_identity_button.clicked.connect(
-            self._on_copy_compare_row_identity
-        )
-        compare_tab = self._build_page_shell(
-            object_name="compare_tab",
-            eyebrow="Read-only drift orientation",
-            title="Compare real and sandbox",
-            subtitle="Check actionable drift before you promote sandbox changes into the live Mods folder.",
-            body_widget=compare_tab,
-            scroll_body=True,
-        )
-        self._compare_page = compare_tab
-
+    def _build_packages_workspace_page(self) -> QWidget:
         intake_tab = QWidget()
         intake_layout = QVBoxLayout(intake_tab)
         intake_layout.setContentsMargins(0, 0, 0, 0)
@@ -3256,7 +3107,7 @@ class MainWindow(QMainWindow):
         detected_layout.addWidget(detected_actions_widget, 8, 0, 1, 4)
         intake_layout.addWidget(detected_group)
         intake_layout.addStretch(1)
-        intake_tab = self._build_page_shell(
+        intake_page = self._build_page_shell(
             object_name="packages_workspace_page",
             eyebrow="Watch downloaded packages",
             title="Packages",
@@ -3264,7 +3115,160 @@ class MainWindow(QMainWindow):
             body_widget=intake_tab,
             scroll_body=True,
         )
-        self._packages_page = intake_tab
+        self._packages_page = intake_page
+        return intake_page
+
+    def _build_layout(self) -> None:
+        container = QWidget()
+        container.setObjectName("app_shell_root")
+        root_layout = QVBoxLayout(container)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(5)
+
+        context_group = TopContextSurface(
+            environment_status_label=self._environment_status_label,
+            smapi_update_status_label=self._smapi_update_status_label,
+            smapi_log_status_label=self._smapi_log_status_label,
+            nexus_status_label=self._nexus_status_label,
+            watch_status_label=self._watch_status_label,
+            operation_state_label=self._operation_state_label,
+            sandbox_launch_status_label=self._sandbox_launch_status_label,
+            scan_context_label=self._scan_context_label,
+            install_context_label=self._install_context_label,
+        )
+        self._context_group = context_group
+        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
+        root_layout.addWidget(context_group)
+
+        setup_scroll = self._build_setup_workspace_surface()
+
+        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
+
+        context_tabs = QTabWidget()
+        context_tabs.setObjectName("workspace_nav_tabs")
+        context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        context_tabs.setUsesScrollButtons(False)
+        context_tabs.setDocumentMode(True)
+        context_tabs.setTabPosition(QTabWidget.TabPosition.West)
+        context_tabs.tabBar().setObjectName("workspace_nav_tabbar")
+        context_tabs.tabBar().hide()
+        self._context_tabs = context_tabs
+        mods_page = self._build_mods_workspace_page(
+            inventory_controls_tabs=inventory_controls_tabs,
+            flow_hint_label=flow_hint_label,
+        )
+        self._mods_page = mods_page
+
+        self._search_mods_button = QPushButton("Find mods")
+        self._search_mods_button.setObjectName("discovery_search_button")
+        self._search_mods_button.clicked.connect(self._on_search_discovery)
+        _set_primary_button_style(self._search_mods_button)
+        open_discovered_button = QPushButton("Open mod page")
+        open_discovered_button.clicked.connect(self._on_open_discovered_page)
+        _set_utility_button_style(open_discovered_button)
+        discovery_tab = DiscoveryTabSurface(
+            discovery_query_input=self._discovery_query_input,
+            discovery_filter_input=self._discovery_filter_input,
+            discovery_filter_stats_label=self._discovery_filter_stats_label,
+            discovery_results_state_label=self._discovery_results_state_label,
+            discovery_table=self._discovery_table,
+            discovery_search_button=self._search_mods_button,
+            open_discovered_button=open_discovered_button,
+        )
+        discovery_page = QWidget()
+        discovery_page.setObjectName("discovery_workspace_body")
+        discovery_page_layout = QVBoxLayout(discovery_page)
+        discovery_page_layout.setContentsMargins(0, 0, 0, 0)
+        discovery_page_layout.setSpacing(6)
+        discovery_intro_label = QLabel(
+            "Search for mod pages to source new installs or updates. Opening a page never installs anything by itself."
+        )
+        discovery_intro_label.setObjectName("discovery_intro_label")
+        discovery_intro_label.setWordWrap(True)
+        _set_auxiliary_label_style(discovery_intro_label)
+        discovery_page_layout.addWidget(discovery_tab, 1)
+        discovery_output_group = QGroupBox("Discover detail")
+        discovery_output_group.setObjectName("discovery_output_group")
+        discovery_output_group.setFlat(True)
+        discovery_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        discovery_output_layout = QVBoxLayout(discovery_output_group)
+        discovery_output_layout.setContentsMargins(8, 6, 8, 6)
+        discovery_output_layout.setSpacing(4)
+        discovery_output_layout.addWidget(self._discovery_output_box)
+        discovery_page_layout.addWidget(discovery_output_group)
+        self._discovery_output_group = discovery_output_group
+        discovery_output_group.setVisible(False)
+        discovery_page = self._build_page_shell(
+            object_name="discovery_workspace_page",
+            eyebrow="Source new installs or updates",
+            title="Discover mods",
+            subtitle="Search by name, UniqueID, or author. Opening a source page stays read-only.",
+            body_widget=discovery_page,
+            scroll_body=True,
+        )
+        self._discovery_page = discovery_page
+
+        compare_tab = QWidget()
+        compare_tab.setObjectName("compare_workspace_body")
+        compare_layout = QVBoxLayout(compare_tab)
+        compare_layout.setContentsMargins(0, 0, 0, 0)
+        compare_layout.setSpacing(10)
+        compare_actions_widget = QWidget()
+        compare_actions_layout = QHBoxLayout(compare_actions_widget)
+        compare_actions_layout.setContentsMargins(0, 0, 0, 0)
+        compare_actions_layout.setSpacing(10)
+        compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
+        compare_actions_layout.addWidget(_context_caption("Show"))
+        compare_actions_layout.addWidget(self._compare_category_filter_combo)
+        compare_actions_layout.addWidget(self._compare_copy_identity_button)
+        compare_actions_layout.addStretch(1)
+        compare_layout.addWidget(compare_actions_widget)
+        compare_layout.addWidget(self._compare_summary_label)
+        compare_layout.addWidget(self._compare_category_help_label)
+        self._compare_results_table.setVisible(False)
+        compare_results_group = QGroupBox("Compare results")
+        compare_results_group.setObjectName("compare_results_group")
+        compare_results_layout = QVBoxLayout(compare_results_group)
+        compare_results_layout.setContentsMargins(12, 10, 12, 12)
+        compare_results_layout.setSpacing(6)
+        compare_results_layout.addWidget(self._compare_results_table)
+        compare_layout.addWidget(compare_results_group, 1)
+        compare_output_group = QGroupBox("Compare detail")
+        compare_output_group.setObjectName("compare_output_group")
+        compare_output_group.setFlat(True)
+        compare_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        compare_output_layout = QVBoxLayout(compare_output_group)
+        compare_output_layout.setContentsMargins(8, 6, 8, 6)
+        compare_output_layout.setSpacing(4)
+        compare_output_layout.addWidget(self._compare_output_box)
+        compare_layout.addWidget(compare_output_group)
+        self._compare_output_group = compare_output_group
+        compare_output_group.setVisible(False)
+        compare_layout.addStretch(1)
+        self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
+        self._compare_category_filter_combo.currentIndexChanged.connect(
+            self._apply_compare_results_filter
+        )
+        self._compare_copy_identity_button.clicked.connect(
+            self._on_copy_compare_row_identity
+        )
+        compare_tab = self._build_page_shell(
+            object_name="compare_tab",
+            eyebrow="Read-only drift orientation",
+            title="Compare real and sandbox",
+            subtitle="Check actionable drift before you promote sandbox changes into the live Mods folder.",
+            body_widget=compare_tab,
+            scroll_body=True,
+        )
+        self._compare_page = compare_tab
+
+        intake_tab = self._build_packages_workspace_page()
 
         self._refresh_archives_button = QPushButton("Refresh archive list")
         self._refresh_archives_button.setObjectName("archive_refresh_button")
