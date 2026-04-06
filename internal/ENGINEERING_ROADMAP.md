@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-05` after startup auto-check and update-cache work
+Last refreshed: `2026-04-05` after startup auto-check, update-cache work, and library guidance extraction
 
 ## Baseline
 
@@ -97,7 +97,7 @@ Priority extractions:
 - Status: first extraction pass done via dedicated row-application helpers inside `MainWindow`; full module split still pending.
 
 2. Update guidance controller
-- Extract `_refresh_selected_mod_update_guidance(...)` into a focused helper/controller module.
+- Status: first extraction pass done via dedicated guidance-state helpers and selected-row context resolution inside `MainWindow`; full controller/module split still pending.
 - Keep button enabling, guidance text, and source-intent overlay logic together but out of the window class.
 
 3. Startup workflow controller
@@ -149,9 +149,9 @@ Add durable checks for:
 
 ## Immediate Next Safe Increment
 
-`update guidance controller extraction`
+`startup workflow controller extraction`
 
 Reason:
-- the first row-presentation extraction pass is already landed
-- `_refresh_selected_mod_update_guidance(...)` is still one of the largest concentrated behavior seams in `main_window.py`
-- extracting guidance logic next will reduce future feature drift more than piling additional status logic into the window class
+- the first row-presentation extraction pass is landed
+- the first guidance-controller extraction pass is landed
+- startup warm-scan and auto-check orchestration is now the next concentrated `MainWindow` workflow seam

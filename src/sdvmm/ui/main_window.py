@@ -295,6 +295,22 @@ class _ResolvedInventoryUpdateRowState:
     version_tooltip: str
 
 
+@dataclass(frozen=True, slots=True)
+class _SelectedInventoryUpdateGuidanceContext:
+    mod_name: str
+    selected_unique_id: str
+    status_text: str
+    status: ModUpdateStatus | None
+    is_enabled: bool
+    is_actionable: bool
+    blocked_reason: str | None
+    overlay_intent: object | None
+    selected_mod: InstalledMod | None
+    effective_intent_state: str | None
+    manual_remote_page_url: str
+    can_manage_intent: bool
+
+
 class _ComboBoxWheelGuard(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if (
@@ -9912,109 +9928,27 @@ class MainWindow(QMainWindow):
         row = self._mods_table.currentRow()
         has_selected_items = bool(self._mods_table.selectedItems())
         if row < 0 or self._mods_table.isRowHidden(row) or not has_selected_items:
-            if self._smapi_troubleshooting_has_actionable_entries():
-                message = "No mod selected. Select a row for mod actions."
-            else:
-                message = "Select an installed mod row to see update guidance."
-            self._set_inventory_blocked_detail_text(None)
-            self._set_open_remote_page_state(
-                enabled=False,
-                tooltip="Select an actionable mod row to open its remote page.",
-            )
-            self._set_find_source_hint_state(
-                enabled=False,
-                tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
-            )
-            self._set_use_suggested_source_state(
-                enabled=False,
-                tooltip=(
-                    "Select a blocked mod row to search Discover and auto-save "
-                    "a high-confidence Nexus or GitHub source."
+            self._reset_inventory_update_guidance_state(
+                message=(
+                    "No mod selected. Select a row for mod actions."
+                    if self._smapi_troubleshooting_has_actionable_entries()
+                    else "Select an installed mod row to see update guidance."
                 ),
+                actionable_targets=actionable_targets,
             )
-            self._refresh_inventory_source_intent_action_state(
-                selected_unique_id=None,
-                selected=False,
-                can_manage_intent=False,
-            )
-            self._inventory_update_guidance_label.setText(message)
-            self._inventory_update_guidance_label.setToolTip(message)
-            self._refresh_prepare_selected_updates_action_state(actionable_targets)
-            self._refresh_inventory_sandbox_sync_action_state()
-            self._refresh_mods_troubleshooting_density()
             return
 
-        name_item = self._mods_table.item(row, 0)
-        unique_id_item = self._mods_table.item(row, 1)
-        status_item = self._mods_table.item(row, 4)
-        if name_item is None:
-            message = "Select an installed mod row to see update guidance."
-            self._set_inventory_blocked_detail_text(None)
-            self._set_open_remote_page_state(
-                enabled=False,
-                tooltip="Select an actionable mod row to open its remote page.",
+        context = self._resolve_selected_inventory_update_guidance_context(row=row)
+        if context is None:
+            self._reset_inventory_update_guidance_state(
+                message="Select an installed mod row to see update guidance.",
+                actionable_targets=actionable_targets,
             )
-            self._set_find_source_hint_state(
-                enabled=False,
-                tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
-            )
-            self._set_use_suggested_source_state(
-                enabled=False,
-                tooltip=(
-                    "Select a blocked mod row to search Discover and auto-save "
-                    "a high-confidence Nexus or GitHub source."
-                ),
-            )
-            self._refresh_inventory_source_intent_action_state(
-                selected_unique_id=None,
-                selected=False,
-                can_manage_intent=False,
-            )
-            self._inventory_update_guidance_label.setText(message)
-            self._inventory_update_guidance_label.setToolTip(message)
-            self._refresh_prepare_selected_updates_action_state(actionable_targets)
-            self._refresh_inventory_sandbox_sync_action_state()
-            self._refresh_mods_troubleshooting_density()
             return
 
-        mod_name = name_item.text().strip() or "Selected mod"
-        selected_unique_id = unique_id_item.text().strip() if unique_id_item is not None else ""
-        status_text = status_item.text().strip() if status_item is not None else ""
-        is_enabled = name_item.data(_ROLE_MOD_IS_ENABLED) is True
-        status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
-        status = status_data if isinstance(status_data, ModUpdateStatus) else None
-        is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
-        blocked_reason = name_item.data(_ROLE_UPDATE_BLOCK_REASON)
-        overlay_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
-        current_inventory = self._current_inventory_or_empty()
-        selected_mod = _inventory_mod_for_folder_text(
-            folder_path_text=name_item.data(_ROLE_MOD_FOLDER_PATH),
-            mods_by_folder_text=_inventory_mods_by_folder_text(current_inventory),
-        )
-        effective_intent_state = _effective_inventory_source_intent_state(
-            saved_intent_state=(
-                getattr(overlay_intent, "intent_state", None)
-                if overlay_intent is not None
-                else None
-            ),
-            mod=selected_mod,
-            inventory=current_inventory,
-        )
-        manual_remote_page_url = _manual_source_remote_page_url(overlay_intent)
-        has_blocked_state = bool(
-            status is not None or (isinstance(blocked_reason, str) and blocked_reason.strip())
-        )
-        can_manage_intent = bool(
-            is_enabled
-            and selected_unique_id
-            and status_text != "not_checked"
-            and not _is_smapi_built_in_unique_id(selected_unique_id)
-            and (overlay_intent is not None or is_actionable or has_blocked_state)
-        )
-
-        if not is_enabled:
+        if not context.is_enabled:
             message = (
-                f"{mod_name}: disabled. "
+                f"{context.mod_name}: disabled. "
                 "Re-enable this sandbox mod row before update and source actions."
             )
             self._set_inventory_blocked_detail_text(None)
@@ -10030,9 +9964,9 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Disabled mod rows do not offer suggested-source actions.",
             )
-        elif status is None and status_text == "not_checked":
+        elif context.status is None and context.status_text == "not_checked":
             message = (
-                f"{mod_name}: run Check updates to evaluate update actionability. "
+                f"{context.mod_name}: run Check updates to evaluate update actionability. "
                 "Open remote page stays disabled until an actionable row is selected."
             )
             self._set_inventory_blocked_detail_text(None)
@@ -10048,10 +9982,13 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Run Check updates and select a blocked row first.",
             )
-        elif effective_intent_state == "manual_source_association" and manual_remote_page_url:
-            manual_provider = getattr(overlay_intent, "manual_provider", None)
+        elif (
+            context.effective_intent_state == "manual_source_association"
+            and context.manual_remote_page_url
+        ):
+            manual_provider = getattr(context.overlay_intent, "manual_provider", None)
             provider_text = f" (provider: {manual_provider})" if manual_provider else ""
-            if is_actionable:
+            if context.is_actionable:
                 if len(actionable_targets) > 1:
                     target_count = len(actionable_targets)
                     message = (
@@ -10060,12 +9997,12 @@ class MainWindow(QMainWindow):
                     )
                 else:
                     message = (
-                        f"{mod_name}: update available via saved manual source. "
+                        f"{context.mod_name}: update available via saved manual source. "
                         "Next step: use Open update page for this selected row. Cinderleaf will start intake watch if needed."
                     )
             else:
                 message = (
-                    f"{mod_name}: manual source association is recorded in saved update-source intent. "
+                    f"{context.mod_name}: manual source association is recorded in saved update-source intent. "
                     "Next step: use Open update page for this selected row."
                 )
             self._set_inventory_blocked_detail_text(
@@ -10074,7 +10011,7 @@ class MainWindow(QMainWindow):
             self._set_open_remote_page_state(
                 enabled=True,
                 tooltip=(
-                    f"Open update page for selected mod: {mod_name}. "
+                    f"Open update page for selected mod: {context.mod_name}. "
                     "Cinderleaf will start intake watch if needed."
                 ),
             )
@@ -10086,15 +10023,15 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="A saved manual source already provides a direct update-page action.",
             )
-        elif effective_intent_state is not None:
-            intent_state = effective_intent_state
+        elif context.effective_intent_state is not None:
+            intent_state = context.effective_intent_state
             manual_provider = (
-                getattr(overlay_intent, "manual_provider", None)
-                if overlay_intent is not None
+                getattr(context.overlay_intent, "manual_provider", None)
+                if context.overlay_intent is not None
                 else None
             )
             message, detail_text, tooltip = _inventory_guidance_for_update_source_intent(
-                mod_name=mod_name,
+                mod_name=context.mod_name,
                 intent_state=intent_state,
                 manual_provider=manual_provider,
             )
@@ -10107,7 +10044,7 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip=(
                     "A saved update-source intent is already recorded for this row."
-                    if overlay_intent is not None
+                    if context.overlay_intent is not None
                     else "This companion row is intentionally not tracked as a standalone update source."
                 ),
             )
@@ -10115,11 +10052,11 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip=(
                     "A saved update-source intent is already recorded for this row."
-                    if overlay_intent is not None
+                    if context.overlay_intent is not None
                     else "This companion row is intentionally not tracked as a standalone update source."
                 ),
             )
-        elif is_actionable:
+        elif context.is_actionable:
             if len(actionable_targets) > 1:
                 target_count = len(actionable_targets)
                 message = (
@@ -10128,13 +10065,13 @@ class MainWindow(QMainWindow):
                 )
             else:
                 message = (
-                    f"{mod_name}: update available. "
+                    f"{context.mod_name}: update available. "
                     "Next step: use Open update page for this selected row. Cinderleaf will start intake watch if needed."
                 )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=True,
-                tooltip=f"Open update page for selected mod: {mod_name}. Cinderleaf will start intake watch if needed.",
+                tooltip=f"Open update page for selected mod: {context.mod_name}. Cinderleaf will start intake watch if needed.",
             )
             self._set_find_source_hint_state(
                 enabled=False,
@@ -10144,19 +10081,21 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip="Actionable update rows already have a direct update-page action.",
             )
-        elif isinstance(blocked_reason, str) and blocked_reason.strip():
+        elif isinstance(context.blocked_reason, str) and context.blocked_reason.strip():
             message = (
-                f"{mod_name}: {blocked_reason.strip()} "
+                f"{context.mod_name}: {context.blocked_reason.strip()} "
                 "Open remote page is unavailable for this row."
             )
             self._set_inventory_blocked_detail_text(
-                _diagnostics_text_for_update_status(status)
+                _diagnostics_text_for_update_status(context.status)
             )
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip=f"Remote-page action unavailable: {blocked_reason.strip()}",
+                tooltip=f"Remote-page action unavailable: {context.blocked_reason.strip()}",
             )
-            can_open_discovery_hint = status is not None and _supports_discovery_source_hint(status)
+            can_open_discovery_hint = (
+                context.status is not None and _supports_discovery_source_hint(context.status)
+            )
             self._set_find_source_hint_state(
                 enabled=can_open_discovery_hint,
                 tooltip=(
@@ -10166,7 +10105,10 @@ class MainWindow(QMainWindow):
                     else "Source hints are available only for blocked source/update rows."
                 ),
             )
-            can_use_suggested_source = status is not None and _supports_auto_source_suggestion(status)
+            can_use_suggested_source = (
+                context.status is not None
+                and _supports_auto_source_suggestion(context.status)
+            )
             self._set_use_suggested_source_state(
                 enabled=can_use_suggested_source,
                 tooltip=(
@@ -10177,7 +10119,7 @@ class MainWindow(QMainWindow):
                 ),
             )
         else:
-            message = f"{mod_name}: no update action is currently available."
+            message = f"{context.mod_name}: no update action is currently available."
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
@@ -10192,9 +10134,56 @@ class MainWindow(QMainWindow):
                 tooltip="Suggested source is available only for blocked rows that still need source repair.",
             )
 
+        self._finalize_inventory_update_guidance_state(
+            message=message,
+            actionable_targets=actionable_targets,
+            selected_unique_id=context.selected_unique_id,
+            selected=True,
+            can_manage_intent=context.can_manage_intent,
+        )
+
+    def _reset_inventory_update_guidance_state(
+        self,
+        *,
+        message: str,
+        actionable_targets: tuple[tuple[str, str, str], ...],
+    ) -> None:
+        self._set_inventory_blocked_detail_text(None)
+        self._set_open_remote_page_state(
+            enabled=False,
+            tooltip="Select an actionable mod row to open its remote page.",
+        )
+        self._set_find_source_hint_state(
+            enabled=False,
+            tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
+        )
+        self._set_use_suggested_source_state(
+            enabled=False,
+            tooltip=(
+                "Select a blocked mod row to search Discover and auto-save "
+                "a high-confidence Nexus or GitHub source."
+            ),
+        )
+        self._finalize_inventory_update_guidance_state(
+            message=message,
+            actionable_targets=actionable_targets,
+            selected_unique_id=None,
+            selected=False,
+            can_manage_intent=False,
+        )
+
+    def _finalize_inventory_update_guidance_state(
+        self,
+        *,
+        message: str,
+        actionable_targets: tuple[tuple[str, str, str], ...],
+        selected_unique_id: str | None,
+        selected: bool,
+        can_manage_intent: bool,
+    ) -> None:
         self._refresh_inventory_source_intent_action_state(
             selected_unique_id=selected_unique_id,
-            selected=True,
+            selected=selected,
             can_manage_intent=can_manage_intent,
         )
         self._inventory_update_guidance_label.setText(message)
@@ -10202,6 +10191,68 @@ class MainWindow(QMainWindow):
         self._refresh_prepare_selected_updates_action_state(actionable_targets)
         self._refresh_inventory_sandbox_sync_action_state()
         self._refresh_mods_troubleshooting_density()
+
+    def _resolve_selected_inventory_update_guidance_context(
+        self,
+        *,
+        row: int,
+    ) -> _SelectedInventoryUpdateGuidanceContext | None:
+        name_item = self._mods_table.item(row, 0)
+        unique_id_item = self._mods_table.item(row, 1)
+        status_item = self._mods_table.item(row, 4)
+        if name_item is None:
+            return None
+
+        mod_name = name_item.text().strip() or "Selected mod"
+        selected_unique_id = unique_id_item.text().strip() if unique_id_item is not None else ""
+        status_text = status_item.text().strip() if status_item is not None else ""
+        is_enabled = name_item.data(_ROLE_MOD_IS_ENABLED) is True
+        status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
+        status = status_data if isinstance(status_data, ModUpdateStatus) else None
+        is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
+        blocked_reason = name_item.data(_ROLE_UPDATE_BLOCK_REASON)
+        blocked_reason_text = (
+            blocked_reason.strip()
+            if isinstance(blocked_reason, str) and blocked_reason.strip()
+            else None
+        )
+        overlay_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
+        current_inventory = self._current_inventory_or_empty()
+        selected_mod = _inventory_mod_for_folder_text(
+            folder_path_text=name_item.data(_ROLE_MOD_FOLDER_PATH),
+            mods_by_folder_text=_inventory_mods_by_folder_text(current_inventory),
+        )
+        effective_intent_state = _effective_inventory_source_intent_state(
+            saved_intent_state=(
+                getattr(overlay_intent, "intent_state", None)
+                if overlay_intent is not None
+                else None
+            ),
+            mod=selected_mod,
+            inventory=current_inventory,
+        )
+        has_blocked_state = bool(status is not None or blocked_reason_text)
+        can_manage_intent = bool(
+            is_enabled
+            and selected_unique_id
+            and status_text != "not_checked"
+            and not _is_smapi_built_in_unique_id(selected_unique_id)
+            and (overlay_intent is not None or is_actionable or has_blocked_state)
+        )
+        return _SelectedInventoryUpdateGuidanceContext(
+            mod_name=mod_name,
+            selected_unique_id=selected_unique_id,
+            status_text=status_text,
+            status=status,
+            is_enabled=is_enabled,
+            is_actionable=is_actionable,
+            blocked_reason=blocked_reason_text,
+            overlay_intent=overlay_intent,
+            selected_mod=selected_mod,
+            effective_intent_state=effective_intent_state,
+            manual_remote_page_url=_manual_source_remote_page_url(overlay_intent),
+            can_manage_intent=can_manage_intent,
+        )
 
     def _resolve_inventory_update_source_intent(self, unique_id: str):
         if not unique_id.strip():
