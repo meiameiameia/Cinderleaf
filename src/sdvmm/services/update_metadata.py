@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 import json
 import os
@@ -64,6 +65,7 @@ UNEXPECTED_PROVIDER_RESPONSE = "unexpected_provider_response"
 UNSUPPORTED_PROVIDER = "unsupported_provider"
 INCOMPLETE_MANUAL_SOURCE_ASSOCIATION = "incomplete_manual_source_association"
 DEFAULT_REMOTE_METADATA_CACHE_FRESHNESS_SECONDS = 900.0
+DEFAULT_REMOTE_METADATA_PREFETCH_WORKERS = 6
 
 
 class MetadataFetchError(ValueError):
@@ -359,6 +361,13 @@ class _UpdateCheckDiagnosticsAccumulator:
 _RemotePayloadCacheValue = _CachedRemotePayload | MetadataFetchError
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedModUpdateCheck:
+    mod: InstalledMod
+    links: tuple[RemoteModLink, ...]
+    resolution_issues: tuple[LinkResolutionIssue, ...]
+
+
 def check_updates_for_inventory(
     inventory: ModsInventory,
     *,
@@ -398,21 +407,37 @@ def check_updates_for_inventory_with_cache(
         now_epoch_seconds=resolved_now,
     )
     diagnostics = _UpdateCheckDiagnosticsAccumulator(mod_count=len(inventory.mods))
+    resolved_checks = tuple(
+        _resolve_mod_update_check(
+            mod,
+            overlay_by_unique_id.get(canonicalize_unique_id(mod.unique_id)),
+        )
+        for mod in inventory.mods
+    )
+    prefetched_remote_payloads = _prefetch_primary_remote_payloads(
+        resolved_checks=resolved_checks,
+        fetcher=active_fetcher,
+        timeout_seconds=timeout_seconds,
+        nexus_api_key=nexus_api_key,
+        cache_write_epoch_seconds=resolved_now,
+        remote_payload_cache=remote_payload_cache,
+        diagnostics=diagnostics,
+    )
 
     statuses: list[ModUpdateStatus] = []
-    for mod in inventory.mods:
+    for resolved_check in resolved_checks:
         statuses.append(
             _check_single_mod(
-                mod=mod,
+                mod=resolved_check.mod,
+                links=resolved_check.links,
+                resolution_issues=resolved_check.resolution_issues,
                 fetcher=active_fetcher,
                 timeout_seconds=timeout_seconds,
                 nexus_api_key=nexus_api_key,
                 cache_write_epoch_seconds=resolved_now,
                 remote_payload_cache=remote_payload_cache,
+                prefetched_remote_payloads=prefetched_remote_payloads,
                 diagnostics=diagnostics,
-                update_source_intent=overlay_by_unique_id.get(
-                    canonicalize_unique_id(mod.unique_id)
-                ),
             )
         )
 
@@ -556,20 +581,16 @@ def resolve_remote_link_candidates(
 def _check_single_mod(
     mod: InstalledMod,
     *,
+    links: tuple[RemoteModLink, ...],
+    resolution_issues: tuple[LinkResolutionIssue, ...],
     fetcher: JsonMetadataFetcher,
     timeout_seconds: float,
     nexus_api_key: str | None,
     cache_write_epoch_seconds: float,
     remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
+    prefetched_remote_payloads: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
     diagnostics: _UpdateCheckDiagnosticsAccumulator,
-    update_source_intent: UpdateSourceIntentRecord | None,
 ) -> ModUpdateStatus:
-    manual_resolution = _resolve_manual_source_override(update_source_intent)
-    if manual_resolution is None:
-        links, resolution_issues = resolve_remote_link_candidates(mod.update_keys)
-    else:
-        links = manual_resolution.links
-        resolution_issues = manual_resolution.issues
     base_status = ModUpdateStatus(
         unique_id=mod.unique_id,
         name=mod.name,
@@ -635,6 +656,7 @@ def _check_single_mod(
                 nexus_api_key=nexus_api_key,
                 cache_write_epoch_seconds=cache_write_epoch_seconds,
                 remote_payload_cache=remote_payload_cache,
+                prefetched_remote_payloads=prefetched_remote_payloads,
                 diagnostics=diagnostics,
             )
         except MetadataFetchError as exc:
@@ -731,10 +753,17 @@ def _fetch_payload_with_cache(
     nexus_api_key: str | None,
     cache_write_epoch_seconds: float,
     remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
+    prefetched_remote_payloads: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
     diagnostics: _UpdateCheckDiagnosticsAccumulator,
 ) -> dict[str, Any]:
     cache_key = _remote_payload_cache_key(link, nexus_api_key)
     diagnostics.note_remote_target(cache_key)
+    prefetched = prefetched_remote_payloads.pop(cache_key, None)
+    if prefetched is not None:
+        remote_payload_cache[cache_key] = prefetched
+        if isinstance(prefetched, MetadataFetchError):
+            raise MetadataFetchError(prefetched.reason, prefetched.message)
+        return prefetched.payload
     cached = remote_payload_cache.get(cache_key)
     if cached is not None:
         if isinstance(cached, MetadataFetchError):
@@ -801,6 +830,100 @@ def _seed_remote_payload_cache(
             source="persisted",
         )
     return seeded
+
+
+def _resolve_mod_update_check(
+    mod: InstalledMod,
+    update_source_intent: UpdateSourceIntentRecord | None,
+) -> _ResolvedModUpdateCheck:
+    manual_resolution = _resolve_manual_source_override(update_source_intent)
+    if manual_resolution is None:
+        links, resolution_issues = resolve_remote_link_candidates(mod.update_keys)
+    else:
+        links = manual_resolution.links
+        resolution_issues = manual_resolution.issues
+    return _ResolvedModUpdateCheck(
+        mod=mod,
+        links=links,
+        resolution_issues=resolution_issues,
+    )
+
+
+def _prefetch_primary_remote_payloads(
+    *,
+    resolved_checks: tuple[_ResolvedModUpdateCheck, ...],
+    fetcher: JsonMetadataFetcher,
+    timeout_seconds: float,
+    nexus_api_key: str | None,
+    cache_write_epoch_seconds: float,
+    remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
+    diagnostics: _UpdateCheckDiagnosticsAccumulator,
+) -> dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue]:
+    requests: dict[_RemotePayloadCacheKey, tuple[MetadataProviderAdapter, RemoteModLink]] = {}
+    for resolved_check in resolved_checks:
+        if not resolved_check.links:
+            continue
+        link = resolved_check.links[0]
+        cache_key = _remote_payload_cache_key(link, nexus_api_key)
+        diagnostics.note_remote_target(cache_key)
+        if cache_key in remote_payload_cache or cache_key in requests:
+            continue
+        provider = _PROVIDERS_BY_NAME.get(link.provider)
+        if provider is None:
+            continue
+        requests[cache_key] = (provider, link)
+
+    if len(requests) < 2:
+        return {}
+
+    max_workers = min(DEFAULT_REMOTE_METADATA_PREFETCH_WORKERS, len(requests))
+    prefetched: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue] = {}
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sdvmm-update") as executor:
+        future_to_cache_key = {}
+        for cache_key, (provider, link) in requests.items():
+            diagnostics.live_fetches += 1
+            future_to_cache_key[
+                executor.submit(
+                    _fetch_remote_payload_for_prefetch,
+                    provider=provider,
+                    link=link,
+                    fetcher=fetcher,
+                    timeout_seconds=timeout_seconds,
+                    nexus_api_key=nexus_api_key,
+                    cache_write_epoch_seconds=cache_write_epoch_seconds,
+                )
+            ] = cache_key
+
+        for future in as_completed(future_to_cache_key):
+            cache_key = future_to_cache_key[future]
+            try:
+                prefetched[cache_key] = future.result()
+            except MetadataFetchError as exc:
+                prefetched[cache_key] = MetadataFetchError(exc.reason, exc.message)
+
+    return prefetched
+
+
+def _fetch_remote_payload_for_prefetch(
+    *,
+    provider: MetadataProviderAdapter,
+    link: RemoteModLink,
+    fetcher: JsonMetadataFetcher,
+    timeout_seconds: float,
+    nexus_api_key: str | None,
+    cache_write_epoch_seconds: float,
+) -> _CachedRemotePayload:
+    payload = provider.fetch_payload(
+        link,
+        fetcher=fetcher,
+        timeout_seconds=timeout_seconds,
+        nexus_api_key=nexus_api_key,
+    )
+    return _CachedRemotePayload(
+        payload=payload,
+        fetched_at_epoch_seconds=cache_write_epoch_seconds,
+        source="live",
+    )
 
 
 def _build_persisted_remote_metadata_cache(

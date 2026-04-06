@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Mapping
 
 import pytest
@@ -65,6 +66,46 @@ class StubFetcher:
             raise MetadataFetchError(REQUEST_FAILURE, f"no payload for {url}")
 
         return payload
+
+
+class BlockingFetcher(StubFetcher):
+    def __init__(self, payloads: dict[str, dict[str, object]], *, expected_parallel_calls: int) -> None:
+        super().__init__(payloads=payloads)
+        self._expected_parallel_calls = expected_parallel_calls
+        self._lock = threading.Lock()
+        self._all_started = threading.Event()
+        self._release = threading.Event()
+        self._entered_count = 0
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    def wait_for_parallel_start(self, timeout_seconds: float) -> bool:
+        return self._all_started.wait(timeout_seconds)
+
+    def release(self) -> None:
+        self._release.set()
+
+    def fetch_json(
+        self,
+        url: str,
+        timeout_seconds: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, object]:
+        with self._lock:
+            self._entered_count += 1
+            self._in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self._in_flight)
+            if self._entered_count >= self._expected_parallel_calls:
+                self._all_started.set()
+        if not self._all_started.wait(timeout_seconds):
+            raise AssertionError("Expected update fetches to overlap before release.")
+        if not self._release.wait(timeout_seconds):
+            raise AssertionError("Timed out waiting to release blocking fetches.")
+        try:
+            return super().fetch_json(url, timeout_seconds, headers=headers)
+        finally:
+            with self._lock:
+                self._in_flight -= 1
 
 
 def test_compare_versions_derives_expected_ordering() -> None:
@@ -453,6 +494,50 @@ def test_stale_persisted_remote_metadata_cache_refetches_and_refreshes_timestamp
     assert len(updated_cache.entries) == 1
     assert updated_cache.entries[0].fetched_at_epoch_seconds >= 100.0
     assert updated_cache.entries[0].payload == {"tag_name": "v1.2.0"}
+
+
+def test_multiple_unique_cold_remote_targets_are_prefetched_concurrently() -> None:
+    mods = (
+        _mod(unique_id="Sample.One", version="1.0.0", update_keys=("GitHub:owner/repo-one",)),
+        _mod(unique_id="Sample.Two", version="1.0.0", update_keys=("GitHub:owner/repo-two",)),
+        _mod(unique_id="Sample.Three", version="1.0.0", update_keys=("GitHub:owner/repo-three",)),
+    )
+    inventory = _inventory(mods)
+    fetcher = BlockingFetcher(
+        payloads={
+            "https://api.github.com/repos/owner/repo-one/releases/latest": {"tag_name": "v1.1.0"},
+            "https://api.github.com/repos/owner/repo-two/releases/latest": {"tag_name": "v1.1.0"},
+            "https://api.github.com/repos/owner/repo-three/releases/latest": {"tag_name": "v1.1.0"},
+        },
+        expected_parallel_calls=2,
+    )
+
+    release_thread = threading.Thread(
+        target=lambda: (
+            fetcher.wait_for_parallel_start(1.0) and fetcher.release()
+        ),
+        daemon=True,
+    )
+    release_thread.start()
+
+    report = check_updates_for_inventory(
+        inventory,
+        fetcher=fetcher,
+        nexus_api_key="test-api-key",
+    )
+    release_thread.join(timeout=1.0)
+
+    assert [status.state for status in report.statuses] == [
+        "update_available",
+        "update_available",
+        "update_available",
+    ]
+    assert fetcher.max_in_flight >= 2
+    assert len(fetcher.calls) == 3
+    assert report.diagnostics is not None
+    assert report.diagnostics.unique_remote_targets == 3
+    assert report.diagnostics.live_fetches == 3
+    assert report.diagnostics.in_run_cache_hits == 0
 
 
 def test_missing_update_key_sets_typed_no_link_diagnostic() -> None:

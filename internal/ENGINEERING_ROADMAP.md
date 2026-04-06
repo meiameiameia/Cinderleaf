@@ -2,11 +2,11 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-05` after update-cache work, library guidance extraction, startup workflow cleanup, action-state extraction, and startup chain extraction
+Last refreshed: `2026-04-06` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, and cold update-check concurrency
 
 ## Baseline
 
-- Full unit baseline: `692 passed`
+- Full unit baseline: `699 passed`
 - Largest Python files:
   - `src/sdvmm/ui/main_window.py`: `13483` lines
   - `src/sdvmm/app/shell_service.py`: `10801` lines
@@ -35,11 +35,9 @@ The main engineering risks are:
 - `main_window.py` is still the largest coupling point in the repo.
 - `shell_service.py` still owns too many unrelated workflows.
 
-2. Sequential update-check throughput
-- `src/sdvmm/services/update_metadata.py` currently checks updates by iterating `inventory.mods` one by one.
-- `_check_single_mod(...)` fetches remote metadata serially.
-- There is no shared in-memory metadata cache for duplicate links in the same run.
-- There is no persisted freshness cache for startup or profile switches.
+2. Cold update-check throughput
+- `src/sdvmm/services/update_metadata.py` now deduplicates duplicate links in one run, persists fresh remote metadata between runs, and prefetches cold primary remote targets concurrently.
+- The remaining user-facing speed risk is now cold-start network latency for large sets of genuinely unique providers and the lack of lightweight freshness UX, not the old fully serial loop.
 
 3. UI state orchestration density
 - `Library` state, update guidance, source-intent actions, grouped rows, and profile interactions are still heavily concentrated in `MainWindow`.
@@ -71,6 +69,7 @@ Status:
 - persisted update freshness cache: done
 - startup mod update auto-check for startup-scanned contexts: done
 - measured network/update instrumentation: done
+- bounded cold-path primary remote prefetch concurrency: done
 
 Next slices:
 
@@ -82,9 +81,9 @@ Next slices:
 - Validate and tune startup update-check behavior on the real desktop workflow.
 - Ensure status text and source switching feel calm when startup checks finish.
 
-3. Optional concurrency only if diagnostics justify it
-- Use the new diagnostics fields to confirm whether cold update checks are still bottlenecked by serial remote fetches.
-- Only consider bounded concurrency after cache reuse and cache hit rates are understood.
+3. Update-check diagnostics surfacing
+- Decide whether any of the diagnostics should be exposed outside logs/dev surfaces without cluttering `Library`.
+- Prefer calm troubleshooting affordances over another noisy status column.
 
 ### Phase 2: Library UI Decomposition
 
@@ -154,8 +153,6 @@ Add durable checks for:
 `layout/build decomposition audit`
 
 Reason:
-- the first row-presentation extraction pass is landed
-- the first guidance-controller extraction pass is landed
-- the second startup-workflow extraction pass is landed
-- the first action-state extraction pass is landed
-- `MainWindow.__init__` and `_build_layout` are now the largest remaining concentrated UI setup seams
+- the update-throughput roadmap work is now materially landed
+- `MainWindow.__init__` and `_build_layout` remain the largest concentrated UI setup seams
+- the next anti-drift win is reducing UI setup concentration before starting another product wave
