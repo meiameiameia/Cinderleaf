@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-06` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, cold update-check concurrency, and eight layout/build extraction passes
+Last refreshed: `2026-04-06` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, cold update-check concurrency, and nine layout/build extraction passes
 
 ## Baseline
 
@@ -108,7 +108,7 @@ Priority extractions:
 - Reduce profile, sandbox-sync, and selected-row action gating code inside the window class.
 
 5. Layout/build decomposition
-- Status: first extraction passes done via dedicated setup workspace surface, inventory controls tabs, and packages, compare, discovery, archive, install, and recovery workspace builders inside `MainWindow`; deeper `__init__` and `_build_layout` decomposition is still pending.
+- Status: first extraction passes done via dedicated setup workspace surface, inventory controls tabs, workspace tab assembly, and packages, compare, discovery, archive, install, and recovery workspace builders inside `MainWindow`; deeper `__init__` and `_build_layout` decomposition is still pending.
 - Keep carving out coherent page/control builders instead of moving random widget lines around.
 
 ### Phase 3: Service Layer Decomposition
@@ -158,6 +158,6 @@ Add durable checks for:
 
 Reason:
 - the update-throughput roadmap work is now materially landed
-- the first setup-surface, inventory-controls, and packages/compare/discovery/archive/install/recovery workspace extraction passes are landed
+- the first setup-surface, inventory-controls, workspace-tab assembly, and packages/compare/discovery/archive/install/recovery workspace extraction passes are landed
 - `MainWindow.__init__` and `_build_layout` remain the largest concentrated UI setup seams
-- the next anti-drift win is deeper layout/setup decomposition around the remaining shared shell construction inside `_build_layout`, before starting another product wave
+- the next anti-drift win is deeper layout/setup decomposition around the remaining root-shell and top-context construction inside `_build_layout`, before starting another product wave

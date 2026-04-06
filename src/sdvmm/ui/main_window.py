@@ -3471,6 +3471,49 @@ class MainWindow(QMainWindow):
         self._recovery_page = recovery_page
         return recovery_page
 
+    def _build_workspace_tabs(
+        self,
+        *,
+        setup_scroll: QWidget,
+        inventory_controls_tabs: QTabWidget,
+        flow_hint_label: QLabel,
+    ) -> QTabWidget:
+        context_tabs = QTabWidget()
+        context_tabs.setObjectName("workspace_nav_tabs")
+        context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        context_tabs.setUsesScrollButtons(False)
+        context_tabs.setDocumentMode(True)
+        context_tabs.setTabPosition(QTabWidget.TabPosition.West)
+        context_tabs.tabBar().setObjectName("workspace_nav_tabbar")
+        context_tabs.tabBar().hide()
+        self._context_tabs = context_tabs
+
+        mods_page = self._build_mods_workspace_page(
+            inventory_controls_tabs=inventory_controls_tabs,
+            flow_hint_label=flow_hint_label,
+        )
+        self._mods_page = mods_page
+
+        setup_page = self._build_page_shell(
+            object_name="setup_workspace_page",
+            eyebrow="Configure once, reuse everywhere",
+            title="Setup and migration",
+            subtitle="Set paths once. Backup, inspect, and restore stay available as secondary tools when you need them.",
+            body_widget=setup_scroll,
+        )
+        self._setup_scroll = setup_scroll
+        self._setup_page = setup_page
+
+        context_tabs.addTab(mods_page, "Library")
+        context_tabs.addTab(setup_page, "Setup")
+        context_tabs.addTab(self._build_packages_workspace_page(), "Packages")
+        context_tabs.addTab(self._build_install_workspace_page(), "Install")
+        context_tabs.addTab(self._build_discovery_workspace_page(), "Discover")
+        context_tabs.addTab(self._build_compare_workspace_page(), "Compare")
+        context_tabs.addTab(self._build_archive_workspace_page(), "Archive")
+        context_tabs.addTab(self._build_recovery_workspace_page(), "Recovery")
+        return context_tabs
+
     def _build_layout(self) -> None:
         container = QWidget()
         container.setObjectName("app_shell_root")
@@ -3497,49 +3540,11 @@ class MainWindow(QMainWindow):
 
         inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
 
-        context_tabs = QTabWidget()
-        context_tabs.setObjectName("workspace_nav_tabs")
-        context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        context_tabs.setUsesScrollButtons(False)
-        context_tabs.setDocumentMode(True)
-        context_tabs.setTabPosition(QTabWidget.TabPosition.West)
-        context_tabs.tabBar().setObjectName("workspace_nav_tabbar")
-        context_tabs.tabBar().hide()
-        self._context_tabs = context_tabs
-        mods_page = self._build_mods_workspace_page(
+        context_tabs = self._build_workspace_tabs(
+            setup_scroll=setup_scroll,
             inventory_controls_tabs=inventory_controls_tabs,
             flow_hint_label=flow_hint_label,
         )
-        self._mods_page = mods_page
-
-        discovery_page = self._build_discovery_workspace_page()
-
-        compare_tab = self._build_compare_workspace_page()
-
-        intake_tab = self._build_packages_workspace_page()
-
-        archive_page = self._build_archive_workspace_page()
-
-        review_page = self._build_install_workspace_page()
-
-        recovery_tab = self._build_recovery_workspace_page()
-        setup_page = self._build_page_shell(
-            object_name="setup_workspace_page",
-            eyebrow="Configure once, reuse everywhere",
-            title="Setup and migration",
-            subtitle="Set paths once. Backup, inspect, and restore stay available as secondary tools when you need them.",
-            body_widget=setup_scroll,
-        )
-        self._setup_scroll = setup_scroll
-        self._setup_page = setup_page
-        context_tabs.addTab(mods_page, "Library")
-        context_tabs.addTab(setup_page, "Setup")
-        context_tabs.addTab(intake_tab, "Packages")
-        context_tabs.addTab(review_page, "Install")
-        context_tabs.addTab(discovery_page, "Discover")
-        context_tabs.addTab(compare_tab, "Compare")
-        context_tabs.addTab(archive_page, "Archive")
-        context_tabs.addTab(recovery_tab, "Recovery")
 
         workspace_shell = QFrame()
         workspace_shell.setObjectName("workspace_shell_frame")
