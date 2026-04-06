@@ -3231,6 +3231,81 @@ class MainWindow(QMainWindow):
         self._discovery_page = discovery_page
         return discovery_page
 
+    def _build_archive_workspace_page(self) -> QWidget:
+        self._refresh_archives_button = QPushButton("Refresh archive list")
+        self._refresh_archives_button.setObjectName("archive_refresh_button")
+        self._refresh_archives_button.clicked.connect(self._on_refresh_archives)
+        _set_primary_button_style(self._refresh_archives_button)
+        self._cleanup_archives_button = QPushButton("Cleanup older archives")
+        self._cleanup_archives_button.setObjectName("archive_cleanup_button")
+        self._cleanup_archives_button.clicked.connect(self._on_cleanup_archives)
+        self._cleanup_archives_button.setToolTip(
+            f"Keep latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} archived copies per mod and "
+            "permanently delete older copies after confirmation."
+        )
+        _set_danger_button_style(self._cleanup_archives_button)
+        self._cleanup_archives_button.setEnabled(False)
+        self._restore_archived_button = QPushButton("Restore archived copy")
+        self._restore_archived_button.setObjectName("archive_restore_button")
+        self._restore_archived_button.clicked.connect(self._on_restore_selected_archive)
+        _set_secondary_button_style(self._restore_archived_button)
+        self._restore_archived_button.setEnabled(False)
+        self._delete_archived_button = QPushButton("Delete archived copy")
+        self._delete_archived_button.setObjectName("archive_delete_button")
+        self._delete_archived_button.clicked.connect(self._on_delete_selected_archive)
+        _set_danger_button_style(self._delete_archived_button)
+        self._delete_archived_button.setEnabled(False)
+        archive_tab = ArchiveTabSurface(
+            archive_filter_input=self._archive_filter_input,
+            archive_filter_stats_label=self._archive_filter_stats_label,
+            archive_state_hint_label=self._archive_state_hint_label,
+            archive_table=self._archive_table,
+            refresh_archives_button=self._refresh_archives_button,
+            cleanup_archives_button=self._cleanup_archives_button,
+            restore_archived_button=self._restore_archived_button,
+            delete_archived_button=self._delete_archived_button,
+        )
+        self._archive_table.itemSelectionChanged.connect(self._on_archive_selection_changed)
+        archive_page_body = QWidget()
+        archive_page_body.setObjectName("archive_workspace_body")
+        archive_page_layout = QVBoxLayout(archive_page_body)
+        archive_page_layout.setContentsMargins(0, 0, 0, 0)
+        archive_page_layout.setSpacing(6)
+        archive_intro_label = QLabel(
+            "Browse archived folders from real and sandbox workflows. Restoring or deleting archived copies still requires an explicit action."
+        )
+        archive_intro_label.setObjectName("archive_intro_label")
+        archive_intro_label.setWordWrap(True)
+        _set_auxiliary_label_style(archive_intro_label)
+        archive_page_layout.addWidget(archive_tab)
+        archive_output_group = QGroupBox("Archive detail")
+        archive_output_group.setObjectName("archive_output_group")
+        archive_output_group.setFlat(True)
+        archive_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        archive_output_layout = QVBoxLayout(archive_output_group)
+        archive_output_layout.setContentsMargins(8, 6, 8, 6)
+        archive_output_layout.setSpacing(4)
+        archive_output_layout.addWidget(self._archive_output_box)
+        archive_page_layout.addWidget(archive_output_group)
+        self._archive_results_group = archive_tab.results_group
+        self._archive_empty_state_label = archive_tab.empty_state_label
+        self._archive_output_group = archive_output_group
+        archive_output_group.setVisible(False)
+        archive_page_layout.addStretch(1)
+        archive_page = self._build_page_shell(
+            object_name="archive_workspace_page",
+            eyebrow="Reversible history",
+            title="Archive",
+            subtitle="Browse archived folders from live and sandbox workflows. Restore and delete stay explicit.",
+            body_widget=archive_page_body,
+            scroll_body=True,
+        )
+        self._archive_page = archive_page
+        return archive_page
+
     def _build_layout(self) -> None:
         container = QWidget()
         container.setObjectName("app_shell_root")
@@ -3278,78 +3353,7 @@ class MainWindow(QMainWindow):
 
         intake_tab = self._build_packages_workspace_page()
 
-        self._refresh_archives_button = QPushButton("Refresh archive list")
-        self._refresh_archives_button.setObjectName("archive_refresh_button")
-        self._refresh_archives_button.clicked.connect(self._on_refresh_archives)
-        _set_primary_button_style(self._refresh_archives_button)
-        self._cleanup_archives_button = QPushButton("Cleanup older archives")
-        self._cleanup_archives_button.setObjectName("archive_cleanup_button")
-        self._cleanup_archives_button.clicked.connect(self._on_cleanup_archives)
-        self._cleanup_archives_button.setToolTip(
-            f"Keep latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} archived copies per mod and "
-            "permanently delete older copies after confirmation."
-        )
-        _set_danger_button_style(self._cleanup_archives_button)
-        self._cleanup_archives_button.setEnabled(False)
-        self._restore_archived_button = QPushButton("Restore archived copy")
-        self._restore_archived_button.setObjectName("archive_restore_button")
-        self._restore_archived_button.clicked.connect(self._on_restore_selected_archive)
-        _set_secondary_button_style(self._restore_archived_button)
-        self._restore_archived_button.setEnabled(False)
-        self._delete_archived_button = QPushButton("Delete archived copy")
-        self._delete_archived_button.setObjectName("archive_delete_button")
-        self._delete_archived_button.clicked.connect(self._on_delete_selected_archive)
-        _set_danger_button_style(self._delete_archived_button)
-        self._delete_archived_button.setEnabled(False)
-        archive_tab = ArchiveTabSurface(
-            archive_filter_input=self._archive_filter_input,
-            archive_filter_stats_label=self._archive_filter_stats_label,
-            archive_state_hint_label=self._archive_state_hint_label,
-            archive_table=self._archive_table,
-            refresh_archives_button=self._refresh_archives_button,
-            cleanup_archives_button=self._cleanup_archives_button,
-            restore_archived_button=self._restore_archived_button,
-            delete_archived_button=self._delete_archived_button,
-        )
-        self._archive_table.itemSelectionChanged.connect(self._on_archive_selection_changed)
-        archive_page = QWidget()
-        archive_page.setObjectName("archive_workspace_body")
-        archive_page_layout = QVBoxLayout(archive_page)
-        archive_page_layout.setContentsMargins(0, 0, 0, 0)
-        archive_page_layout.setSpacing(6)
-        archive_intro_label = QLabel(
-            "Browse archived folders from real and sandbox workflows. Restoring or deleting archived copies still requires an explicit action."
-        )
-        archive_intro_label.setObjectName("archive_intro_label")
-        archive_intro_label.setWordWrap(True)
-        _set_auxiliary_label_style(archive_intro_label)
-        archive_page_layout.addWidget(archive_tab)
-        archive_output_group = QGroupBox("Archive detail")
-        archive_output_group.setObjectName("archive_output_group")
-        archive_output_group.setFlat(True)
-        archive_output_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        archive_output_layout = QVBoxLayout(archive_output_group)
-        archive_output_layout.setContentsMargins(8, 6, 8, 6)
-        archive_output_layout.setSpacing(4)
-        archive_output_layout.addWidget(self._archive_output_box)
-        archive_page_layout.addWidget(archive_output_group)
-        self._archive_results_group = archive_tab.results_group
-        self._archive_empty_state_label = archive_tab.empty_state_label
-        self._archive_output_group = archive_output_group
-        archive_output_group.setVisible(False)
-        archive_page_layout.addStretch(1)
-        archive_page = self._build_page_shell(
-            object_name="archive_workspace_page",
-            eyebrow="Reversible history",
-            title="Archive",
-            subtitle="Browse archived folders from live and sandbox workflows. Restore and delete stay explicit.",
-            body_widget=archive_page,
-            scroll_body=True,
-        )
-        self._archive_page = archive_page
+        archive_page = self._build_archive_workspace_page()
 
         plan_install_button = QPushButton("Plan install")
         plan_install_button.setObjectName("plan_install_plan_button")
