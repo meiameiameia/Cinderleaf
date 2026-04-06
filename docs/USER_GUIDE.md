@@ -1,6 +1,6 @@
 # Cinderleaf User Manual
 
-This guide is the detailed, player-friendly walkthrough for the `1.2.0` release line.
+This guide is the detailed, player-friendly walkthrough for the `1.3.0` release line.
 
 If you just want the short version first, start with the main [README](../README.md).
 
@@ -51,9 +51,17 @@ Use it when you want to:
 - scan what is currently installed
 - browse your installed mods
 - check update guidance
-- look at source intent and promotion context
+- look at source intent, type, and promotion context
 - archive or restore the selected mod
 - work with real or sandbox profiles
+
+Some of the calmer `1.3.0` improvements live here:
+
+- grouped multi-folder mods can stay visible as one logical entry more often
+- the old `Folder` column has been replaced with a clearer `Type` column
+- source state is easier to read through statuses like `Missing source`, `Needs API key`, `Built-in`, and `No tracking`
+- manual-source mods can use the same update-page workflow as automatic-source mods
+- checked update status now survives normal context switches more cleanly, and startup can warm update status for scanned inventories automatically
 
 `SMAPI` is the companion tab for SMAPI-specific checks and log review.
 
@@ -78,9 +86,9 @@ Important note:
 
 ## 4. Packages
 
-`Packages` is where downloaded zip files come in.
+`Packages` is where downloaded archive packages come in.
 
-Instead of browsing for one zip at a time, you point Cinderleaf at one or two download folders and let it watch them.
+Instead of browsing for one archive at a time, you point Cinderleaf at one or two download folders and let it watch them.
 
 Typical flow:
 
@@ -88,15 +96,19 @@ Typical flow:
 2. Start intake watch.
 3. Let Cinderleaf detect zips that are already there or appear later.
 4. Filter the queue by name or status text.
-5. Check the packages you want.
-6. Choose `Compare against`.
-7. Use `Open Install` to send that batch into `Install`.
+5. Optionally filter the queue to watched path 1, watched path 2, or both together.
+6. Use `Select all` or `Deselect all` when you want to act on only the rows currently visible under that filter.
+7. Check the packages you want.
+8. Choose `Compare against`.
+9. Use `Open Install` to send that batch into `Install`.
 
 The queue status helps you understand what Cinderleaf sees, for example:
 
 - not installed in the selected target
 - same version in the selected target
 - newer than the selected target
+
+Supported package formats now include normal `.zip` files and `.rar` archives in the portable build.
 
 `Packages` is still a review step. It does not write anything by itself.
 
@@ -117,12 +129,14 @@ Use it to:
 - see dependency-aware batch planning results
 - apply the install only after the plan looks right
 
-One helpful part of the `1.2.0` workflow is batch dependency handling:
+One helpful part of the current workflow is batch dependency handling:
 
 - if a needed dependency is already in the same staged batch, the plan can count it
 - if that staged dependency is blocked or invalid, it does not count as safe
 
 The plan stays read-only until Cinderleaf says it is ready to execute.
+
+After a successful install, the Install page now leaves clearer success feedback instead of staying on stale planning text.
 
 ## 6. Profiles
 
@@ -217,6 +231,27 @@ Today that means:
 - supported mod config artifacts can be restored
 - exported real and sandbox profile catalogs can be restored
 - Stardew save files are still a manual restore step
+
+## 10a. Fixing missing sources and update tracking
+
+If a mod is missing tracking information, `Library` now gives you more guidance than the older `1.2.0` flow did.
+
+Useful states include:
+
+- `Missing source`
+- `Needs API key`
+- `Built-in`
+- `No tracking`
+
+If the app already has a strong hint, you can use:
+
+- `Find source hint`
+- `Use suggested source`
+- `Test source`
+
+Important note:
+
+- `SMAPI.*` built-ins like bundled helpers are not normal missing-source mods and should not be treated like broken tracking rows
 
 ## 11. Troubleshooting
 
