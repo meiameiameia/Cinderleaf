@@ -3118,6 +3118,65 @@ class MainWindow(QMainWindow):
         self._packages_page = intake_page
         return intake_page
 
+    def _build_compare_workspace_page(self) -> QWidget:
+        compare_tab = QWidget()
+        compare_tab.setObjectName("compare_workspace_body")
+        compare_layout = QVBoxLayout(compare_tab)
+        compare_layout.setContentsMargins(0, 0, 0, 0)
+        compare_layout.setSpacing(10)
+        compare_actions_widget = QWidget()
+        compare_actions_layout = QHBoxLayout(compare_actions_widget)
+        compare_actions_layout.setContentsMargins(0, 0, 0, 0)
+        compare_actions_layout.setSpacing(10)
+        compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
+        compare_actions_layout.addWidget(_context_caption("Show"))
+        compare_actions_layout.addWidget(self._compare_category_filter_combo)
+        compare_actions_layout.addWidget(self._compare_copy_identity_button)
+        compare_actions_layout.addStretch(1)
+        compare_layout.addWidget(compare_actions_widget)
+        compare_layout.addWidget(self._compare_summary_label)
+        compare_layout.addWidget(self._compare_category_help_label)
+        self._compare_results_table.setVisible(False)
+        compare_results_group = QGroupBox("Compare results")
+        compare_results_group.setObjectName("compare_results_group")
+        compare_results_layout = QVBoxLayout(compare_results_group)
+        compare_results_layout.setContentsMargins(12, 10, 12, 12)
+        compare_results_layout.setSpacing(6)
+        compare_results_layout.addWidget(self._compare_results_table)
+        compare_layout.addWidget(compare_results_group, 1)
+        compare_output_group = QGroupBox("Compare detail")
+        compare_output_group.setObjectName("compare_output_group")
+        compare_output_group.setFlat(True)
+        compare_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        compare_output_layout = QVBoxLayout(compare_output_group)
+        compare_output_layout.setContentsMargins(8, 6, 8, 6)
+        compare_output_layout.setSpacing(4)
+        compare_output_layout.addWidget(self._compare_output_box)
+        compare_layout.addWidget(compare_output_group)
+        self._compare_output_group = compare_output_group
+        compare_output_group.setVisible(False)
+        compare_layout.addStretch(1)
+        self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
+        self._compare_category_filter_combo.currentIndexChanged.connect(
+            self._apply_compare_results_filter
+        )
+        self._compare_copy_identity_button.clicked.connect(
+            self._on_copy_compare_row_identity
+        )
+        compare_page = self._build_page_shell(
+            object_name="compare_tab",
+            eyebrow="Read-only drift orientation",
+            title="Compare real and sandbox",
+            subtitle="Check actionable drift before you promote sandbox changes into the live Mods folder.",
+            body_widget=compare_tab,
+            scroll_body=True,
+        )
+        self._compare_page = compare_page
+        return compare_page
+
     def _build_layout(self) -> None:
         container = QWidget()
         container.setObjectName("app_shell_root")
@@ -3211,62 +3270,7 @@ class MainWindow(QMainWindow):
         )
         self._discovery_page = discovery_page
 
-        compare_tab = QWidget()
-        compare_tab.setObjectName("compare_workspace_body")
-        compare_layout = QVBoxLayout(compare_tab)
-        compare_layout.setContentsMargins(0, 0, 0, 0)
-        compare_layout.setSpacing(10)
-        compare_actions_widget = QWidget()
-        compare_actions_layout = QHBoxLayout(compare_actions_widget)
-        compare_actions_layout.setContentsMargins(0, 0, 0, 0)
-        compare_actions_layout.setSpacing(10)
-        compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
-        compare_actions_layout.addWidget(_context_caption("Show"))
-        compare_actions_layout.addWidget(self._compare_category_filter_combo)
-        compare_actions_layout.addWidget(self._compare_copy_identity_button)
-        compare_actions_layout.addStretch(1)
-        compare_layout.addWidget(compare_actions_widget)
-        compare_layout.addWidget(self._compare_summary_label)
-        compare_layout.addWidget(self._compare_category_help_label)
-        self._compare_results_table.setVisible(False)
-        compare_results_group = QGroupBox("Compare results")
-        compare_results_group.setObjectName("compare_results_group")
-        compare_results_layout = QVBoxLayout(compare_results_group)
-        compare_results_layout.setContentsMargins(12, 10, 12, 12)
-        compare_results_layout.setSpacing(6)
-        compare_results_layout.addWidget(self._compare_results_table)
-        compare_layout.addWidget(compare_results_group, 1)
-        compare_output_group = QGroupBox("Compare detail")
-        compare_output_group.setObjectName("compare_output_group")
-        compare_output_group.setFlat(True)
-        compare_output_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        compare_output_layout = QVBoxLayout(compare_output_group)
-        compare_output_layout.setContentsMargins(8, 6, 8, 6)
-        compare_output_layout.setSpacing(4)
-        compare_output_layout.addWidget(self._compare_output_box)
-        compare_layout.addWidget(compare_output_group)
-        self._compare_output_group = compare_output_group
-        compare_output_group.setVisible(False)
-        compare_layout.addStretch(1)
-        self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
-        self._compare_category_filter_combo.currentIndexChanged.connect(
-            self._apply_compare_results_filter
-        )
-        self._compare_copy_identity_button.clicked.connect(
-            self._on_copy_compare_row_identity
-        )
-        compare_tab = self._build_page_shell(
-            object_name="compare_tab",
-            eyebrow="Read-only drift orientation",
-            title="Compare real and sandbox",
-            subtitle="Check actionable drift before you promote sandbox changes into the live Mods folder.",
-            body_widget=compare_tab,
-            scroll_body=True,
-        )
-        self._compare_page = compare_tab
+        compare_tab = self._build_compare_workspace_page()
 
         intake_tab = self._build_packages_workspace_page()
 
