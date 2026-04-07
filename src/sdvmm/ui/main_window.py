@@ -1395,26 +1395,9 @@ class MainWindow(QMainWindow):
             self._clear_source_intent_button,
         ):
             _set_secondary_button_style(button)
-        self._inventory_source_intent_actions_widget = QFrame()
-        self._inventory_source_intent_actions_widget.setObjectName(
-            "inventory_update_source_intent_actions"
+        self._inventory_source_intent_actions_widget = (
+            self._build_inventory_source_intent_actions_widget()
         )
-        _set_section_label_style(self._inventory_source_intent_actions_label)
-        inventory_source_intent_actions_layout = QVBoxLayout(self._inventory_source_intent_actions_widget)
-        inventory_source_intent_actions_layout.setContentsMargins(10, 9, 10, 10)
-        inventory_source_intent_actions_layout.setSpacing(6)
-        inventory_source_intent_actions_layout.addWidget(self._inventory_source_intent_actions_label)
-        inventory_source_intent_buttons_row = QHBoxLayout()
-        inventory_source_intent_buttons_row.setContentsMargins(0, 0, 0, 0)
-        inventory_source_intent_buttons_row.setSpacing(8)
-        inventory_source_intent_buttons_row.addWidget(self._mark_local_private_button)
-        inventory_source_intent_buttons_row.addWidget(self._disable_tracking_button)
-        inventory_source_intent_buttons_row.addWidget(self._manual_source_intent_button)
-        inventory_source_intent_buttons_row.addWidget(self._test_source_button)
-        inventory_source_intent_buttons_row.addWidget(self._clear_source_intent_button)
-        inventory_source_intent_buttons_row.addStretch(1)
-        inventory_source_intent_actions_layout.addLayout(inventory_source_intent_buttons_row)
-        self._inventory_source_intent_actions_widget.setVisible(False)
         self._inventory_sandbox_sync_actions_label = QLabel("Sandbox sync and promotion")
         _set_section_label_style(self._inventory_sandbox_sync_actions_label)
         self._sync_selected_to_sandbox_button = QPushButton("Copy selected to sandbox")
@@ -1427,26 +1410,9 @@ class MainWindow(QMainWindow):
             "inventory_promote_selected_to_real_button"
         )
         _set_secondary_button_style(self._promote_selected_to_real_button)
-        self._inventory_sandbox_sync_actions_widget = QFrame()
-        self._inventory_sandbox_sync_actions_widget.setObjectName(
-            "inventory_sandbox_sync_actions"
+        self._inventory_sandbox_sync_actions_widget = (
+            self._build_inventory_sandbox_sync_actions_widget()
         )
-        inventory_sandbox_sync_actions_layout = QVBoxLayout(
-            self._inventory_sandbox_sync_actions_widget
-        )
-        inventory_sandbox_sync_actions_layout.setContentsMargins(10, 9, 10, 10)
-        inventory_sandbox_sync_actions_layout.setSpacing(6)
-        inventory_sandbox_sync_actions_layout.addWidget(
-            self._inventory_sandbox_sync_actions_label
-        )
-        inventory_sandbox_sync_buttons_row = QHBoxLayout()
-        inventory_sandbox_sync_buttons_row.setContentsMargins(0, 0, 0, 0)
-        inventory_sandbox_sync_buttons_row.setSpacing(8)
-        inventory_sandbox_sync_buttons_row.addWidget(self._sync_selected_to_sandbox_button)
-        inventory_sandbox_sync_buttons_row.addWidget(self._promote_selected_to_real_button)
-        inventory_sandbox_sync_buttons_row.addStretch(1)
-        inventory_sandbox_sync_actions_layout.addLayout(inventory_sandbox_sync_buttons_row)
-        self._inventory_sandbox_sync_actions_widget.setVisible(False)
         self._inventory_real_profile_actions_label = QLabel("Real Mods profiles")
         _set_section_label_style(self._inventory_real_profile_actions_label)
         self._real_profile_combo = QComboBox()
@@ -2375,6 +2341,44 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(body_widget)
         scroll_area.setWidget(content)
         return scroll_area
+
+    def _build_inventory_source_intent_actions_widget(self) -> QFrame:
+        widget = QFrame()
+        widget.setObjectName("inventory_update_source_intent_actions")
+        _set_section_label_style(self._inventory_source_intent_actions_label)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(6)
+        layout.addWidget(self._inventory_source_intent_actions_label)
+        buttons_row = QHBoxLayout()
+        buttons_row.setContentsMargins(0, 0, 0, 0)
+        buttons_row.setSpacing(8)
+        buttons_row.addWidget(self._mark_local_private_button)
+        buttons_row.addWidget(self._disable_tracking_button)
+        buttons_row.addWidget(self._manual_source_intent_button)
+        buttons_row.addWidget(self._test_source_button)
+        buttons_row.addWidget(self._clear_source_intent_button)
+        buttons_row.addStretch(1)
+        layout.addLayout(buttons_row)
+        widget.setVisible(False)
+        return widget
+
+    def _build_inventory_sandbox_sync_actions_widget(self) -> QFrame:
+        widget = QFrame()
+        widget.setObjectName("inventory_sandbox_sync_actions")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(6)
+        layout.addWidget(self._inventory_sandbox_sync_actions_label)
+        buttons_row = QHBoxLayout()
+        buttons_row.setContentsMargins(0, 0, 0, 0)
+        buttons_row.setSpacing(8)
+        buttons_row.addWidget(self._sync_selected_to_sandbox_button)
+        buttons_row.addWidget(self._promote_selected_to_real_button)
+        buttons_row.addStretch(1)
+        layout.addLayout(buttons_row)
+        widget.setVisible(False)
+        return widget
 
     def _build_mods_workspace_page(
         self,
