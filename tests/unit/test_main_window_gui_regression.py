@@ -153,6 +153,23 @@ def _test_wheel_event() -> QWheelEvent:
     )
 
 
+def _show_test_window(window: MainWindow | QWidget, qapp: QApplication) -> None:
+    window.show()
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+        screens = qapp.screens()
+        try:
+            preferred_screen_index = int(os.environ.get("SDVMM_TEST_SCREEN_INDEX", "1"))
+        except ValueError:
+            preferred_screen_index = 1
+        if 0 <= preferred_screen_index < len(screens):
+            geometry = screens[preferred_screen_index].availableGeometry()
+            frame_geometry = window.frameGeometry()
+            x = geometry.x() + max(0, (geometry.width() - frame_geometry.width()) // 2)
+            y = geometry.y() + max(0, min(40, geometry.height() - frame_geometry.height()))
+            window.move(x, y)
+    qapp.processEvents()
+
+
 def test_main_window_combo_box_wheel_guard_blocks_unfocused_combo(
     qapp: QApplication,
 ) -> None:
@@ -175,8 +192,7 @@ def test_main_window_combo_box_wheel_guard_allows_focused_combo(
 def main_window(tmp_path: Path, qapp: QApplication) -> MainWindow:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     window = MainWindow(shell_service=service)
-    window.show()
-    qapp.processEvents()
+    _show_test_window(window, qapp)
     yield window
     window.close()
     qapp.processEvents()
@@ -241,8 +257,7 @@ def test_main_window_startup_auto_checks_skip_without_meaningful_game_path(
         lambda **kwargs: captured.append(str(kwargs["operation_name"])),
     )
 
-    window.show()
-    qapp.processEvents()
+    _show_test_window(window, qapp)
     qapp.processEvents()
 
     assert captured == []
@@ -315,7 +330,7 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
 
     monkeypatch.setattr(window, "_run_background_operation", _fake_run_background_operation)
 
-    window.show()
+    _show_test_window(window, qapp)
     for _ in range(6):
         qapp.processEvents()
 
@@ -495,7 +510,7 @@ def test_main_window_startup_auto_scans_real_and_sandbox_without_switching_selec
 
     monkeypatch.setattr(window, "_run_background_operation", _fake_run_background_operation)
 
-    window.show()
+    _show_test_window(window, qapp)
     expected_operation_count = 8
     for _ in range(16):
         qapp.processEvents()
@@ -1400,8 +1415,7 @@ def test_main_window_close_persists_practical_setup_paths_across_restart(
     secondary_watched_downloads_path.mkdir()
 
     first_window = MainWindow(shell_service=AppShellService(state_file=state_file))
-    first_window.show()
-    qapp.processEvents()
+    _show_test_window(first_window, qapp)
     qapp.processEvents()
     first_window._game_path_input.setText(str(game_path))
     first_window._mods_path_input.setText(str(mods_path))
@@ -1420,8 +1434,7 @@ def test_main_window_close_persists_practical_setup_paths_across_restart(
     qapp.processEvents()
 
     reopened_window = MainWindow(shell_service=AppShellService(state_file=state_file))
-    reopened_window.show()
-    qapp.processEvents()
+    _show_test_window(reopened_window, qapp)
     qapp.processEvents()
 
     assert reopened_window._game_path_input.text() == str(game_path)
@@ -6130,8 +6143,7 @@ def test_main_window_loads_saved_steam_auto_start_preference(
     save_app_config(state_file, config)
 
     window = MainWindow(shell_service=service)
-    window.show()
-    qapp.processEvents()
+    _show_test_window(window, qapp)
     try:
         assert window._steam_auto_start_checkbox.isChecked() is False
     finally:
