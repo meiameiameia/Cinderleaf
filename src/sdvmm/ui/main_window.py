@@ -3540,29 +3540,7 @@ class MainWindow(QMainWindow):
         workspace_shell_layout.addWidget(context_tabs, 1)
         return workspace_shell
 
-    def _build_layout(self) -> None:
-        container = QWidget()
-        container.setObjectName("app_shell_root")
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(6, 6, 6, 6)
-        root_layout.setSpacing(5)
-
-        root_layout.addWidget(self._build_top_context_surface())
-
-        setup_scroll = self._build_setup_workspace_surface()
-
-        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
-
-        context_tabs = self._build_workspace_tabs(
-            setup_scroll=setup_scroll,
-            inventory_controls_tabs=inventory_controls_tabs,
-            flow_hint_label=flow_hint_label,
-        )
-
-        root_layout.addWidget(self._build_workspace_shell(context_tabs=context_tabs), 1)
-
-        root_layout.addWidget(self._status_strip_group)
-        _apply_surface_shadow(self._status_strip_group, blur_radius=14, y_offset=1, alpha=44)
+    def _initialize_background_action_buttons(self) -> None:
         self._background_action_buttons = (
             self._scan_button,
             self._check_updates_button,
@@ -3591,7 +3569,7 @@ class MainWindow(QMainWindow):
             self._promote_selected_to_real_button,
         )
 
-        self.setCentralWidget(container)
+    def _finalize_layout_initial_state(self) -> None:
         self._context_tabs.currentChanged.connect(lambda _index: self._sync_workspace_nav_selection())
         self._sync_workspace_nav_selection()
         self._refresh_responsive_panel_bounds()
@@ -3604,6 +3582,34 @@ class MainWindow(QMainWindow):
             "empty",
             "Check for app updates to compare this install with the latest Cinderleaf release.",
         )
+
+    def _build_layout(self) -> None:
+        container = QWidget()
+        container.setObjectName("app_shell_root")
+        root_layout = QVBoxLayout(container)
+        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setSpacing(5)
+
+        root_layout.addWidget(self._build_top_context_surface())
+
+        setup_scroll = self._build_setup_workspace_surface()
+
+        inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
+
+        context_tabs = self._build_workspace_tabs(
+            setup_scroll=setup_scroll,
+            inventory_controls_tabs=inventory_controls_tabs,
+            flow_hint_label=flow_hint_label,
+        )
+
+        root_layout.addWidget(self._build_workspace_shell(context_tabs=context_tabs), 1)
+
+        root_layout.addWidget(self._status_strip_group)
+        _apply_surface_shadow(self._status_strip_group, blur_radius=14, y_offset=1, alpha=44)
+        self._initialize_background_action_buttons()
+
+        self.setCentralWidget(container)
+        self._finalize_layout_initial_state()
 
     def _set_programmatic_line_edit_text(self, line_edit: QLineEdit, text: str) -> None:
         line_edit.setText(text)
