@@ -1423,26 +1423,9 @@ class MainWindow(QMainWindow):
         self._delete_real_profile_button = QPushButton("Delete selected")
         self._delete_real_profile_button.setObjectName("inventory_delete_real_profile_button")
         _set_utility_button_style(self._delete_real_profile_button)
-        self._inventory_real_profile_actions_widget = QFrame()
-        self._inventory_real_profile_actions_widget.setObjectName(
-            "inventory_real_profile_actions"
+        self._inventory_real_profile_actions_widget = (
+            self._build_inventory_real_profile_actions_widget()
         )
-        inventory_real_profile_actions_layout = QVBoxLayout(
-            self._inventory_real_profile_actions_widget
-        )
-        inventory_real_profile_actions_layout.setContentsMargins(10, 9, 10, 10)
-        inventory_real_profile_actions_layout.setSpacing(6)
-        inventory_real_profile_actions_layout.addWidget(
-            self._inventory_real_profile_actions_label
-        )
-        inventory_real_profile_row = QHBoxLayout()
-        inventory_real_profile_row.setContentsMargins(0, 0, 0, 0)
-        inventory_real_profile_row.setSpacing(8)
-        inventory_real_profile_row.addWidget(self._real_profile_combo, 1)
-        inventory_real_profile_row.addWidget(self._create_real_profile_button)
-        inventory_real_profile_row.addWidget(self._delete_real_profile_button)
-        inventory_real_profile_actions_layout.addLayout(inventory_real_profile_row)
-        self._inventory_real_profile_actions_widget.setVisible(False)
         self._inventory_sandbox_profile_actions_label = QLabel("Sandbox profiles")
         _set_section_label_style(self._inventory_sandbox_profile_actions_label)
         self._sandbox_profile_combo = QComboBox()
@@ -1453,26 +1436,9 @@ class MainWindow(QMainWindow):
         self._delete_sandbox_profile_button = QPushButton("Delete selected")
         self._delete_sandbox_profile_button.setObjectName("inventory_delete_sandbox_profile_button")
         _set_utility_button_style(self._delete_sandbox_profile_button)
-        self._inventory_sandbox_profile_actions_widget = QFrame()
-        self._inventory_sandbox_profile_actions_widget.setObjectName(
-            "inventory_sandbox_profile_actions"
+        self._inventory_sandbox_profile_actions_widget = (
+            self._build_inventory_sandbox_profile_actions_widget()
         )
-        inventory_sandbox_profile_actions_layout = QVBoxLayout(
-            self._inventory_sandbox_profile_actions_widget
-        )
-        inventory_sandbox_profile_actions_layout.setContentsMargins(10, 9, 10, 10)
-        inventory_sandbox_profile_actions_layout.setSpacing(6)
-        inventory_sandbox_profile_actions_layout.addWidget(
-            self._inventory_sandbox_profile_actions_label
-        )
-        inventory_sandbox_profile_row = QHBoxLayout()
-        inventory_sandbox_profile_row.setContentsMargins(0, 0, 0, 0)
-        inventory_sandbox_profile_row.setSpacing(8)
-        inventory_sandbox_profile_row.addWidget(self._sandbox_profile_combo, 1)
-        inventory_sandbox_profile_row.addWidget(self._create_sandbox_profile_button)
-        inventory_sandbox_profile_row.addWidget(self._delete_sandbox_profile_button)
-        inventory_sandbox_profile_actions_layout.addLayout(inventory_sandbox_profile_row)
-        self._inventory_sandbox_profile_actions_widget.setVisible(False)
         self._compare_real_vs_sandbox_button = QPushButton("Compare real and sandbox")
         self._compare_real_vs_sandbox_button.setObjectName("compare_run_button")
         _set_primary_button_style(self._compare_real_vs_sandbox_button)
@@ -2377,6 +2343,40 @@ class MainWindow(QMainWindow):
         buttons_row.addWidget(self._promote_selected_to_real_button)
         buttons_row.addStretch(1)
         layout.addLayout(buttons_row)
+        widget.setVisible(False)
+        return widget
+
+    def _build_inventory_real_profile_actions_widget(self) -> QFrame:
+        widget = QFrame()
+        widget.setObjectName("inventory_real_profile_actions")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(6)
+        layout.addWidget(self._inventory_real_profile_actions_label)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(self._real_profile_combo, 1)
+        row.addWidget(self._create_real_profile_button)
+        row.addWidget(self._delete_real_profile_button)
+        layout.addLayout(row)
+        widget.setVisible(False)
+        return widget
+
+    def _build_inventory_sandbox_profile_actions_widget(self) -> QFrame:
+        widget = QFrame()
+        widget.setObjectName("inventory_sandbox_profile_actions")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(6)
+        layout.addWidget(self._inventory_sandbox_profile_actions_label)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(self._sandbox_profile_combo, 1)
+        row.addWidget(self._create_sandbox_profile_button)
+        row.addWidget(self._delete_sandbox_profile_button)
+        layout.addLayout(row)
         widget.setVisible(False)
         return widget
 

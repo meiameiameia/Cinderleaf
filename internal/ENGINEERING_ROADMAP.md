@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-07` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, cold update-check concurrency, and twelve layout/build extraction passes
+Last refreshed: `2026-04-07` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, cold update-check concurrency, and thirteen layout/build extraction passes
 
 ## Baseline
 
@@ -108,7 +108,7 @@ Priority extractions:
 - Reduce profile, sandbox-sync, and selected-row action gating code inside the window class.
 
 5. Layout/build decomposition
-- Status: first extraction passes done via dedicated setup workspace surface, inventory controls tabs, workspace tab assembly, top-context surface, workspace shell, background-action initialization, layout initial-state finalization, inventory action-card builders, and packages, compare, discovery, archive, install, and recovery workspace builders inside `MainWindow`; deeper `__init__` and `_build_layout` decomposition is still pending.
+- Status: first extraction passes done via dedicated setup workspace surface, inventory controls tabs, workspace tab assembly, top-context surface, workspace shell, background-action initialization, layout initial-state finalization, inventory action-card builders, inventory profile-card builders, and packages, compare, discovery, archive, install, and recovery workspace builders inside `MainWindow`; deeper `__init__` and `_build_layout` decomposition is still pending.
 - Keep carving out coherent page/control builders instead of moving random widget lines around.
 
 ### Phase 3: Service Layer Decomposition
