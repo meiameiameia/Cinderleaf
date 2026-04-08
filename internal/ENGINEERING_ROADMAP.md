@@ -2,162 +2,221 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-07` after update-cache work, startup auto-check, diagnostics, packages/archive improvements, cold update-check concurrency, and thirteen layout/build extraction passes
+Last refreshed: `2026-04-08` after the `1.3.1` patch release and product-direction reset toward broader mainstream appeal
 
 ## Baseline
 
-- Full unit baseline: `699 passed`
+- Full unit baseline: `701 passed`
+- Current release line: `1.3.1`
 - Largest Python files:
-  - `src/sdvmm/ui/main_window.py`: `13483` lines
-  - `src/sdvmm/app/shell_service.py`: `10801` lines
-  - `src/sdvmm/app/inventory_presenter.py`: `1305` lines
-- Largest current UI orchestration hotspots:
-  - `MainWindow.__init__`: `994` lines
-  - `MainWindow._build_layout`: `981` lines
-  - `MainWindow._refresh_selected_mod_update_guidance`: `296` lines
-  - `_build_inventory_row_entries`: `173` lines
-  - `MainWindow._render_inventory`: `170` lines
-  - `MainWindow._apply_update_report`: `141` lines
-- Largest current service hotspots:
-  - `AppShellService._analyze_restore_import_execution`: `378` lines
-  - `AppShellService.export_backup_bundle`: `311` lines
-  - `AppShellService.migrate_cinderleaf_managed_folders`: `269` lines
-  - `AppShellService.execute_sandbox_mods_promotion_preview`: `150` lines
-  - `AppShellService.correlate_intake_with_updates`: `107` lines
+  - `src/sdvmm/ui/main_window.py`: `12771` lines
+  - `src/sdvmm/app/shell_service.py`: `9875` lines
+  - `src/sdvmm/app/inventory_presenter.py`: `1124` lines
+
+## Strategic Direction
+
+Cinderleaf should now compete as a modern, everyday Stardew Valley mod manager first, with safer workflows as a built-in advantage rather than as its whole identity.
+
+That means:
+
+- Primary promise:
+  - easiest, calmest, clearest way for normal players to install, update, and keep using mods
+- Secondary differentiators:
+  - review-before-write installs
+  - truthful update/source guidance
+  - strong archive/recovery model
+  - sandbox workflows when users want them
+
+The app should feel:
+
+- less technical
+- faster to understand
+- easier to trust
+- less dependent on reading dense helper text
+- more aligned with normal “download mod -> review -> install -> play” expectations
+
+## Competitive Reality
+
+Current mainstream expectations for a Stardew mod manager are roughly:
+
+- easy install/update flow
+- profiles that feel simple
+- clear update checking
+- low-friction daily use
+
+Cinderleaf already has strong differentiators in safety and recovery, but it still needs to close gaps in:
+
+1. default-flow simplicity
+2. profile mental model
+3. UI density and readability
+4. everyday speed and trust signals
 
 ## Audit Conclusions
 
-The codebase is not "AI slop", but it is carrying real orchestration debt.
+The codebase is not "AI slop", but product direction can still drift unless roadmap priorities are explicit.
 
-The main engineering risks are:
+Main current risks:
 
-1. Oversized controller/orchestrator surfaces
-- `main_window.py` is still the largest coupling point in the repo.
-- `shell_service.py` still owns too many unrelated workflows.
+1. Mainstream UX drift
+- too much of the product story still reads like a careful advanced tool instead of a broadly welcoming everyday manager
 
-2. Cold update-check throughput
-- `src/sdvmm/services/update_metadata.py` now deduplicates duplicate links in one run, persists fresh remote metadata between runs, and prefetches cold primary remote targets concurrently.
-- The remaining user-facing speed risk is now cold-start network latency for large sets of genuinely unique providers and the lack of lightweight freshness UX, not the old fully serial loop.
+2. Profile model mismatch
+- current profile creation still materializes linked clones of the whole inventory
+- this is slow on large libraries and does not match the simpler enable/disable mental model most users expect
 
-3. UI state orchestration density
-- `Library` state, update guidance, source-intent actions, grouped rows, and profile interactions are still heavily concentrated in `MainWindow`.
-- The app is behaving better than before, but the surface remains easy to regress.
+3. UI density
+- many screens are better than before, but `MainWindow` still exposes too much state and explanation at once
 
-4. Large but green baseline
-- A full green suite is a strength.
-- The next risk is not lack of tests; it is making future changes inside very large functions/files without a stable extraction plan.
+4. Controller concentration
+- `main_window.py` and `shell_service.py` remain the biggest long-term change-risk surfaces
 
 ## Locked Guidance
 
+Do not try to compete by cloning Stardrop feature-for-feature.
+
+Compete by being:
+
+- clearer on Windows
+- safer during installs/updates
+- calmer in everyday use
+- more truthful when something is ambiguous or risky
+
 Do not do a broad rewrite.
 
-Prefer bounded extractions and measured behavior-preserving changes that:
+Prefer bounded changes that:
+
+- improve the default player experience
 - keep the full unit baseline green
-- keep manual desktop validation honest for UI slices
-- reduce file concentration or repeated work in one concrete place at a time
+- require manual desktop validation for UI/product-flow slices
+- reduce controller density one concrete seam at a time
 
 ## Roadmap
 
-### Phase 1: Update System Throughput And Persistence
+### Phase 1: Mainstream Default Workflow
 
-Goal: make `Check for updates` fast enough and stable enough to support startup auto-checking and durable row state.
+Goal: make the normal player path feel obvious and low-friction.
 
-Status:
-- update-report persistence by inventory context: done
-- single-row patching after install instead of clearing whole report: done
-- shared remote metadata cache per update run: done
-- persisted update freshness cache: done
-- startup mod update auto-check for startup-scanned contexts: done
-- measured network/update instrumentation: done
-- bounded cold-path primary remote prefetch concurrency: done
+Priority slices:
+
+1. Primary happy-path audit
+- Re-audit the user journey from:
+  - first setup
+  - watcher/package intake
+  - install review
+  - launch
+  - update check
+- Trim or hide low-value technical phrasing from the default path.
+
+2. Install/update CTA hierarchy
+- Keep the main action of each workspace visually obvious.
+- Reduce secondary-action competition in the `Library`, `Packages`, and `Install` surfaces.
+
+3. Calmer status language
+- Prefer player-facing status copy over tool-facing diagnostics in the default view.
+- Keep detailed troubleshooting available, but not dominant.
+
+### Phase 2: Profile Model Redesign
+
+Goal: make profiles behave the way mainstream users expect.
+
+Target model:
+
+- a new profile starts empty, or from an explicit template chosen by the user
+- enabling a mod adds it to that profile
+- disabling a mod removes it from that profile
+- dependency warnings appear when enabling a mod that needs another mod not present in the profile
+
+Why this is next:
+
+- it directly addresses the current slow, noisy, clone-heavy profile creation behavior
+- it makes profiles easier to explain
+- it aligns Cinderleaf with mainstream mod-manager mental models
+
+Bounded implementation order:
+
+1. audit and lock the desired data/model behavior
+2. redesign profile creation UI and service semantics
+3. add dependency-warning behavior on enable
+4. then revisit profile-related wording and docs
+
+### Phase 3: Update And Install Experience
+
+Goal: make updates and installs feel fast, truthful, and stable.
+
+Already landed:
+
+- update status persistence by inventory context
+- faster remote metadata reuse and cold-target prefetching
+- startup auto-check for warmed inventories
+- better row patching after install/update-related actions
 
 Next slices:
 
-1. Cache freshness UX
-- Surface when the current update state came from fresh cached metadata versus a live fetch.
-- Keep the UI truthful without cluttering the inventory table.
+1. cache freshness UX
+- show when a result is fresh enough to trust without cluttering `Library`
 
-2. Startup auto-check desktop polish
-- Validate and tune startup update-check behavior on the real desktop workflow.
-- Ensure status text and source switching feel calm when startup checks finish.
+2. clearer row-level update truth
+- keep strengthening cases where remote-page truth, package-manifest truth, and installed-manifest truth do not fully align
 
-3. Update-check diagnostics surfacing
-- Decide whether any of the diagnostics should be exposed outside logs/dev surfaces without cluttering `Library`.
-- Prefer calm troubleshooting affordances over another noisy status column.
+3. guided source/update flows
+- continue reducing friction for manual-source and hinted-source update paths
 
-### Phase 2: Library UI Decomposition
+### Phase 4: UI Calmness And Density Reduction
 
-Goal: make `Library` change-safe without weakening current behavior.
-
-Priority extractions:
-
-1. Inventory/update row presentation module
-- Move row-state formatting, remote-link overlay behavior, and status label/tooltip mapping out of `MainWindow`.
-- Status: first extraction pass done via dedicated row-application helpers inside `MainWindow`; full module split still pending.
-
-2. Update guidance controller
-- Status: first extraction pass done via dedicated guidance-state helpers and selected-row context resolution inside `MainWindow`; full controller/module split still pending.
-- Keep button enabling, guidance text, and source-intent overlay logic together but out of the window class.
-
-3. Startup workflow controller
-- Status: second extraction pass done via shared startup background-batch helpers and shared startup check runner/advance helpers; full controller/module split still pending.
-- Pull the startup check chain and startup auto-scan queue out of `MainWindow`.
-
-4. Profile/action state helpers
-- Status: first extraction pass done via shared action-button state resolvers for selected update and sandbox-sync actions; deeper profile-state cleanup still pending.
-- Reduce profile, sandbox-sync, and selected-row action gating code inside the window class.
-
-5. Layout/build decomposition
-- Status: first extraction passes done via dedicated setup workspace surface, inventory controls tabs, workspace tab assembly, top-context surface, workspace shell, background-action initialization, layout initial-state finalization, inventory action-card builders, inventory profile-card builders, and packages, compare, discovery, archive, install, and recovery workspace builders inside `MainWindow`; deeper `__init__` and `_build_layout` decomposition is still pending.
-- Keep carving out coherent page/control builders instead of moving random widget lines around.
-
-### Phase 3: Service Layer Decomposition
-
-Goal: reduce `shell_service.py` from a giant workflow bucket into clearer service seams.
+Goal: make the app feel modern, approachable, and lower-reading.
 
 Priority targets:
 
-1. Restore/import service extraction
-- `_analyze_restore_import_execution(...)`
-- restore/import planning helpers
-- backup bundle inspection helpers
+1. `Library` right-rail simplification
+- keep the selected-row actions clear without stacking too many panels and helper paragraphs
 
-2. Backup/archive service extraction
-- backup export/import orchestration
-- archive restore and history helpers where practical
+2. setup/onboarding polish
+- keep setup readable for normal players
+- make archive, restore/import, and advanced options feel available but not overwhelming
 
-3. Sandbox/profile workflow extraction
-- promotion preview
-- profile membership/toggle helpers
-- comparison/preparation helpers
+3. global typography and spacing refinement
+- continue the `1.3.1` direction carefully
+- prefer clarity, stronger hierarchy, and calmer defaults over dramatic visual experimentation
 
-4. Update/install coordination helpers
-- keep narrowing install/update planning context objects and package correlation helpers
+### Phase 5: Maintainability And Decomposition
 
-### Phase 4: Performance Guardrails
+Goal: keep the codebase change-safe while product work continues.
 
-Goal: stop guessing.
+Priority targets:
 
-Add durable checks for:
-- full unit baseline timing trend
-- update-check timing trend
-- install-plan timing for multi-package cases
-- detection of duplicate remote fetches in a single update run
+1. `MainWindow` decomposition
+- continue bounded extraction of:
+  - layout/build seams
+  - update guidance/state seams
+  - selected-row action/state seams
+
+2. `AppShellService` decomposition
+- keep narrowing large workflow buckets, especially:
+  - restore/import
+  - backup/archive
+  - profile workflows
+
+3. performance guardrails
+- keep timing and duplication checks around:
+  - update checks
+  - install planning
+  - large-library workflows
 
 ## What Not To Do Yet
 
-- Do not add broad concurrency to update checks before deduplication and cache instrumentation exist.
-- Do not split `main_window.py` by random widget sections alone; extract behavior seams, not only layout code.
-- Do not rewrite `shell_service.py` wholesale.
-- Do not add broad concurrency to update checks until instrumentation shows the remaining bottleneck after cache reuse.
-- Do not widen roadmap items into packaging/release changes unless a later audit shows that startup/frozen-app behavior is the real bottleneck.
+- Do not widen into cross-platform positioning work yet.
+- Do not attempt a broad visual redesign before the profile and happy-path flows are calmer.
+- Do not let advanced sandbox/recovery workflows define the first-run experience.
+- Do not rewrite `main_window.py` or `shell_service.py` wholesale.
+- Do not ship major new feature waves without checking them against this roadmap first.
 
 ## Immediate Next Safe Increment
 
-`layout/build decomposition follow-up`
+`empty profile + enable-on-demand + dependency-warning audit`
 
 Reason:
-- the update-throughput roadmap work is now materially landed
-- the first setup-surface, inventory-controls, workspace-tab assembly, top-context/workspace-shell, layout-tail helpers, and packages/compare/discovery/archive/install/recovery workspace extraction passes are landed
-- `MainWindow.__init__` and `_build_layout` remain the largest concentrated UI setup seams
-- the next anti-drift win is deeper layout/setup decomposition around the remaining root container and `__init__`-level orchestration, before starting another product wave
+
+- it is the clearest product gap between Cinderleaf’s current behavior and mainstream mod-manager expectations
+- it solves a real current annoyance: slow profile creation and noisy junction creation behavior
+- it improves both product competitiveness and future UI simplification
+- it gives the next implementation slices a stable product model instead of more drift
