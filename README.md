@@ -6,7 +6,7 @@
 
 Current project version: **1.3.1**
 
-Latest packaged public release: **1.3.0**
+Latest packaged public release: **1.3.1**
 
 If you want the full step-by-step walkthrough, start with the [User Manual](docs/USER_GUIDE.md).
 
@@ -46,19 +46,17 @@ If you want the full step-by-step walkthrough, start with the [User Manual](docs
 - restore/import support for bundled mods, mod configs, and exported profile catalogs, with save files left as a manual restore step
 - optional sandbox and testing workflows for safer experiments, heavier tinkering, and mod-author use cases
 
-## New in 1.3.0
+## New in 1.3.1
 
-- Multi-folder mods behave more like one logical mod in `Library`, including grouped update and archive/remove handling.
-- Source repair is calmer now, with better type/status guidance, safer manual-source editing, and SMAPI-backed source hints.
-- Update checks are faster, startup can warm update statuses automatically, and checked status survives context switches more cleanly.
-- `Packages` now supports watcher-path filtering, visible-row bulk selection, and bundled `.rar` package intake in the portable build.
-- Install and update flows have clearer post-install feedback and smoother manual-source update-page handling.
+- Windows profile creation no longer flashes terminal windows while junctions are created or removed.
+- The UI typography and helper copy are softer and easier to scan.
+- The public screenshot set now matches the current `1.3.1` app surface more closely.
 
 For the full release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
-These screenshots reflect the current `1.3.1` repo UI.
+These screenshots reflect the current `1.3.1` release UI.
 
 ![Cinderleaf setup workspace](media/nexus-screenshots/00-setup-workspace.png)
 
@@ -85,11 +83,11 @@ These screenshots reflect the current `1.3.1` repo UI.
 The supported public build is a Windows portable zip published on GitHub Releases.
 
 1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Download `cinderleaf-1.3.0-windows-portable.zip`.
+2. Download `cinderleaf-1.3.1-windows-portable.zip`.
 3. Extract it to a normal folder.
 4. Run `Cinderleaf.exe`.
 
-If a checksum file is published with the release, verify `cinderleaf-1.3.0-windows-portable.zip.sha256` before announcing or mirroring the build.
+If a checksum file is published with the release, verify `cinderleaf-1.3.1-windows-portable.zip.sha256` before announcing or mirroring the build.
 
 Good to know:
 

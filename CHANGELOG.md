@@ -2,6 +2,12 @@
 
 All notable user-facing changes for this repository are tracked here.
 
+## [1.3.1]
+
+- Fixed the Windows profile-creation workflow so junction creation/removal no longer flashes terminal windows during profile setup.
+- Softened the UI typography and shortened helper copy so the app reads less like a technical tool and more like a player-facing desktop app.
+- Refreshed the public README screenshots and docs to match the current `1.3.1` UI surface.
+
 ## [1.3.0]
 
 - Grouped multi-folder mods more truthfully in `Library`, so related component folders can stay visible and actionable as one logical entry instead of drifting apart.

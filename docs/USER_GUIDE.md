@@ -1,6 +1,6 @@
 # Cinderleaf User Manual
 
-This guide is the detailed, player-friendly walkthrough for the current `1.3.1` repo state. The latest packaged public release remains `1.3.0`.
+This guide is the detailed, player-friendly walkthrough for the current `1.3.1` release line.
 
 If you just want the short version first, start with the main [README](../README.md).
 

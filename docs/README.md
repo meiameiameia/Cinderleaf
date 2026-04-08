@@ -4,7 +4,7 @@ Public users should start with the repository [README](../README.md) for the sho
 
 For detailed step-by-step usage, read the [User Manual](USER_GUIDE.md).
 
-The public docs currently track the `1.3.1` repo state, while the latest packaged public release remains `1.3.0`.
+The public docs currently track the `1.3.1` release line.
 
 This `docs/` area stays intentionally small:
 
