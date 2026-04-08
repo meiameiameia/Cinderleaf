@@ -10767,6 +10767,7 @@ def _create_directory_link(link_path: Path, target_path: Path) -> None:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
@@ -10792,6 +10793,7 @@ def _remove_directory_link(link_path: Path) -> None:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()

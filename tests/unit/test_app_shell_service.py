@@ -85,6 +85,46 @@ def test_load_startup_config_returns_none_when_state_absent(tmp_path: Path) -> N
     assert "No saved configuration found" in state.message
 
 
+def test_windows_directory_link_commands_hide_console_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_calls: list[dict[str, object]] = []
+
+    def _fake_run(command, **kwargs):
+        captured_calls.append({"command": command, **kwargs})
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(shell_service_module.os, "name", "nt", raising=False)
+    monkeypatch.setattr(
+        shell_service_module.subprocess,
+        "CREATE_NO_WINDOW",
+        0x08000000,
+        raising=False,
+    )
+    monkeypatch.setattr(shell_service_module.subprocess, "run", _fake_run)
+
+    target = tmp_path / "Target"
+    link = tmp_path / "Links" / "Target"
+    target.mkdir(parents=True)
+    shell_service_module._create_directory_link(link, target)
+    link.mkdir(parents=True)
+    shell_service_module._remove_directory_link(link)
+
+    assert len(captured_calls) == 2
+    assert captured_calls[0]["command"] == [
+        "cmd",
+        "/c",
+        "mklink",
+        "/J",
+        str(link),
+        str(target),
+    ]
+    assert captured_calls[0]["creationflags"] == 0x08000000
+    assert captured_calls[1]["command"] == ["cmd", "/c", "rmdir", str(link)]
+    assert captured_calls[1]["creationflags"] == 0x08000000
+
+
 def test_load_startup_config_reports_invalid_state_file(tmp_path: Path) -> None:
     state_file = tmp_path / "app-state.json"
     state_file.write_text("{invalid", encoding="utf-8")

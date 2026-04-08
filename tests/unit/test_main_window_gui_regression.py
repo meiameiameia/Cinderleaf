@@ -8165,6 +8165,19 @@ def test_main_window_mods_workspace_uses_compact_action_band_above_inventory(
     assert selected_actions_group.parentWidget() is main_window._mods_selection_context_scroll_area.widget()
 
 
+def test_main_window_selected_actions_hint_uses_configured_archive_wording(
+    main_window: MainWindow,
+) -> None:
+    selected_actions_group = main_window.findChild(QGroupBox, "mods_selected_actions_group")
+
+    assert selected_actions_group is not None
+    labels = selected_actions_group.findChildren(QLabel)
+    assert any(
+        label.text() == "Archive to the configured archive or restore an archived copy."
+        for label in labels
+    )
+
+
 def test_main_window_key_actions_keep_clear_button_roles(main_window: MainWindow) -> None:
     review_install_button = main_window.findChild(QPushButton, "plan_install_plan_button")
     apply_install_button = main_window.findChild(QPushButton, "plan_install_run_button")

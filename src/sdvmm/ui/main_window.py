@@ -2493,7 +2493,7 @@ class MainWindow(QMainWindow):
         selected_actions_layout.setContentsMargins(9, 8, 9, 9)
         selected_actions_layout.setSpacing(5)
         selected_actions_hint = QLabel(
-            "Archive to the sandbox archive or restore an archived copy."
+            "Archive to the configured archive or restore an archived copy."
         )
         selected_actions_hint.setWordWrap(True)
         _set_auxiliary_label_style(selected_actions_hint)
