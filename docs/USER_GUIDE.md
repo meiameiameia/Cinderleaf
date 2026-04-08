@@ -6,7 +6,7 @@ If you just want the short version first, start with the main [README](../README
 
 ## 1. What Cinderleaf is meant to help with
 
-Cinderleaf is for players who want an easier, more organized mod routine on Windows, whether they only install a few favorites, keep several themed setups, or build and test mods more actively.
+Cinderleaf is for players who want an easier, more organized mod routine on Windows, whether they only install a few favorites or like keeping different setups for different saves.
 
 At its best, it helps you:
 
@@ -17,7 +17,7 @@ At its best, it helps you:
 - keep backup and recovery tools nearby
 - export the parts of your setup you care about before a bigger change
 - compare folders without turning compare into a write action
-- use sandbox and testing workflows when you want a dedicated trial space, especially for heavier experimentation or mod-author work
+- use sandbox and testing workflows when you want a dedicated trial space before changing your main setup
 
 The app can work with your real `Mods` folder, a sandbox `Mods` folder, custom profiles, backup bundles, archive history, and recovery/restore workflows. The goal is not to hide what is happening. The goal is to make each step clear before you commit to it.
 
@@ -37,7 +37,7 @@ You can configure:
 Best practice:
 
 - keep your paths clear and consistent before you start changing things
-- treat the sandbox as an optional but very useful testing area, especially if you experiment a lot or build mods
+- treat the sandbox as an optional but very useful testing area when you want to try changes before moving them into your main setup
 - keep archive folders configured so rollback stays useful when you need it
 
 `Setup` also includes update status, release-page access, backup/export tools, and restore/import tools.
@@ -154,7 +154,7 @@ That makes profiles useful for:
 - alternate mod sets
 - lighter testing setups
 - preserving an older favorite combination while you try newer mods somewhere else
-- keeping a cleaner test setup if you make mods, troubleshoot often, or like heavier experimentation
+- keeping a cleaner test setup when you want to try changes without disturbing your main setup
 
 ## 7. Compare
 
@@ -273,7 +273,7 @@ That makes bug reports much easier to understand and fix.
 
 ## 12. A few habits that make life easier
 
-- use the sandbox when you want a dedicated testing space before touching live `Mods`, especially if you build mods or experiment heavily
+- use the sandbox when you want a dedicated testing space before touching live `Mods`
 - keep archive folders configured
 - export backups before big cleanup passes, experiments, or moving to another machine
 - use profiles for curated sets instead of trying to remember manual folder edits

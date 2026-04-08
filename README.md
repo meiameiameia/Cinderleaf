@@ -14,7 +14,7 @@ If you want the full step-by-step walkthrough, start with the [User Manual](docs
 
 - Windows-first, local-first desktop app for Stardew Valley mod management
 - built with Python, PySide6, pytest, and PyInstaller portable packaging
-- centered on review-before-write installs, sandbox-first testing, and read-only compare
+- centered on review-before-write installs, safer testing options, and read-only compare
 - shipped as a portable zip with GitHub Releases as the public distribution surface
 
 ## Why people use Cinderleaf
@@ -27,7 +27,7 @@ If you want the full step-by-step walkthrough, start with the [User Manual](docs
 - to export backups before a cleanup, migration, or riskier change
 - to compare real and sandbox folders without turning Compare into a write tool
 - to keep archive, recovery, and restore tools within easy reach
-- to go from a simple casual setup to a more curated, experimental, or mod-author workflow without changing tools
+- to go from a simple casual setup to a more organized, flexible routine without changing tools
 
 ## Core features
 
@@ -44,7 +44,7 @@ If you want the full step-by-step walkthrough, start with the [User Manual](docs
   - archives
   - optional Stardew save files
 - restore/import support for bundled mods, mod configs, and exported profile catalogs, with save files left as a manual restore step
-- optional sandbox and testing workflows for safer experiments, heavier tinkering, and mod-author use cases
+- optional sandbox and testing workflows for safer experiments and trying changes before they reach your main setup
 
 ## New in 1.3.1
 
@@ -92,7 +92,7 @@ If a checksum file is published with the release, verify `cinderleaf-1.3.1-windo
 Good to know:
 
 - this is a portable folder, not an installer
-- Windows reputation prompts are still expected because code signing is not in place yet
+- if you want to verify the download manually, compare the release zip against the published `.sha256` checksum on GitHub Releases
 - Cinderleaf can tell you when a newer release exists, but it does not download or install updates for you
 
 ## A simple way to use it
@@ -105,7 +105,7 @@ Good to know:
 6. Use `Compare` when you want to see what is different between real and sandbox.
 7. Use archive, recovery, restore/import, and backup/export tools before bigger cleanups, experiments, or machine moves.
 
-If you mainly want an easier everyday mod routine, Cinderleaf is built for that. If you make mods, troubleshoot often, or like heavier experimentation, the sandbox gives you a dedicated place to test changes first.
+If you mainly want an easier everyday mod routine, Cinderleaf is built for that. The sandbox is there when you want a safer place to try changes first, but the app is meant to be useful even if you just want a clearer install-and-play flow.
 
 ## Want the full walkthrough?
 
