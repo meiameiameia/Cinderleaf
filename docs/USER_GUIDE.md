@@ -1,6 +1,6 @@
 # Cinderleaf User Manual
 
-This guide is the detailed, player-friendly walkthrough for the `1.3.0` release line.
+This guide is the detailed, player-friendly walkthrough for the current `1.3.1` repo state. The latest packaged public release remains `1.3.0`.
 
 If you just want the short version first, start with the main [README](../README.md).
 
@@ -55,7 +55,7 @@ Use it when you want to:
 - archive or restore the selected mod
 - work with real or sandbox profiles
 
-Some of the calmer `1.3.0` improvements live here:
+Some of the calmer `1.3.x` improvements live here:
 
 - grouped multi-folder mods can stay visible as one logical entry more often
 - the old `Folder` column has been replaced with a clearer `Type` column

@@ -4,7 +4,9 @@
 
 `for Stardew Valley` is a descriptive subtitle, not an official affiliation. Cinderleaf is an independent community tool and is not affiliated with or endorsed by ConcernedApe.
 
-Current project version: **1.3.0**
+Current project version: **1.3.1**
+
+Latest packaged public release: **1.3.0**
 
 If you want the full step-by-step walkthrough, start with the [User Manual](docs/USER_GUIDE.md).
 
@@ -56,7 +58,9 @@ For the full release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
-These screenshots reflect the current `1.3.0` UI.
+These screenshots reflect the current `1.3.1` repo UI.
+
+![Cinderleaf setup workspace](media/nexus-screenshots/00-setup-workspace.png)
 
 ![Cinderleaf library workspace](media/nexus-screenshots/01-library-workspace.png)
 
@@ -64,9 +68,9 @@ These screenshots reflect the current `1.3.0` UI.
 
 ![Cinderleaf install workspace](media/nexus-screenshots/03-install-workspace.png)
 
-![Cinderleaf compare workspace](media/nexus-screenshots/04-compare-workspace.png)
+![Cinderleaf discover workspace](media/nexus-screenshots/04-discover-workspace.png)
 
-![Cinderleaf recovery workspace](media/nexus-screenshots/05-recovery-workspace.png)
+![Cinderleaf compare workspace](media/nexus-screenshots/05-compare-workspace.png)
 
 ![Cinderleaf archive workspace](media/nexus-screenshots/06-archive-workspace.png)
 
@@ -122,9 +126,9 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.3.0-windows-portable\
-dist\cinderleaf-1.3.0-windows-portable.zip
-dist\cinderleaf-1.3.0-windows-portable.zip.sha256
+dist\cinderleaf-1.3.1-windows-portable\
+dist\cinderleaf-1.3.1-windows-portable.zip
+dist\cinderleaf-1.3.1-windows-portable.zip.sha256
 ```
 
 ## Current limitations
