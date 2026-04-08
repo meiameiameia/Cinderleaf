@@ -13,7 +13,8 @@ QMainWindow {
 
 QWidget {
     color: #ece7df;
-    font-size: 10pt;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Trebuchet MS";
+    font-size: 10.5pt;
 }
 
 QMessageBox,
@@ -48,10 +49,10 @@ QGroupBox::title {
     left: 10px;
     top: -1px;
     padding: 0 2px;
-    color: #bda893;
-    font-size: 7.6pt;
+    color: #c7b4a0;
+    font-size: 8.15pt;
     font-weight: 700;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
 }
 
 QWidget#workspace_page,
@@ -107,13 +108,14 @@ QLabel#workspace_page_eyebrow {
 
 QLabel#workspace_page_title {
     color: #f5f1ea;
-    font-size: 16pt;
+    font-family: "Georgia", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 17.5pt;
     font-weight: 700;
 }
 
 QLabel#workspace_page_subtitle {
-    color: #b6ab9f;
-    font-size: 9pt;
+    color: #c6bbb0;
+    font-size: 9.6pt;
 }
 
 QLabel#mods_inventory_state_label,
@@ -235,8 +237,8 @@ QGroupBox#setup_output_group::title {
 }
 
 QLabel#setup_main_column_intro_label {
-    color: #c3b7ab;
-    font-size: 8.85pt;
+    color: #cbbfb3;
+    font-size: 9.15pt;
 }
 
 QFrame#setup_quickstart_panel {
@@ -294,15 +296,20 @@ QLabel#top_context_brand_eyebrow {
 
 QLabel#top_context_brand_title {
     color: #f4efe8;
-    font-size: 11pt;
+    font-family: "Georgia", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 12.4pt;
     font-weight: 700;
 }
 
-QLabel#top_context_brand_subtitle,
+QLabel#top_context_brand_subtitle {
+    color: #cdbfb2;
+    font-size: 9pt;
+}
+
 QLabel#global_status_panel_title,
 QLabel#top_context_section_title {
     color: #bba792;
-    font-size: 8pt;
+    font-size: 8.2pt;
     font-weight: 700;
     letter-spacing: 0.05em;
 }
@@ -323,8 +330,8 @@ QLabel[contextRole="value"] {
 
 QLabel[contextRole="caption"],
 QLabel[statusRole="value"] {
-    color: #c1b7ac;
-    font-size: 8.5pt;
+    color: #cbc0b4;
+    font-size: 8.85pt;
 }
 
 QFrame#workspace_shell_frame {
@@ -356,7 +363,8 @@ QLabel#workspace_nav_brand_icon {
 
 QLabel#workspace_nav_brand_title {
     color: #f4f1eb;
-    font-size: 12.5pt;
+    font-family: "Georgia", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 13.25pt;
     font-weight: 700;
 }
 
@@ -367,8 +375,8 @@ QLabel#workspace_nav_section_label {
 }
 
 QLabel#workspace_nav_brand_subtitle {
-    color: #d5c7bb;
-    font-size: 8.4pt;
+    color: #d9cec3;
+    font-size: 8.8pt;
     font-weight: 500;
 }
 
@@ -386,7 +394,7 @@ QPushButton[navRole="workspace"] {
     background: transparent;
     color: #cfbeaf;
     text-align: left;
-    font-size: 8.55pt;
+    font-size: 8.9pt;
     font-weight: 600;
 }
 
@@ -773,12 +781,21 @@ QLabel#plan_install_overwrite_help_label,
 QLabel#archive_empty_state_label,
 QLabel#discovery_intro_label,
 QLabel#archive_intro_label {
-    color: #bdb2a6;
-    font-size: 8.9pt;
+    color: #cbc0b4;
+    font-size: 9.25pt;
 }
 
 QLineEdit,
-QComboBox,
+QComboBox {
+    background: #0e1113;
+    border: 1px solid rgba(224, 216, 203, 0.12);
+    border-radius: 8px;
+    padding: 4px 8px;
+    color: #eee9e2;
+    selection-background-color: #3d6233;
+    font-size: 10.1pt;
+}
+
 QPlainTextEdit {
     background: #0e1113;
     border: 1px solid rgba(224, 216, 203, 0.12);
@@ -786,6 +803,8 @@ QPlainTextEdit {
     padding: 4px 8px;
     color: #eee9e2;
     selection-background-color: #3d6233;
+    font-family: "Cascadia Mono", "Consolas";
+    font-size: 9.15pt;
 }
 
 QLineEdit:focus,

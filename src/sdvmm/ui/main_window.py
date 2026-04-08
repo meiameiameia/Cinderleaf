@@ -2397,7 +2397,7 @@ class MainWindow(QMainWindow):
                 eyebrow="Library and launch",
                 title="Library",
                 subtitle=(
-                    "Scan the current environment, check update guidance, and keep mod actions in the right rail."
+                    "Scan installed mods, check updates, and use the right-side actions."
                 ),
             )
         )
@@ -2463,7 +2463,7 @@ class MainWindow(QMainWindow):
         inspector_content_layout.setSpacing(8)
 
         inspector_intro = QLabel(
-            "Inspect guidance for the current selection and keep source intent, sandbox sync, and promotion together."
+            "Use the selected row for update guidance, source intent, and profile actions."
         )
         inspector_intro.setObjectName("mods_selection_context_intro_label")
         inspector_intro.setWordWrap(True)
@@ -2493,7 +2493,7 @@ class MainWindow(QMainWindow):
         selected_actions_layout.setContentsMargins(9, 8, 9, 9)
         selected_actions_layout.setSpacing(5)
         selected_actions_hint = QLabel(
-            "Archive to the configured archive or restore an archived copy."
+            "Archive the selected mod or restore an archived copy."
         )
         selected_actions_hint.setWordWrap(True)
         _set_auxiliary_label_style(selected_actions_hint)
@@ -2895,7 +2895,7 @@ class MainWindow(QMainWindow):
         inventory_controls_tabs.addTab(game_smapi_tab, "SMAPI")
 
         flow_hint_label = QLabel(
-            "Scanning and checking are read-only. Copy to sandbox, promote to real, apply install, apply recovery, and execute restore are the write actions."
+            "Scanning and checking are read-only. Copy, promote, install, recover, and restore are explicit write actions."
         )
         flow_hint_label.setWordWrap(True)
         flow_hint_label.setObjectName("compact_hint_label")
@@ -2989,7 +2989,7 @@ class MainWindow(QMainWindow):
         secondary_path_actions_layout.addStretch(1)
         watcher_layout.addWidget(secondary_path_actions_widget, 3, 1, 1, 4)
         watcher_scope_label = QLabel(
-            "Both watcher folders feed the same detected packages list."
+            "Both watcher folders feed one package queue."
         )
         watcher_scope_label.setWordWrap(True)
         _set_auxiliary_label_style(watcher_scope_label)
@@ -3092,7 +3092,7 @@ class MainWindow(QMainWindow):
         detected_layout.addWidget(queue_label, 5, 0, 1, 4)
         detected_layout.addWidget(self._package_queue_list, 6, 0, 1, 4)
         review_flow_label = QLabel(
-            "Check watched packages, then use Open Install to carry the batch into Install."
+            "Select packages, then use Open Install."
         )
         review_flow_label.setObjectName("packages_intake_review_flow_label")
         review_flow_label.setWordWrap(True)
@@ -3115,7 +3115,7 @@ class MainWindow(QMainWindow):
             object_name="packages_workspace_page",
             eyebrow="Watch downloaded packages",
             title="Packages",
-            subtitle="Watch package folders, queue packages, and hand the staged batch into Install.",
+            subtitle="Watch package folders, queue installs, and send batches to Install.",
             body_widget=intake_tab,
             scroll_body=True,
         )
@@ -3174,7 +3174,7 @@ class MainWindow(QMainWindow):
             object_name="compare_tab",
             eyebrow="Read-only drift orientation",
             title="Compare real and sandbox",
-            subtitle="Check actionable drift before you promote sandbox changes into the live Mods folder.",
+            subtitle="Check drift between real and sandbox before promoting changes.",
             body_widget=compare_tab,
             scroll_body=True,
         )
@@ -3204,7 +3204,7 @@ class MainWindow(QMainWindow):
         discovery_page_layout.setContentsMargins(0, 0, 0, 0)
         discovery_page_layout.setSpacing(6)
         discovery_intro_label = QLabel(
-            "Search for mod pages to source new installs or updates. Opening a page never installs anything by itself."
+            "Search for mod pages for installs or updates. Opening a page never installs anything by itself."
         )
         discovery_intro_label.setObjectName("discovery_intro_label")
         discovery_intro_label.setWordWrap(True)
@@ -3228,7 +3228,7 @@ class MainWindow(QMainWindow):
             object_name="discovery_workspace_page",
             eyebrow="Source new installs or updates",
             title="Discover mods",
-            subtitle="Search by name, UniqueID, or author. Opening a source page stays read-only.",
+            subtitle="Search by name, UniqueID, or author. Opening a page stays read-only.",
             body_widget=discovery_page_body,
             scroll_body=True,
         )
@@ -3276,7 +3276,7 @@ class MainWindow(QMainWindow):
         archive_page_layout.setContentsMargins(0, 0, 0, 0)
         archive_page_layout.setSpacing(6)
         archive_intro_label = QLabel(
-            "Browse archived folders from real and sandbox workflows. Restoring or deleting archived copies still requires an explicit action."
+            "Browse archived folders from real and sandbox workflows. Restore and delete stay explicit."
         )
         archive_intro_label.setObjectName("archive_intro_label")
         archive_intro_label.setWordWrap(True)
@@ -3303,7 +3303,7 @@ class MainWindow(QMainWindow):
             object_name="archive_workspace_page",
             eyebrow="Reversible history",
             title="Archive",
-            subtitle="Browse archived folders from live and sandbox workflows. Restore and delete stay explicit.",
+            subtitle="Browse archived folders from real and sandbox workflows.",
             body_widget=archive_page_body,
             scroll_body=True,
         )
@@ -3404,7 +3404,7 @@ class MainWindow(QMainWindow):
             object_name="review_workspace_page",
             eyebrow="Install before writing",
             title="Install",
-            subtitle="Confirm the package, destination, and safety summary before any write.",
+            subtitle="Confirm the package, destination, and safety summary before writing.",
             body_widget=plan_tab,
         )
         self._plan_install_tab = review_page
@@ -3468,7 +3468,7 @@ class MainWindow(QMainWindow):
             object_name="recovery_tab",
             eyebrow="Recorded rollback path",
             title="Recovery",
-            subtitle="Inspect recorded installs, check recovery safety, and only apply recovery when the review allows it.",
+            subtitle="Inspect recorded installs and apply recovery only when it looks safe.",
             body_widget=recovery_tab,
             scroll_body=True,
         )
@@ -3502,7 +3502,7 @@ class MainWindow(QMainWindow):
             object_name="setup_workspace_page",
             eyebrow="Configure once, reuse everywhere",
             title="Setup and migration",
-            subtitle="Set paths once. Backup, inspect, and restore stay available as secondary tools when you need them.",
+            subtitle="Set paths once. Backup and restore tools stay nearby when you need them.",
             body_widget=setup_scroll,
         )
         self._setup_scroll = setup_scroll

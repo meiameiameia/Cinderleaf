@@ -61,7 +61,7 @@ class TopContextSurface(QGroupBox):
         brand_title = QLabel("Live scan and write context")
         brand_title.setObjectName("top_context_brand_title")
         brand_subtitle = QLabel(
-            "Check scan source and install destination before compare, review, restore, or write."
+            "Check scan source and install target before compare, install, restore, or write."
         )
         brand_subtitle.setObjectName("top_context_brand_subtitle")
         brand_subtitle.setWordWrap(True)

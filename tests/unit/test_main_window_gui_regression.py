@@ -6119,10 +6119,10 @@ def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
     assert intro_label is not None
     assert execute_help_label is not None
     assert review_summary_label is not None
-    assert "generate the read-only install plan" in intro_label.text()
-    assert "apply only when the plan looks right" in intro_label.text()
+    assert "plan the install" in intro_label.text()
+    assert "apply only when it looks right" in intro_label.text()
     assert "Install planning is read-only." in execute_help_label.text()
-    assert "Apply install stays unavailable until the plan is ready." in execute_help_label.text()
+    assert "Apply install stays disabled until the plan is ready." in execute_help_label.text()
     assert "Click Plan install" in review_summary_label.text()
 
 
@@ -8165,7 +8165,7 @@ def test_main_window_mods_workspace_uses_compact_action_band_above_inventory(
     assert selected_actions_group.parentWidget() is main_window._mods_selection_context_scroll_area.widget()
 
 
-def test_main_window_selected_actions_hint_uses_configured_archive_wording(
+def test_main_window_selected_actions_hint_uses_friendly_archive_wording(
     main_window: MainWindow,
 ) -> None:
     selected_actions_group = main_window.findChild(QGroupBox, "mods_selected_actions_group")
@@ -8173,7 +8173,7 @@ def test_main_window_selected_actions_hint_uses_configured_archive_wording(
     assert selected_actions_group is not None
     labels = selected_actions_group.findChildren(QLabel)
     assert any(
-        label.text() == "Archive to the configured archive or restore an archived copy."
+        label.text() == "Archive the selected mod or restore an archived copy."
         for label in labels
     )
 

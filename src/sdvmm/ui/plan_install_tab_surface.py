@@ -53,7 +53,7 @@ class PlanInstallTabSurface(QWidget):
         layout.addWidget(scroll_area)
 
         intro_label = QLabel(
-            "Bring packages in from Packages, generate the read-only install plan, then apply only when the plan looks right."
+            "Bring packages in from Packages, plan the install, then apply only when it looks right."
         )
         intro_label.setObjectName("plan_install_intro_label")
         intro_label.setWordWrap(True)
@@ -78,7 +78,7 @@ class PlanInstallTabSurface(QWidget):
         destination_layout.addWidget(QLabel("Replace existing"), 1, 0)
         destination_layout.addWidget(overwrite_checkbox, 1, 1, 1, 2)
         overwrite_help_label = QLabel(
-            "Use archive-aware replace when planning into an existing target."
+            "Use archive-aware replace when the target already exists."
         )
         overwrite_help_label.setObjectName("plan_install_overwrite_help_label")
         overwrite_help_label.setWordWrap(True)
@@ -103,7 +103,7 @@ class PlanInstallTabSurface(QWidget):
         execute_layout.addLayout(plan_actions)
 
         caution_label = QLabel(
-            "Install planning is read-only. Apply install stays unavailable until the plan is ready."
+            "Install planning is read-only. Apply install stays disabled until the plan is ready."
         )
         caution_label.setObjectName("plan_install_execute_help_label")
         caution_label.setWordWrap(True)
