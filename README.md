@@ -8,6 +8,13 @@ Current project version: **1.3.0**
 
 If you want the full step-by-step walkthrough, start with the [User Manual](docs/USER_GUIDE.md).
 
+## Project snapshot
+
+- Windows-first, local-first desktop app for Stardew Valley mod management
+- built with Python, PySide6, pytest, and PyInstaller portable packaging
+- centered on review-before-write installs, sandbox-first testing, and read-only compare
+- shipped as a portable zip with GitHub Releases as the public distribution surface
+
 ## Why people use Cinderleaf
 
 - to make mod installs feel easier and less chaotic
@@ -134,7 +141,7 @@ dist\cinderleaf-1.3.0-windows-portable.zip.sha256
 - use GitHub Issues for bugs and feature requests
 - include the Cinderleaf version, Windows version, and which workspace or workflow was involved
 - if the issue involves install, archive, recovery, restore/import, or SMAPI troubleshooting, include the status text, plan summary, or error message shown by the app
-- code contributions and pull requests are not being actively accepted right now
+- external code contributions and pull requests are not actively open right now
 
 ## License
 
