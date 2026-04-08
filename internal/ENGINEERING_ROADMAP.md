@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-08` after the `1.3.1` patch release and product-direction reset toward broader mainstream appeal
+Last refreshed: `2026-04-08` after the `1.3.1` patch release, product-direction reset, and locked profile redesign audit
 
 ## Baseline
 
@@ -139,6 +139,11 @@ Bounded implementation order:
 3. add dependency-warning behavior on enable
 4. then revisit profile-related wording and docs
 
+Audit status:
+
+- the profile redesign audit is now locked in [internal/PROFILE_MODEL_REDESIGN_AUDIT.md](C:/Users/darth/Projects/stardew-mod-manager/internal/PROFILE_MODEL_REDESIGN_AUDIT.md)
+- the next step is implementation, not more product-direction drift
+
 ### Phase 3: Update And Install Experience
 
 Goal: make updates and installs feel fast, truthful, and stable.
@@ -212,11 +217,11 @@ Priority targets:
 
 ## Immediate Next Safe Increment
 
-`empty profile + enable-on-demand + dependency-warning audit`
+`empty custom profile creation foundation`
 
 Reason:
 
-- it is the clearest product gap between Cinderleaf’s current behavior and mainstream mod-manager expectations
-- it solves a real current annoyance: slow profile creation and noisy junction creation behavior
-- it improves both product competitiveness and future UI simplification
-- it gives the next implementation slices a stable product model instead of more drift
+- the audit is now complete and the target model is locked
+- it solves the slow, clone-heavy custom-profile creation behavior directly
+- it is the smallest code slice that moves the app toward a simpler mainstream profile mental model
+- it keeps later dependency-warning and UI-truthfulness work grounded on a stable foundation
