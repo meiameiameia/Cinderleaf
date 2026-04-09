@@ -43,5 +43,10 @@ artifacts/
 /cinderleaf-*.zip
 /stardew-mod-manager-*.zip
 
+# Local workflow-only files that must stay out of the public repo
+/AGENTS.md
+/ARCHITECT_NOTES.md
+/.github/PULL_REQUEST_TEMPLATE.md
+
 # Local internal prototypes / mockups kept outside the public repo surface
 /docs/internal/
