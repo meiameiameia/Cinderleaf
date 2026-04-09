@@ -169,8 +169,9 @@ Bounded implementation order:
 
 1. audit and lock the desired data/model behavior
 2. redesign profile creation UI and service semantics
-3. add dependency-warning behavior on enable
-4. then revisit profile-related wording and docs
+3. restore grouped multi-folder profile membership behavior so grouped mods can be added or removed as one logical entry
+4. add dependency-warning behavior on enable
+5. then revisit profile-related wording and docs
 
 Audit status:
 
@@ -219,6 +220,10 @@ Priority targets:
 4. workspace shell simplification
 - continue simplifying workspace shells so the mod/task content wins over surrounding UI furniture
 - favor compact context cards and lighter always-visible framing
+- likely early candidates:
+  - collapsible top session/status strip
+  - optional icon-only workspace rail
+  - a less always-open details panel in `Library`
 
 ### Phase 5: Maintainability And Decomposition
 
@@ -269,10 +274,11 @@ These matter, but they are not the next engineering slice:
 
 ## Immediate Next Safe Increment
 
-`profile membership truthfulness pass`
+`grouped multi-folder profile membership in custom profiles`
 
 Reason:
 
-- the empty-profile foundation is now landed
-- the next product risk is inconsistency between custom-profile membership truth and what the UI/status surfaces communicate
-- it keeps the roadmap moving toward the dependency-warning slice without widening into templates or automation
+- the empty-profile foundation and membership-truthfulness pass are now landed
+- the next product bug is that grouped multi-folder mods stop behaving like one logical entry inside custom profiles
+- this directly hurts the mainstream profile workflow because users have to toggle grouped mods one folder at a time
+- it should land before dependency warnings or chrome compression because it is a correctness and usability gap in the core profile model
