@@ -4627,6 +4627,108 @@ def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
     assert main_window._status_strip_label.text() == "Removed from sandbox profile: Alpha Mod"
 
 
+def test_main_window_sandbox_toggle_cancel_restores_checkbox_when_enable_would_leave_missing_dependencies(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    default_profile = SandboxModProfile(profile_id="default", name="Default", is_default=True)
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        sandbox_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    alpha_path = sandbox_mods_root / "AlphaMod"
+    inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=alpha_path,
+                manifest_path=alpha_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+        ),
+    )
+    question_calls: list[dict[str, object]] = []
+    operation_names: list[str] = []
+
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        question_calls.append({"title": args[1], "text": args[2]})
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda **kwargs: operation_names.append(str(kwargs["operation_name"])),
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    alpha_item = main_window._mods_table.item(alpha_row, 0)
+    assert alpha_item is not None
+    assert alpha_item.checkState() == Qt.CheckState.Unchecked
+
+    alpha_item.setCheckState(Qt.CheckState.Checked)
+    qapp.processEvents()
+
+    assert operation_names == []
+    assert len(question_calls) == 1
+    assert question_calls[0]["title"] == "Enable with missing dependencies?"
+    assert "Alpha Only" in str(question_calls[0]["text"])
+    assert "Sample.Framework" in str(question_calls[0]["text"])
+    updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    updated_item = main_window._mods_table.item(updated_row, 0)
+    assert updated_item is not None
+    assert updated_item.checkState() == Qt.CheckState.Unchecked
+    assert main_window._status_strip_label.text() == "Add to sandbox profile cancelled: Alpha Mod"
+
+
 def test_main_window_create_sandbox_profile_dispatches_create_operation(
     main_window: MainWindow,
     qapp: QApplication,
@@ -5060,6 +5162,134 @@ def test_main_window_real_toggle_checkbox_dispatches_toggle_operation(
     assert updated_item.checkState() == Qt.CheckState.Unchecked
     assert updated_status.text() == "not_in_profile"
     assert main_window._status_strip_label.text() == "Removed from real profile: Alpha Mod"
+
+
+def test_main_window_real_toggle_confirms_before_enabling_when_dependencies_would_be_missing(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+    default_profile = SandboxModProfile(profile_id="default", name="Default", is_default=True)
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_real_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    alpha_path = real_mods_root / "AlphaMod"
+    inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=alpha_path,
+                manifest_path=alpha_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+        ),
+    )
+    enabled_inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=profile_root / "AlphaMod",
+                manifest_path=profile_root / "AlphaMod" / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    captured: dict[str, object] = {}
+    question_calls: list[dict[str, object]] = []
+
+    def fake_toggle(**kwargs: object) -> ScanResult:
+        captured["toggle_kwargs"] = kwargs
+        return ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=enabled_inventory,
+        )
+
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        question_calls.append({"title": args[1], "text": args[2]})
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    alpha_item = main_window._mods_table.item(alpha_row, 0)
+    assert alpha_item is not None
+
+    alpha_item.setCheckState(Qt.CheckState.Checked)
+    qapp.processEvents()
+
+    toggle_kwargs = captured.get("toggle_kwargs")
+    assert captured.get("operation_names") == ["Real profile mod toggle"]
+    assert isinstance(toggle_kwargs, dict)
+    assert toggle_kwargs["mod_folder_path_text"] == str(alpha_path)
+    assert toggle_kwargs["enabled"] is True
+    assert len(question_calls) == 1
+    assert question_calls[0]["title"] == "Enable with missing dependencies?"
+    assert "Alpha Only" in str(question_calls[0]["text"])
+    assert "Sample.Framework" in str(question_calls[0]["text"])
 
 
 def test_main_window_real_container_rows_share_profile_toggle_ownership(

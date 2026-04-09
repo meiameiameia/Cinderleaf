@@ -10147,6 +10147,30 @@ class MainWindow(QMainWindow):
             return
 
         current_target = self._current_scan_target()
+        if desired_enabled:
+            try:
+                if not self._confirm_profile_enable_with_missing_dependencies(
+                    current_target=current_target,
+                    mod_name=mod_name,
+                    mod_folder_path=mod_folder_path,
+                ):
+                    self._restore_inventory_after_failed_toggle()
+                    profile_kind = (
+                        "real"
+                        if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS
+                        else "sandbox"
+                    )
+                    self._set_status(f"Add to {profile_kind} profile cancelled: {mod_name}")
+                    return
+            except AppShellError as exc:
+                self._restore_inventory_after_failed_toggle()
+                profile_kind = (
+                    "Real" if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS else "Sandbox"
+                )
+                QMessageBox.warning(self, "Profile toggle unavailable", str(exc))
+                self._set_status(f"{profile_kind} mod toggle failed: {exc}")
+                return
+
         if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             self._run_background_operation(
                 operation_name="Real profile mod toggle",
@@ -10197,6 +10221,57 @@ class MainWindow(QMainWindow):
             ),
             on_failure=lambda _message: self._restore_inventory_after_failed_toggle(),
         )
+
+    def _confirm_profile_enable_with_missing_dependencies(
+        self,
+        *,
+        current_target: str,
+        mod_name: str,
+        mod_folder_path: str,
+    ) -> bool:
+        if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
+            current_scan_result = self._cached_scan_result_for_target(
+                SCAN_TARGET_CONFIGURED_REAL_MODS
+            )
+            selected_profile = self._selected_real_profile()
+            canonical_root_text = self._mods_path_input.text()
+            profile_label = "real"
+        elif current_target == SCAN_TARGET_SANDBOX_MODS:
+            current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_SANDBOX_MODS)
+            selected_profile = self._selected_sandbox_profile()
+            canonical_root_text = self._sandbox_mods_path_input.text()
+            profile_label = "sandbox"
+        else:
+            return True
+
+        if current_scan_result is None:
+            raise AppShellError("Scan the active profile before toggling mods.")
+        if selected_profile is None:
+            raise AppShellError("Select a custom profile before toggling mods.")
+
+        messages = self._shell_service.preview_profile_enable_missing_required_dependencies(
+            inventory=self._current_inventory_or_empty(),
+            active_profile_root_text=str(current_scan_result.scan_path),
+            canonical_mods_root_text=canonical_root_text,
+            mod_folder_path_text=mod_folder_path,
+        )
+        if not messages:
+            return True
+
+        confirm = QMessageBox.question(
+            self,
+            "Enable with missing dependencies?",
+            (
+                f"Adding {mod_name} to {profile_label} profile \"{selected_profile.name}\" "
+                "would leave required dependencies missing in that same active profile.\n\n"
+                "Missing required dependencies:\n"
+                + "\n".join(f"- {message}" for message in messages)
+                + "\n\nAdd it anyway?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return confirm == QMessageBox.StandardButton.Yes
 
     def _restore_inventory_after_failed_toggle(self) -> None:
         if self._current_inventory is None:

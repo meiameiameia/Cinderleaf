@@ -2615,6 +2615,62 @@ class AppShellService:
             self._save_normalized_real_profile_catalog(rescan_catalog)
         return scan_result
 
+    def preview_profile_enable_missing_required_dependencies(
+        self,
+        *,
+        inventory: ModsInventory,
+        active_profile_root_text: str,
+        canonical_mods_root_text: str,
+        mod_folder_path_text: str,
+    ) -> tuple[str, ...]:
+        active_profile_root = Path(
+            os.path.abspath(os.path.normpath(str(Path(active_profile_root_text).expanduser())))
+        )
+        canonical_mods_root = Path(
+            os.path.abspath(os.path.normpath(str(Path(canonical_mods_root_text).expanduser())))
+        )
+        mod_folder_path = Path(
+            os.path.abspath(os.path.normpath(str(Path(mod_folder_path_text).expanduser())))
+        )
+        entry_state = _profile_entry_state_for_mod(
+            inventory=inventory,
+            roots=(active_profile_root, canonical_mods_root),
+            mod_folder_path=mod_folder_path,
+        )
+        if entry_state is None:
+            raise AppShellError("Only top-level profile entries can be toggled right now.")
+        if entry_state.enabled:
+            return tuple()
+
+        enabled_mods = list(inventory.mods)
+        enabled_mod_paths = {_path_lookup_key(mod.folder_path) for mod in enabled_mods}
+        for mod in entry_state.mods:
+            mod_path_key = _path_lookup_key(mod.folder_path)
+            if mod_path_key in enabled_mod_paths:
+                continue
+            enabled_mods.append(mod)
+            enabled_mod_paths.add(mod_path_key)
+
+        selected_unique_ids = {
+            canonicalize_unique_id(mod.unique_id) or mod.unique_id.strip().casefold()
+            for mod in entry_state.mods
+            if mod.unique_id.strip()
+        }
+        if not selected_unique_ids:
+            return tuple()
+
+        missing_findings = tuple(
+            finding
+            for finding in evaluate_installed_dependencies(tuple(enabled_mods))
+            if finding.state == MISSING_REQUIRED_DEPENDENCY
+            and (
+                canonicalize_unique_id(finding.required_by_unique_id)
+                or finding.required_by_unique_id.strip().casefold()
+            )
+            in selected_unique_ids
+        )
+        return summarize_missing_required_dependencies(missing_findings)
+
     def load_sandbox_mod_profiles(self) -> SandboxModProfileCatalog:
         try:
             catalog = load_sandbox_mod_profile_catalog(self._sandbox_mod_profile_catalog_file)

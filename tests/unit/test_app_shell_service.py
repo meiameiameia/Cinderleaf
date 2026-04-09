@@ -28,11 +28,14 @@ from sdvmm.app.shell_service import (
 from sdvmm.domain.models import (
     AppUpdateStatus,
     AppConfig,
+    InstalledMod,
     InstallExecutionSummary,
     InstallOperationEntryRecord,
     InstallOperationRecord,
+    ManifestDependency,
     ModDiscoveryEntry,
     ModDiscoveryResult,
+    ModsInventory,
     SandboxModProfile,
     SandboxModProfileCatalog,
     SandboxModProfileEntry,
@@ -256,6 +259,94 @@ def test_clear_update_source_intent_removes_matching_record(tmp_path: Path) -> N
     )
     assert service.get_update_source_intent("sample.private") is None
     assert service.get_update_source_intent("sample.keep") == updated.records[0]
+
+
+def test_preview_profile_enable_missing_required_dependencies_reports_selected_entry_gaps(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile_root = tmp_path / "Profiles" / "Sandbox Mods" / "alpha" / "Mods"
+    canonical_root = tmp_path / "SandboxMods"
+    alpha_path = canonical_root / "AlphaMod"
+    inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=alpha_path,
+                manifest_path=alpha_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+        ),
+    )
+
+    messages = service.preview_profile_enable_missing_required_dependencies(
+        inventory=inventory,
+        active_profile_root_text=str(profile_root),
+        canonical_mods_root_text=str(canonical_root),
+        mod_folder_path_text=str(alpha_path),
+    )
+
+    assert messages == (
+        "Alpha Mod (Sample.Alpha) is missing required dependency Sample.Framework. Install dependency first.",
+    )
+
+
+def test_preview_profile_enable_missing_required_dependencies_ignores_unrelated_existing_gaps(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile_root = tmp_path / "Profiles" / "Real Mods" / "alpha" / "Mods"
+    canonical_root = tmp_path / "RealMods"
+    enabled_path = profile_root / "ExistingMod"
+    alpha_path = canonical_root / "AlphaMod"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Exists",
+                name="Existing Mod",
+                version="1.0.0",
+                folder_path=enabled_path,
+                manifest_path=enabled_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=alpha_path,
+                manifest_path=alpha_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+
+    messages = service.preview_profile_enable_missing_required_dependencies(
+        inventory=inventory,
+        active_profile_root_text=str(profile_root),
+        canonical_mods_root_text=str(canonical_root),
+        mod_folder_path_text=str(alpha_path),
+    )
+
+    assert messages == tuple()
 
 
 def test_set_sandbox_mod_enabled_state_rejects_toggling_default_profile(tmp_path: Path) -> None:
