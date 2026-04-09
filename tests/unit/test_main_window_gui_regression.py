@@ -1665,6 +1665,87 @@ def test_main_window_top_context_surface_has_expected_panels(main_window: MainWi
     assert active_context_panel is not None
 
 
+def test_main_window_top_context_defaults_expanded_with_visible_workflow_strip(
+    main_window: MainWindow,
+) -> None:
+    top_context_header = main_window.findChild(QWidget, "top_context_header")
+    top_context_body = main_window.findChild(QWidget, "top_context_body")
+    top_context_toggle = main_window.findChild(QPushButton, "top_context_toggle_button")
+    top_context_group = main_window.findChild(QGroupBox, "top_context_surface_group")
+    status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
+
+    assert top_context_header is not None
+    assert top_context_body is not None
+    assert top_context_toggle is not None
+    assert top_context_group is not None
+    assert status_strip_group is not None
+    assert top_context_header.isVisible() is True
+    assert top_context_body.isVisible() is True
+    assert top_context_group.isVisible() is True
+    assert status_strip_group.isVisible() is True
+    assert status_strip_group.parentWidget() is not top_context_group
+    assert status_strip_group.parentWidget() == top_context_group.parentWidget()
+    assert top_context_toggle.text() == "Hide details"
+    assert main_window.findChild(QLabel, "session_shell_summary_label") is None
+
+
+def test_main_window_top_context_toggle_collapses_only_top_context_body(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    top_context_body = main_window.findChild(QWidget, "top_context_body")
+    top_context_toggle = main_window.findChild(QPushButton, "top_context_toggle_button")
+    top_context_group = main_window.findChild(QGroupBox, "top_context_surface_group")
+    status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
+    brand_panel = main_window.findChild(QWidget, "top_context_brand_panel")
+    operations_panel = main_window.findChild(QWidget, "top_context_operational_panel")
+
+    assert top_context_body is not None
+    assert top_context_toggle is not None
+    assert top_context_group is not None
+    assert status_strip_group is not None
+    assert brand_panel is not None
+    assert operations_panel is not None
+
+    top_context_toggle.click()
+    qapp.processEvents()
+
+    assert top_context_body.isHidden() is True
+    assert top_context_group.isVisible() is True
+    assert status_strip_group.isVisible() is True
+    assert brand_panel.isVisible() is False
+    assert operations_panel.isVisible() is False
+    assert top_context_toggle.text() == "Show details"
+
+    top_context_toggle.click()
+    qapp.processEvents()
+
+    assert top_context_body.isVisible() is True
+    assert top_context_group.isVisible() is True
+    assert status_strip_group.isVisible() is True
+    assert brand_panel.isVisible() is True
+    assert operations_panel.isVisible() is True
+    assert top_context_toggle.text() == "Hide details"
+
+
+def test_main_window_top_context_toggle_sits_in_header(
+    main_window: MainWindow,
+) -> None:
+    top_context_header = main_window.findChild(QWidget, "top_context_header")
+    top_context_toggle = main_window.findChild(QPushButton, "top_context_toggle_button")
+
+    assert top_context_header is not None
+    assert top_context_toggle is not None
+    assert top_context_toggle.parentWidget() is top_context_header
+    assert top_context_toggle.isVisible() is True
+
+
+def test_main_window_removes_duplicate_session_strip_summary_copy(
+    main_window: MainWindow,
+) -> None:
+    assert main_window.findChild(QLabel, "session_shell_summary_label") is None
+
+
 def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     main_window: MainWindow,
 ) -> None:

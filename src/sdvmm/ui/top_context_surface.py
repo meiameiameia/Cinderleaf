@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QGridLayout
 from PySide6.QtWidgets import QGroupBox
 from PySide6.QtWidgets import QHBoxLayout
 from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QPushButton
 from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
@@ -25,11 +26,13 @@ class TopContextSurface(QGroupBox):
         sandbox_launch_status_label: QLabel,
         scan_context_label: QLabel,
         install_context_label: QLabel,
+        collapse_toggle_button: QPushButton,
     ) -> None:
         super().__init__("")
         self.setObjectName("top_context_surface_group")
         self.setFlat(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setProperty("shellRole", "session_context")
 
         for value_label in (
             environment_status_label,
@@ -44,9 +47,41 @@ class TopContextSurface(QGroupBox):
         ):
             _prepare_context_value_label(value_label)
 
-        context_layout = QHBoxLayout(self)
+        context_layout = QVBoxLayout(self)
         context_layout.setContentsMargins(6, 6, 6, 6)
-        context_layout.setSpacing(8)
+        context_layout.setSpacing(6)
+
+        header_panel = QWidget()
+        header_panel.setObjectName("top_context_header")
+        header_layout = QHBoxLayout(header_panel)
+        header_layout.setContentsMargins(2, 0, 2, 0)
+        header_layout.setSpacing(8)
+
+        header_text_stack = QWidget()
+        header_text_stack.setObjectName("top_context_header_text_stack")
+        header_text_layout = QVBoxLayout(header_text_stack)
+        header_text_layout.setContentsMargins(0, 0, 0, 0)
+        header_text_layout.setSpacing(1)
+
+        brand_eyebrow = QLabel("Session context")
+        brand_eyebrow.setObjectName("top_context_brand_eyebrow")
+        brand_title = QLabel("Live scan and write context")
+        brand_title.setObjectName("top_context_brand_title")
+        brand_title.setWordWrap(True)
+        header_text_layout.addWidget(brand_eyebrow)
+        header_text_layout.addWidget(brand_title)
+        header_layout.addWidget(header_text_stack, 1)
+        header_layout.addWidget(
+            collapse_toggle_button,
+            0,
+            Qt.AlignmentFlag.AlignTop,
+        )
+
+        body_panel = QWidget()
+        body_panel.setObjectName("top_context_body")
+        body_layout = QHBoxLayout(body_panel)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(8)
 
         brand_panel = QWidget()
         brand_panel.setObjectName("top_context_brand_panel")
@@ -56,10 +91,6 @@ class TopContextSurface(QGroupBox):
         brand_layout.setContentsMargins(10, 8, 10, 8)
         brand_layout.setSpacing(3)
 
-        brand_eyebrow = QLabel("Session context")
-        brand_eyebrow.setObjectName("top_context_brand_eyebrow")
-        brand_title = QLabel("Live scan and write context")
-        brand_title.setObjectName("top_context_brand_title")
         brand_subtitle = QLabel(
             "Check scan source and install target before compare, install, restore, or write."
         )
@@ -86,8 +117,6 @@ class TopContextSurface(QGroupBox):
         active_context_layout.setColumnStretch(1, 1)
         active_context_container_layout.addLayout(active_context_layout)
 
-        brand_layout.addWidget(brand_eyebrow)
-        brand_layout.addWidget(brand_title)
         brand_layout.addWidget(brand_subtitle)
         brand_layout.addWidget(active_context_group)
         brand_layout.addStretch(1)
@@ -154,14 +183,21 @@ class TopContextSurface(QGroupBox):
         operations_columns_layout.addWidget(runtime_group, 1)
         operations_container_layout.addLayout(operations_columns_layout)
 
-        context_layout.addWidget(brand_panel, 11)
-        context_layout.addWidget(operations_group, 12)
+        body_layout.addWidget(brand_panel, 11)
+        body_layout.addWidget(operations_group, 12)
+        context_layout.addWidget(header_panel)
+        context_layout.addWidget(body_panel)
 
+        self.header_panel = header_panel
+        self.body_panel = body_panel
         self.brand_panel = brand_panel
         self.operations_group = operations_group
         self.environment_group = environment_group
         self.runtime_group = runtime_group
         self.active_context_group = active_context_group
+
+    def set_details_expanded(self, expanded: bool) -> None:
+        self.body_panel.setVisible(expanded)
 
 
 def _context_caption(text: str) -> QLabel:

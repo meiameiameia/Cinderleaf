@@ -17,6 +17,7 @@ class GlobalStatusStrip(QGroupBox):
         self.setObjectName("global_status_strip_group")
         self.setFlat(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setProperty("shellRole", "workflow_status")
         self.setMinimumHeight(58)
 
         self.current_status_label = QLabel("Waiting for action.")
@@ -38,6 +39,10 @@ class GlobalStatusStrip(QGroupBox):
             _build_status_panel("Current", self.current_status_label),
             1,
         )
+
+    def current_status_text(self) -> str:
+        text = self.current_status_label.text().strip()
+        return text or "Waiting for action."
 
 
 def _build_status_panel(title: str, value_label: QLabel) -> QWidget:

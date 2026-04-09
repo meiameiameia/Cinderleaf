@@ -1948,6 +1948,11 @@ class MainWindow(QMainWindow):
 
         self._status_strip_group = GlobalStatusStrip()
         self._status_strip_label = self._status_strip_group.current_status_label
+        self._top_context_expanded = True
+        self._top_context_toggle_button = QPushButton("Hide details")
+        self._top_context_toggle_button.setObjectName("top_context_toggle_button")
+        self._top_context_toggle_button.clicked.connect(self._toggle_top_context_surface)
+        _set_utility_button_style(self._top_context_toggle_button)
         self._scan_context_label = QLabel("Not set")
         self._scan_context_label.setObjectName("top_context_scan_source_value")
         self._install_context_label = QLabel("Not set")
@@ -3544,10 +3549,29 @@ class MainWindow(QMainWindow):
             sandbox_launch_status_label=self._sandbox_launch_status_label,
             scan_context_label=self._scan_context_label,
             install_context_label=self._install_context_label,
+            collapse_toggle_button=self._top_context_toggle_button,
         )
         self._context_group = context_group
+        self._set_top_context_surface_expanded(expanded=self._top_context_expanded)
         _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
         return context_group
+
+    def _set_top_context_surface_expanded(self, *, expanded: bool) -> None:
+        self._top_context_expanded = expanded
+        if hasattr(self, "_context_group"):
+            self._context_group.set_details_expanded(expanded)
+        self._top_context_toggle_button.setText(
+            "Hide details" if expanded else "Show details"
+        )
+        self._top_context_toggle_button.setToolTip(
+            "Collapse the top context surface."
+            if expanded
+            else "Expand the top context surface."
+        )
+        self._refresh_responsive_panel_bounds()
+
+    def _toggle_top_context_surface(self) -> None:
+        self._set_top_context_surface_expanded(expanded=not self._top_context_expanded)
 
     def _build_workspace_shell(self, *, context_tabs: QTabWidget) -> QFrame:
         workspace_shell = QFrame()
@@ -3610,6 +3634,8 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(5)
 
         root_layout.addWidget(self._build_top_context_surface())
+        root_layout.addWidget(self._status_strip_group)
+        _apply_surface_shadow(self._status_strip_group, blur_radius=14, y_offset=1, alpha=44)
 
         setup_scroll = self._build_setup_workspace_surface()
 
@@ -3622,9 +3648,6 @@ class MainWindow(QMainWindow):
         )
 
         root_layout.addWidget(self._build_workspace_shell(context_tabs=context_tabs), 1)
-
-        root_layout.addWidget(self._status_strip_group)
-        _apply_surface_shadow(self._status_strip_group, blur_radius=14, y_offset=1, alpha=44)
         self._initialize_background_action_buttons()
 
         self.setCentralWidget(container)
