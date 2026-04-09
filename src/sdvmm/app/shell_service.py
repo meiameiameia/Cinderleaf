@@ -329,8 +329,8 @@ class RealModProfileDeleteResult:
 
 @dataclass(frozen=True, slots=True)
 class _ProfileEntryState:
-    folder_name: str
-    entry_path: Path
+    folder_names: tuple[str, ...]
+    entry_paths: tuple[Path, ...]
     enabled: bool
     mods: tuple[InstalledMod, ...]
 
@@ -2411,50 +2411,63 @@ class AppShellService:
             )
 
         mod_folder_path = Path(os.path.abspath(os.path.normpath(str(Path(mod_folder_path_text).expanduser()))))
-        profile_inventory = self._scan_sandbox_inventory_for_profiles(
-            sandbox_mods_path=profile_root,
-            sandbox_archive_path_text=sandbox_archive_path_text,
-            existing_config=existing_config,
-        )
-        canonical_inventory = self._scan_sandbox_inventory_for_profiles(
+        current_scan_result, updated_catalog, _ = self._scan_selected_sandbox_profile(
             sandbox_mods_path=sandbox_mods_path,
             sandbox_archive_path_text=sandbox_archive_path_text,
             existing_config=existing_config,
+            catalog=updated_catalog,
+            requested_profile_id=profile.profile_id,
         )
         entry_state = _profile_entry_state_for_mod(
-            inventory=profile_inventory,
-            root=profile_root,
-            mod_folder_path=mod_folder_path,
-        ) or _profile_entry_state_for_mod(
-            inventory=canonical_inventory,
-            root=sandbox_mods_path,
+            inventory=current_scan_result.inventory,
+            roots=(profile_root, sandbox_mods_path),
             mod_folder_path=mod_folder_path,
         )
         if entry_state is None:
             raise AppShellError("Only top-level sandbox profile entries can be toggled right now.")
-        folder_name = entry_state.folder_name
-        canonical_mod_path = sandbox_mods_path / folder_name
-        if not canonical_mod_path.exists():
+        canonical_member_paths = tuple(
+            sandbox_mods_path / folder_name
+            for folder_name in entry_state.folder_names
+        )
+        missing_canonical_paths = tuple(path for path in canonical_member_paths if not path.exists())
+        if missing_canonical_paths:
             raise AppShellError(
-                "Sandbox profile toggle is blocked because the canonical mod folder is missing: "
-                f"{canonical_mod_path}"
+                "Sandbox profile toggle is blocked because canonical mod folders are missing: "
+                + ", ".join(str(path) for path in missing_canonical_paths)
             )
 
-        profile_mod_path = profile_root / folder_name
-        performed_action: Literal["created", "removed"] | None = None
+        profile_member_paths = tuple(
+            profile_root / folder_name
+            for folder_name in entry_state.folder_names
+        )
+        created_paths: list[Path] = []
+        removed_pairs: list[tuple[Path, Path]] = []
+        entry_label = _profile_entry_state_label(entry_state)
         try:
             if enabled:
-                if profile_mod_path.exists():
-                    raise AppShellError(f"Sandbox mod is already enabled in profile: {folder_name}")
-                _create_directory_link(profile_mod_path, canonical_mod_path)
-                performed_action = "created"
+                paths_to_create = [
+                    (profile_path, canonical_path)
+                    for profile_path, canonical_path in zip(profile_member_paths, canonical_member_paths)
+                    if not profile_path.exists()
+                ]
+                if not paths_to_create:
+                    raise AppShellError(f"Sandbox mod is already enabled in profile: {entry_label}")
+                for profile_path, canonical_path in paths_to_create:
+                    _create_directory_link(profile_path, canonical_path)
+                    created_paths.append(profile_path)
             else:
-                if not profile_mod_path.exists():
+                paths_to_remove = [
+                    (profile_path, canonical_path)
+                    for profile_path, canonical_path in zip(profile_member_paths, canonical_member_paths)
+                    if profile_path.exists()
+                ]
+                if not paths_to_remove:
                     raise AppShellError(
-                        f"Sandbox mod is already disabled in profile: {folder_name}"
+                        f"Sandbox mod is already disabled in profile: {entry_label}"
                     )
-                _remove_directory_link(profile_mod_path)
-                performed_action = "removed"
+                for profile_path, canonical_path in paths_to_remove:
+                    _remove_directory_link(profile_path)
+                    removed_pairs.append((profile_path, canonical_path))
 
             scan_result, rescan_catalog, _ = self._scan_selected_sandbox_profile(
                 sandbox_mods_path=sandbox_mods_path,
@@ -2466,10 +2479,14 @@ class AppShellService:
         except (OSError, AppShellError) as exc:
             rollback_error: OSError | None = None
             try:
-                if performed_action == "created" and profile_mod_path.exists():
-                    _remove_directory_link(profile_mod_path)
-                elif performed_action == "removed" and not profile_mod_path.exists():
-                    _create_directory_link(profile_mod_path, canonical_mod_path)
+                if enabled:
+                    for profile_path in reversed(created_paths):
+                        if profile_path.exists():
+                            _remove_directory_link(profile_path)
+                else:
+                    for profile_path, canonical_path in reversed(removed_pairs):
+                        if not profile_path.exists():
+                            _create_directory_link(profile_path, canonical_path)
             except OSError as rollback_exc:
                 rollback_error = rollback_exc
             message = f"Could not {'enable' if enabled else 'disable'} sandbox profile mod: {exc}"
@@ -2514,47 +2531,61 @@ class AppShellService:
             )
 
         mod_folder_path = Path(os.path.abspath(os.path.normpath(str(Path(mod_folder_path_text).expanduser()))))
-        profile_inventory = self._scan_real_inventory_for_profiles(
-            real_mods_path=profile_root,
-            existing_config=existing_config,
-        )
-        canonical_inventory = self._scan_real_inventory_for_profiles(
+        current_scan_result, updated_catalog, _ = self._scan_selected_real_profile(
             real_mods_path=real_mods_path,
             existing_config=existing_config,
+            catalog=updated_catalog,
+            requested_profile_id=profile.profile_id,
         )
         entry_state = _profile_entry_state_for_mod(
-            inventory=profile_inventory,
-            root=profile_root,
-            mod_folder_path=mod_folder_path,
-        ) or _profile_entry_state_for_mod(
-            inventory=canonical_inventory,
-            root=real_mods_path,
+            inventory=current_scan_result.inventory,
+            roots=(profile_root, real_mods_path),
             mod_folder_path=mod_folder_path,
         )
         if entry_state is None:
             raise AppShellError("Only top-level real profile entries can be toggled right now.")
 
-        folder_name = entry_state.folder_name
-        canonical_mod_path = real_mods_path / folder_name
-        if not canonical_mod_path.exists():
+        canonical_member_paths = tuple(
+            real_mods_path / folder_name
+            for folder_name in entry_state.folder_names
+        )
+        missing_canonical_paths = tuple(path for path in canonical_member_paths if not path.exists())
+        if missing_canonical_paths:
             raise AppShellError(
-                "Real profile toggle is blocked because the canonical mod folder is missing: "
-                f"{canonical_mod_path}"
+                "Real profile toggle is blocked because canonical mod folders are missing: "
+                + ", ".join(str(path) for path in missing_canonical_paths)
             )
 
-        profile_mod_path = profile_root / folder_name
-        performed_action: str | None = None
+        profile_member_paths = tuple(
+            profile_root / folder_name
+            for folder_name in entry_state.folder_names
+        )
+        created_paths: list[Path] = []
+        removed_pairs: list[tuple[Path, Path]] = []
+        entry_label = _profile_entry_state_label(entry_state)
         try:
             if enabled:
-                if profile_mod_path.exists():
-                    raise AppShellError(f"Real mod is already enabled in profile: {folder_name}")
-                _create_directory_link(profile_mod_path, canonical_mod_path)
-                performed_action = "created"
+                paths_to_create = [
+                    (profile_path, canonical_path)
+                    for profile_path, canonical_path in zip(profile_member_paths, canonical_member_paths)
+                    if not profile_path.exists()
+                ]
+                if not paths_to_create:
+                    raise AppShellError(f"Real mod is already enabled in profile: {entry_label}")
+                for profile_path, canonical_path in paths_to_create:
+                    _create_directory_link(profile_path, canonical_path)
+                    created_paths.append(profile_path)
             else:
-                if not profile_mod_path.exists():
-                    raise AppShellError(f"Real mod is already disabled in profile: {folder_name}")
-                _remove_directory_link(profile_mod_path)
-                performed_action = "removed"
+                paths_to_remove = [
+                    (profile_path, canonical_path)
+                    for profile_path, canonical_path in zip(profile_member_paths, canonical_member_paths)
+                    if profile_path.exists()
+                ]
+                if not paths_to_remove:
+                    raise AppShellError(f"Real mod is already disabled in profile: {entry_label}")
+                for profile_path, canonical_path in paths_to_remove:
+                    _remove_directory_link(profile_path)
+                    removed_pairs.append((profile_path, canonical_path))
 
             scan_result, rescan_catalog, _ = self._scan_selected_real_profile(
                 real_mods_path=real_mods_path,
@@ -2565,10 +2596,14 @@ class AppShellService:
         except (OSError, AppShellError) as exc:
             rollback_error: OSError | None = None
             try:
-                if performed_action == "created" and profile_mod_path.exists():
-                    _remove_directory_link(profile_mod_path)
-                elif performed_action == "removed" and not profile_mod_path.exists():
-                    _create_directory_link(profile_mod_path, canonical_mod_path)
+                if enabled:
+                    for profile_path in reversed(created_paths):
+                        if profile_path.exists():
+                            _remove_directory_link(profile_path)
+                else:
+                    for profile_path, canonical_path in reversed(removed_pairs):
+                        if not profile_path.exists():
+                            _create_directory_link(profile_path, canonical_path)
             except OSError as rollback_exc:
                 rollback_error = rollback_exc
             message = f"Could not {'enable' if enabled else 'disable'} real profile mod: {exc}"
@@ -3064,18 +3099,18 @@ class AppShellService:
             sandbox_archive_path_text=sandbox_archive_path_text,
             existing_config=existing_config,
         )
-        profile_state_by_folder, _ = _build_profile_entry_state_maps(
+        profile_state_by_key, _ = _build_profile_entry_state_maps(
             inventory=profile_inventory,
-            root=profile_root,
+            roots=(profile_root,),
         )
-        canonical_state_by_folder, _ = _build_profile_entry_state_maps(
+        canonical_state_by_key, _ = _build_profile_entry_state_maps(
             inventory=canonical_inventory,
-            root=sandbox_mods_path,
+            roots=(sandbox_mods_path,),
         )
         disabled_rows = tuple(
             mod
-            for key, state in sorted(canonical_state_by_folder.items())
-            if key not in profile_state_by_folder
+            for key, state in sorted(canonical_state_by_key.items())
+            if key not in profile_state_by_key
             for mod in state.mods
         )
         inventory = replace(
@@ -3148,18 +3183,18 @@ class AppShellService:
             real_mods_path=real_mods_path,
             existing_config=existing_config,
         )
-        profile_state_by_folder, _ = _build_profile_entry_state_maps(
+        profile_state_by_key, _ = _build_profile_entry_state_maps(
             inventory=profile_inventory,
-            root=profile_root,
+            roots=(profile_root,),
         )
-        canonical_state_by_folder, _ = _build_profile_entry_state_maps(
+        canonical_state_by_key, _ = _build_profile_entry_state_maps(
             inventory=canonical_inventory,
-            root=real_mods_path,
+            roots=(real_mods_path,),
         )
         disabled_rows = tuple(
             mod
-            for key, state in sorted(canonical_state_by_folder.items())
-            if key not in profile_state_by_folder
+            for key, state in sorted(canonical_state_by_key.items())
+            if key not in profile_state_by_key
             for mod in state.mods
         )
         inventory = replace(
@@ -10612,47 +10647,124 @@ def _merge_profile_scan_entry_findings(*inventories: ModsInventory) -> tuple:
     )
 
 
+def _profile_group_member_sort_key(mod: InstalledMod) -> tuple[int, str, str]:
+    prefers_primary = 1 if mod.name.startswith("[") or mod.folder_path.name.startswith("[") else 0
+    return (prefers_primary, mod.name.casefold(), str(mod.folder_path).casefold())
+
+
+def _profile_group_base_name(mod: InstalledMod) -> str:
+    name = mod.name.strip()
+    while name.startswith("[") and "]" in name:
+        _, _, remainder = name.partition("]")
+        stripped = remainder.strip()
+        if not stripped:
+            break
+        name = stripped
+    suffix_start = name.rfind(" (")
+    if suffix_start > 0 and name.endswith(")"):
+        return name[:suffix_start].strip()
+    return name
+
+
+def _profile_normalized_update_keys(mod: InstalledMod) -> set[str]:
+    return {key.strip().casefold() for key in mod.update_keys if key.strip()}
+
+
+def _profile_effective_update_keys(mod: InstalledMod) -> set[str]:
+    return {
+        key
+        for key in _profile_normalized_update_keys(mod)
+        if key != "nexus:-1"
+    }
+
+
+def _profile_has_direct_dependency_link(left: InstalledMod, right: InstalledMod) -> bool:
+    left_id = canonicalize_unique_id(left.unique_id)
+    right_id = canonicalize_unique_id(right.unique_id)
+    if not left_id or not right_id:
+        return False
+    left_deps = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in left.dependencies
+        if dependency.unique_id.strip()
+    }
+    right_deps = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in right.dependencies
+        if dependency.unique_id.strip()
+    }
+    return right_id in left_deps or left_id in right_deps
+
+
+def _profile_entry_state_key(folder_names: tuple[str, ...]) -> str:
+    normalized = tuple(sorted((name.casefold() for name in folder_names), key=str.casefold))
+    if len(normalized) == 1:
+        return normalized[0]
+    return "group:" + "|".join(normalized)
+
+
+def _profile_entry_state_label(state: _ProfileEntryState) -> str:
+    if len(state.mods) == 1:
+        label = state.mods[0].name.strip()
+        return label or state.folder_names[0]
+    primary_name = _profile_group_base_name(state.mods[0]).strip()
+    if not primary_name:
+        primary_name = state.mods[0].name.strip() or state.folder_names[0]
+    return f"{primary_name} (+{len(state.mods) - 1} more)"
+
+
 def _build_profile_entry_state_maps(
     *,
     inventory: ModsInventory,
-    root: Path,
+    roots: tuple[Path, ...],
 ) -> tuple[dict[str, _ProfileEntryState], dict[str, _ProfileEntryState]]:
-    expected_root_key = _path_lookup_key(root)
-    row_by_path: dict[str, tuple[InstalledMod, bool]] = {}
-    for mod, enabled in (
-        *((mod, True) for mod in inventory.mods),
-        *((mod, False) for mod in inventory.disabled_mods),
-    ):
-        row_by_path[_path_lookup_key(mod.folder_path)] = (mod, enabled)
+    expected_root_keys = {_path_lookup_key(root) for root in roots}
+    indexed_rows = tuple(
+        (index, mod, True) for index, mod in enumerate(inventory.mods)
+    ) + tuple(
+        (len(inventory.mods) + index, mod, False)
+        for index, mod in enumerate(inventory.disabled_mods)
+    )
+    row_by_path: dict[str, tuple[int, InstalledMod, bool]] = {
+        _path_lookup_key(mod.folder_path): (index, mod, enabled)
+        for index, mod, enabled in indexed_rows
+    }
 
-    state_by_folder: dict[str, _ProfileEntryState] = {}
+    state_by_key: dict[str, _ProfileEntryState] = {}
     state_by_mod_path: dict[str, _ProfileEntryState] = {}
     consumed_mod_paths: set[str] = set()
 
     def add_state(
         *,
-        folder_name: str,
-        entry_path: Path,
+        folder_names: tuple[str, ...],
+        entry_paths: tuple[Path, ...],
         enabled: bool,
         mods: tuple[InstalledMod, ...],
     ) -> None:
-        entry_key = folder_name.casefold()
-        existing = state_by_folder.get(entry_key)
-        normalized_entry_path = Path(os.path.abspath(os.path.normpath(str(entry_path.expanduser()))))
-        if existing is not None and _path_lookup_key(existing.entry_path) != _path_lookup_key(
-            normalized_entry_path
-        ):
+        normalized_folder_names = tuple(
+            _normalized_sandbox_profile_folder_name(folder_name)
+            for folder_name in folder_names
+        )
+        normalized_entry_paths = tuple(
+            Path(os.path.abspath(os.path.normpath(str(entry_path.expanduser()))))
+            for entry_path in entry_paths
+        )
+        state_key = _profile_entry_state_key(normalized_folder_names)
+        existing = state_by_key.get(state_key)
+        if existing is not None and tuple(
+            _path_lookup_key(path) for path in existing.entry_paths
+        ) != tuple(_path_lookup_key(path) for path in normalized_entry_paths):
             raise AppShellError(
                 "Profile entry state is ambiguous because multiple top-level entries map to "
-                f"{folder_name}."
+                f"{', '.join(normalized_folder_names)}."
             )
         state = _ProfileEntryState(
-            folder_name=folder_name,
-            entry_path=normalized_entry_path,
+            folder_names=normalized_folder_names,
+            entry_paths=normalized_entry_paths,
             enabled=enabled,
             mods=mods,
         )
-        state_by_folder[entry_key] = state
+        state_by_key[state_key] = state
         for mod in mods:
             state_by_mod_path[_path_lookup_key(mod.folder_path)] = state
 
@@ -10660,9 +10772,9 @@ def _build_profile_entry_state_maps(
         if finding.kind not in {DIRECT_MOD, NESTED_MOD_CONTAINER, MULTI_MOD_CONTAINER}:
             continue
         entry_path = Path(os.path.abspath(os.path.normpath(str(finding.entry_path.expanduser()))))
-        if _path_lookup_key(entry_path.parent) != expected_root_key:
+        if _path_lookup_key(entry_path.parent) not in expected_root_keys:
             continue
-        matched_rows: list[tuple[InstalledMod, bool]] = []
+        matched_rows: list[tuple[int, InstalledMod, bool]] = []
         for mod_path in finding.mod_paths:
             row = row_by_path.get(_path_lookup_key(mod_path))
             if row is None:
@@ -10670,15 +10782,88 @@ def _build_profile_entry_state_maps(
             matched_rows.append(row)
         if not matched_rows:
             continue
-        mods = tuple(mod for mod, _ in matched_rows)
-        enabled = any(flag for _, flag in matched_rows)
+        if finding.kind == DIRECT_MOD and len(matched_rows) == 1:
+            continue
+        ordered_rows = sorted(
+            matched_rows,
+            key=lambda entry: _profile_group_member_sort_key(entry[1]),
+        )
+        mods = tuple(mod for _, mod, _ in ordered_rows)
+        enabled = any(flag for _, _, flag in matched_rows)
         add_state(
-            folder_name=_normalized_sandbox_profile_folder_name(entry_path.name),
-            entry_path=entry_path,
+            folder_names=(entry_path.name,),
+            entry_paths=(entry_path,),
             enabled=enabled,
             mods=mods,
         )
-        consumed_mod_paths.update(_path_lookup_key(mod.folder_path) for mod, _ in matched_rows)
+        consumed_mod_paths.update(_path_lookup_key(mod.folder_path) for _, mod, _ in matched_rows)
+
+    if expected_root_keys:
+        top_level_candidates = [
+            (index, mod, enabled)
+            for index, mod, enabled in indexed_rows
+            if _path_lookup_key(mod.folder_path) not in consumed_mod_paths
+            and _path_lookup_key(mod.folder_path.parent) in expected_root_keys
+        ]
+        adjacency: dict[str, set[str]] = {}
+        candidate_rows_by_key: dict[str, tuple[int, InstalledMod, bool]] = {}
+        for candidate in top_level_candidates:
+            index, mod, enabled = candidate
+            mod_key = _path_lookup_key(mod.folder_path)
+            candidate_rows_by_key[mod_key] = (index, mod, enabled)
+            adjacency.setdefault(mod_key, set())
+        candidate_keys = tuple(candidate_rows_by_key.keys())
+        for index, left_key in enumerate(candidate_keys):
+            _, left_mod, _ = candidate_rows_by_key[left_key]
+            left_update_keys = _profile_effective_update_keys(left_mod)
+            for right_key in candidate_keys[index + 1 :]:
+                _, right_mod, _ = candidate_rows_by_key[right_key]
+                if not _profile_has_direct_dependency_link(left_mod, right_mod):
+                    continue
+                right_update_keys = _profile_effective_update_keys(right_mod)
+                has_shared_update_key = bool(left_update_keys & right_update_keys)
+                has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
+                shares_base_name = (
+                    _profile_group_base_name(left_mod).casefold()
+                    == _profile_group_base_name(right_mod).casefold()
+                )
+                if not (
+                    has_shared_update_key
+                    or (has_single_sided_update_key and shares_base_name)
+                ):
+                    continue
+                adjacency[left_key].add(right_key)
+                adjacency[right_key].add(left_key)
+
+        visited: set[str] = set()
+        for mod_key in candidate_keys:
+            if mod_key in visited:
+                continue
+            stack = [mod_key]
+            component: list[str] = []
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                component.append(current)
+                stack.extend(adjacency.get(current, ()))
+            if len(component) <= 1:
+                continue
+
+            matched_rows = [candidate_rows_by_key[key] for key in component]
+            ordered_rows = sorted(
+                matched_rows,
+                key=lambda entry: _profile_group_member_sort_key(entry[1]),
+            )
+            mods = tuple(mod for _, mod, _ in ordered_rows)
+            add_state(
+                folder_names=tuple(mod.folder_path.name for mod in mods),
+                entry_paths=tuple(mod.folder_path for mod in mods),
+                enabled=any(flag for _, _, flag in matched_rows),
+                mods=mods,
+            )
+            consumed_mod_paths.update(_path_lookup_key(mod.folder_path) for mod in mods)
 
     for mod, enabled in (
         *((mod, True) for mod in inventory.mods),
@@ -10687,27 +10872,27 @@ def _build_profile_entry_state_maps(
         mod_key = _path_lookup_key(mod.folder_path)
         if mod_key in consumed_mod_paths:
             continue
-        if _path_lookup_key(mod.folder_path.parent) != expected_root_key:
+        if _path_lookup_key(mod.folder_path.parent) not in expected_root_keys:
             continue
         add_state(
-            folder_name=_normalized_sandbox_profile_folder_name(mod.folder_path.name),
-            entry_path=mod.folder_path,
+            folder_names=(mod.folder_path.name,),
+            entry_paths=(mod.folder_path,),
             enabled=enabled,
             mods=(mod,),
         )
 
-    return state_by_folder, state_by_mod_path
+    return state_by_key, state_by_mod_path
 
 
 def _profile_entry_state_for_mod(
     *,
     inventory: ModsInventory,
-    root: Path,
+    roots: tuple[Path, ...],
     mod_folder_path: Path,
 ) -> _ProfileEntryState | None:
     _, state_by_mod_path = _build_profile_entry_state_maps(
         inventory=inventory,
-        root=root,
+        roots=roots,
     )
     return state_by_mod_path.get(_path_lookup_key(mod_folder_path))
 

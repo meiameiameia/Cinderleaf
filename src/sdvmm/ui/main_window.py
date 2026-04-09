@@ -335,6 +335,21 @@ def _inventory_path_lookup_key(path: Path) -> str:
     return os.path.abspath(os.path.normpath(str(path.expanduser()))).casefold()
 
 
+def _inventory_group_roots(*roots: Path | None) -> tuple[Path, ...]:
+    grouped_roots: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        if root is None:
+            continue
+        normalized_root = Path(os.path.abspath(os.path.normpath(str(root.expanduser()))))
+        root_key = _inventory_path_lookup_key(normalized_root)
+        if root_key in seen:
+            continue
+        seen.add(root_key)
+        grouped_roots.append(normalized_root)
+    return tuple(grouped_roots)
+
+
 def _inventory_group_member_sort_key(mod: InstalledMod) -> tuple[int, str, str]:
     prefers_primary = 1 if mod.name.startswith("[") or mod.folder_path.name.startswith("[") else 0
     return (prefers_primary, mod.name.casefold(), str(mod.folder_path).casefold())
@@ -988,7 +1003,7 @@ def _preferred_inventory_row_status(
 def _build_inventory_row_entries(
     *,
     inventory: ModsInventory,
-    root: Path | None,
+    roots: tuple[Path, ...],
 ) -> tuple[_InventoryRowEntry, ...]:
     indexed_rows = tuple(
         (index, mod, True) for index, mod in enumerate(inventory.mods)
@@ -1002,14 +1017,14 @@ def _build_inventory_row_entries(
     }
     grouped_rows: list[_InventoryRowEntry] = []
     consumed_mod_paths: set[str] = set()
-    expected_root_key = _inventory_path_lookup_key(root) if root is not None else None
+    expected_root_keys = {_inventory_path_lookup_key(root) for root in roots}
 
-    if expected_root_key is not None:
+    if expected_root_keys:
         for finding in inventory.scan_entry_findings:
             if finding.kind not in {DIRECT_MOD, NESTED_MOD_CONTAINER, MULTI_MOD_CONTAINER}:
                 continue
             entry_path = Path(os.path.abspath(os.path.normpath(str(finding.entry_path.expanduser()))))
-            if _inventory_path_lookup_key(entry_path.parent) != expected_root_key:
+            if _inventory_path_lookup_key(entry_path.parent) not in expected_root_keys:
                 continue
             matched_rows: list[tuple[int, InstalledMod, bool]] = []
             for mod_path in finding.mod_paths:
@@ -1052,12 +1067,12 @@ def _build_inventory_row_entries(
             )
             consumed_mod_paths.update(_inventory_path_lookup_key(path) for path in member_folder_paths)
 
-    if expected_root_key is not None:
+    if expected_root_keys:
         top_level_candidates = [
             (index, mod, enabled)
             for index, mod, enabled in indexed_rows
             if _inventory_path_lookup_key(mod.folder_path) not in consumed_mod_paths
-            and _inventory_path_lookup_key(mod.folder_path.parent) == expected_root_key
+            and _inventory_path_lookup_key(mod.folder_path.parent) in expected_root_keys
         ]
         adjacency: dict[str, set[str]] = {}
         candidate_rows_by_key: dict[str, tuple[int, InstalledMod, bool]] = {}
@@ -7075,7 +7090,12 @@ class MainWindow(QMainWindow):
         )
         row_entries = _build_inventory_row_entries(
             inventory=inventory,
-            root=inventory_root,
+            roots=_inventory_group_roots(
+                inventory_root,
+                self._configured_scan_path_for_target(current_target)
+                if current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}
+                else None,
+            ),
         )
         depended_on_unique_ids = _inventory_depended_on_unique_ids(inventory)
         real_root = (
@@ -10059,17 +10079,12 @@ class MainWindow(QMainWindow):
                 else canonical_root
             )
             inventory = self._current_inventory_or_empty()
-            active_entry = _profile_entry_state_for_mod(
+            entry_state = _profile_entry_state_for_mod(
                 inventory=inventory,
-                root=active_scan_path,
+                roots=(active_scan_path, canonical_root),
                 mod_folder_path=mod.folder_path,
             )
-            canonical_entry = _profile_entry_state_for_mod(
-                inventory=inventory,
-                root=canonical_root,
-                mod_folder_path=mod.folder_path,
-            )
-            if (active_entry if is_enabled else canonical_entry) is None:
+            if entry_state is None:
                 return False, "Only top-level real profile entries can be toggled right now."
             if is_enabled:
                 return True, f"Remove from real profile: {mod.name}"
@@ -10095,17 +10110,12 @@ class MainWindow(QMainWindow):
             else canonical_root
         )
         inventory = self._current_inventory_or_empty()
-        active_entry = _profile_entry_state_for_mod(
+        entry_state = _profile_entry_state_for_mod(
             inventory=inventory,
-            root=active_scan_path,
+            roots=(active_scan_path, canonical_root),
             mod_folder_path=mod.folder_path,
         )
-        canonical_entry = _profile_entry_state_for_mod(
-            inventory=inventory,
-            root=canonical_root,
-            mod_folder_path=mod.folder_path,
-        )
-        if (active_entry if is_enabled else canonical_entry) is None:
+        if entry_state is None:
             return False, "Only top-level sandbox profile entries can be toggled right now."
         if is_enabled:
             return True, f"Remove from sandbox profile: {mod.name}"

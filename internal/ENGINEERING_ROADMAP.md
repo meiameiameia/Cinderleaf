@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-09` after the `1.3.1` patch release, product-direction reset, locked profile redesign audit, and external product critique review
+Last refreshed: `2026-04-09` after the `1.3.1` patch release, product-direction reset, locked profile redesign audit, external product critique review, and the grouped custom-profile membership implementation pass
 
 ## Baseline
 
@@ -176,7 +176,9 @@ Bounded implementation order:
 Audit status:
 
 - the profile redesign audit is now locked in [internal/PROFILE_MODEL_REDESIGN_AUDIT.md](C:/Users/darth/Projects/stardew-mod-manager/internal/PROFILE_MODEL_REDESIGN_AUDIT.md)
-- the next step is implementation, not more product-direction drift
+- empty-profile creation and membership-truthfulness are already landed
+- grouped custom-profile membership is now landed, so grouped multi-folder mods can be added or removed as one logical profile entry again
+- the next step is dependency warnings on enable, not more product-direction drift
 
 ### Phase 3: Update And Install Experience
 
@@ -274,11 +276,10 @@ These matter, but they are not the next engineering slice:
 
 ## Immediate Next Safe Increment
 
-`grouped multi-folder profile membership in custom profiles`
+`dependency warning on enable for custom profiles`
 
 Reason:
 
-- the empty-profile foundation and membership-truthfulness pass are now landed
-- the next product bug is that grouped multi-folder mods stop behaving like one logical entry inside custom profiles
-- this directly hurts the mainstream profile workflow because users have to toggle grouped mods one folder at a time
-- it should land before dependency warnings or chrome compression because it is a correctness and usability gap in the core profile model
+- the empty-profile foundation, membership-truthfulness pass, and grouped custom-profile membership are now landed
+- the next missing profile behavior is dependency warnings when enabling a mod whose required dependencies are not in the active custom profile
+- this should land before chrome-compression work because it is still core profile behavior, not presentation polish

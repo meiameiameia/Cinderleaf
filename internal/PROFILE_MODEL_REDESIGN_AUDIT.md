@@ -118,6 +118,13 @@ Preferred first behavior:
 
 ### Slice 3
 
+`grouped custom-profile membership parity`
+
+- restore grouped multi-folder custom-profile behavior so paired top-level grouped mods appear and toggle as one logical membership entry instead of separate folder rows
+- keep service-side profile membership grouping and `Library` row grouping aligned
+
+### Slice 4
+
 `dependency warning on enable`
 
 - when enabling a mod in a custom profile, warn if required dependencies are missing from that profile
@@ -133,11 +140,11 @@ Preferred first behavior:
 
 ## Next Smallest Safe Increment
 
-`empty custom profile creation foundation`
+`dependency warning on enable`
 
-That is the smallest implementation slice that:
+Current profile-redesign status:
 
-- fixes the slow, clone-heavy creation behavior
-- aligns the product with mainstream expectations
-- preserves the existing canonical-library and link-based architecture
-- gives later dependency-warning work a stable profile model to build on
+- Slice 1 is landed.
+- Slice 2 is landed.
+- Slice 3 is landed.
+- Slice 4 is now the next smallest safe increment.

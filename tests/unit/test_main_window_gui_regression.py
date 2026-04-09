@@ -5221,6 +5221,220 @@ def test_main_window_real_container_rows_share_profile_toggle_ownership(
     assert toggle_kwargs["enabled"] is False
 
 
+def test_main_window_real_grouped_profile_rows_share_toggle_ownership(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Profile 2",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_real_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    primary_path = real_mods_root / "ZebrusLawnRobot"
+    content_path = real_mods_root / "[CP]ZebrusLawnRobot"
+    inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=primary_path,
+                mod_paths=(primary_path,),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=content_path,
+                mod_paths=(content_path,),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Zebrus.ZebrusLawnRobot",
+                name="Zebrus Lawn Robot",
+                version="1.0.0",
+                folder_path=primary_path,
+                manifest_path=primary_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44383",),
+            ),
+            InstalledMod(
+                unique_id="Zebrus.ZebrusLawnRobotCP",
+                name="Zebrus Lawn Robot - Content",
+                version="1.0.0",
+                folder_path=content_path,
+                manifest_path=content_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Zebrus.ZebrusLawnRobot",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44383",),
+            ),
+        ),
+    )
+    enabled_inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Zebrus.ZebrusLawnRobot",
+                name="Zebrus Lawn Robot",
+                version="1.0.0",
+                folder_path=profile_root / "ZebrusLawnRobot",
+                manifest_path=profile_root / "ZebrusLawnRobot" / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44383",),
+            ),
+            InstalledMod(
+                unique_id="Zebrus.ZebrusLawnRobotCP",
+                name="Zebrus Lawn Robot - Content",
+                version="1.0.0",
+                folder_path=profile_root / "[CP]ZebrusLawnRobot",
+                manifest_path=profile_root / "[CP]ZebrusLawnRobot" / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Zebrus.ZebrusLawnRobot",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("Nexus:44383",),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=profile_root / "ZebrusLawnRobot",
+                mod_paths=(profile_root / "ZebrusLawnRobot",),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=profile_root / "[CP]ZebrusLawnRobot",
+                mod_paths=(profile_root / "[CP]ZebrusLawnRobot",),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_toggle(**kwargs: object) -> ScanResult:
+        captured["toggle_kwargs"] = kwargs
+        return ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=enabled_inventory,
+        )
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._mods_table.rowCount() == 1
+    grouped_row_item = main_window._mods_table.item(0, 0)
+    grouped_status_item = main_window._mods_table.item(0, 4)
+    assert grouped_row_item is not None
+    assert grouped_status_item is not None
+    assert grouped_row_item.text() == "Zebrus Lawn Robot (+1 more)"
+    assert grouped_row_item.data(_ROLE_MOD_IS_GROUPED) is True
+    assert grouped_row_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(primary_path),
+        str(content_path),
+    )
+    assert grouped_row_item.checkState() == Qt.CheckState.Unchecked
+    assert grouped_status_item.text() == "not_in_profile"
+
+    grouped_row_item.setCheckState(Qt.CheckState.Checked)
+    qapp.processEvents()
+
+    toggle_kwargs = captured.get("toggle_kwargs")
+    assert captured.get("operation_names") == ["Real profile mod toggle"]
+    assert isinstance(toggle_kwargs, dict)
+    assert toggle_kwargs["mod_folder_path_text"] == str(primary_path)
+    assert toggle_kwargs["enabled"] is True
+    assert main_window._mods_table.rowCount() == 1
+    updated_item = main_window._mods_table.item(0, 0)
+    updated_status = main_window._mods_table.item(0, 4)
+    assert updated_item is not None
+    assert updated_status is not None
+    assert updated_item.checkState() == Qt.CheckState.Checked
+    assert updated_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(profile_root / "ZebrusLawnRobot"),
+        str(profile_root / "[CP]ZebrusLawnRobot"),
+    )
+    assert updated_status.text() == "not_checked"
+
+
 def test_main_window_create_real_profile_dispatches_create_operation(
     main_window: MainWindow,
     qapp: QApplication,

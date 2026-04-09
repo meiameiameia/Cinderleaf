@@ -393,6 +393,78 @@ def test_set_sandbox_mod_enabled_state_toggles_multi_mod_container_entry_in_cust
     assert container.exists()
     assert not (profile_root / "PackFolder").exists()
 
+
+def test_set_sandbox_mod_enabled_state_toggles_grouped_top_level_mod_in_custom_profile(
+    tmp_path: Path,
+) -> None:
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    primary_path = _create_mod(
+        sandbox_mods,
+        "ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobot",
+        name="Zebrus Lawn Robot",
+        update_keys=("Nexus:44383",),
+    )
+    content_path = _create_mod(
+        sandbox_mods,
+        "[CP]ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+        name="Zebrus Lawn Robot - Content",
+        dependencies=(
+            ("Zebrus.ZebrusLawnRobot", True),
+            ("Pathoschild.ContentPatcher", True),
+        ),
+        update_keys=("Nexus:44383",),
+    )
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_sandbox_mod_profile(
+        name="Testing Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    ).profile
+    profile_root = (
+        sandbox_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+
+    enabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(content_path),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert {mod.unique_id for mod in enabled_result.inventory.mods} == {
+        "Zebrus.ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+    }
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "ZebrusLawnRobot").exists()
+    assert (profile_root / "[CP]ZebrusLawnRobot").exists()
+
+    disabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(profile_root / "ZebrusLawnRobot"),
+        enabled=False,
+        profile_id=profile.profile_id,
+    )
+
+    assert disabled_result.scan_path == profile_root
+    assert disabled_result.inventory.mods == ()
+    assert {mod.unique_id for mod in disabled_result.inventory.disabled_mods} == {
+        "Zebrus.ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+    }
+    assert primary_path.exists()
+    assert content_path.exists()
+    assert not (profile_root / "ZebrusLawnRobot").exists()
+    assert not (profile_root / "[CP]ZebrusLawnRobot").exists()
+
 def test_create_sandbox_mod_profile_creates_empty_profile_root_and_surfaces_canonical_mods_as_not_in_profile(
     tmp_path: Path,
 ) -> None:
@@ -727,6 +799,78 @@ def test_set_real_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_
     ]
     assert container.exists()
     assert not (profile_root / "PackFolder").exists()
+
+
+def test_set_real_mod_enabled_state_toggles_grouped_top_level_mod_in_custom_profile(
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    real_mods.mkdir()
+    primary_path = _create_mod(
+        real_mods,
+        "ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobot",
+        name="Zebrus Lawn Robot",
+        update_keys=("Nexus:44383",),
+    )
+    content_path = _create_mod(
+        real_mods,
+        "[CP]ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+        name="Zebrus Lawn Robot - Content",
+        dependencies=(
+            ("Zebrus.ZebrusLawnRobot", True),
+            ("Pathoschild.ContentPatcher", True),
+        ),
+        update_keys=("Nexus:44383",),
+    )
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_real_mod_profile(
+        name="Lean Set",
+        configured_mods_path_text=str(real_mods),
+    ).profile
+    profile_root = (
+        real_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+
+    enabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(content_path),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert {mod.unique_id for mod in enabled_result.inventory.mods} == {
+        "Zebrus.ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+    }
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "ZebrusLawnRobot").exists()
+    assert (profile_root / "[CP]ZebrusLawnRobot").exists()
+
+    disabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(profile_root / "ZebrusLawnRobot"),
+        enabled=False,
+        profile_id=profile.profile_id,
+    )
+
+    assert disabled_result.scan_path == profile_root
+    assert disabled_result.inventory.mods == ()
+    assert {mod.unique_id for mod in disabled_result.inventory.disabled_mods} == {
+        "Zebrus.ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+    }
+    assert primary_path.exists()
+    assert content_path.exists()
+    assert not (profile_root / "ZebrusLawnRobot").exists()
+    assert not (profile_root / "[CP]ZebrusLawnRobot").exists()
 
 
 def test_scan_with_target_uses_active_real_profile_root(tmp_path: Path) -> None:
@@ -8193,19 +8337,25 @@ def _create_mod(
     unique_id: str,
     *,
     version: str = "1.0.0",
+    name: str | None = None,
+    dependencies: tuple[tuple[str, bool], ...] = tuple(),
+    update_keys: tuple[str, ...] = tuple(),
 ) -> Path:
     mod_path = mods_root / folder_name
     mod_path.mkdir(parents=True, exist_ok=True)
-    (mod_path / "manifest.json").write_text(
-        (
-            "{"
-            f'"Name":"{folder_name}",'
-            f'"UniqueID":"{unique_id}",'
-            f'"Version":"{version}"'
-            "}"
-        ),
-        encoding="utf-8",
-    )
+    manifest_data: dict[str, object] = {
+        "Name": name or folder_name,
+        "UniqueID": unique_id,
+        "Version": version,
+    }
+    if update_keys:
+        manifest_data["UpdateKeys"] = list(update_keys)
+    if dependencies:
+        manifest_data["Dependencies"] = [
+            {"UniqueID": dependency_unique_id, "IsRequired": required}
+            for dependency_unique_id, required in dependencies
+        ]
+    (mod_path / "manifest.json").write_text(json.dumps(manifest_data), encoding="utf-8")
     return mod_path
 
 
