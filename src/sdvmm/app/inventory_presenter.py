@@ -69,7 +69,7 @@ def build_findings_text(inventory: ModsInventory) -> str:
     lines: list[str] = []
     lines.append("Library Scan Summary")
     lines.append(f"- Library rows detected: {len(inventory.mods)}")
-    lines.append(f"- Disabled rows detected: {len(inventory.disabled_mods)}")
+    lines.append(f"- Inactive rows detected: {len(inventory.disabled_mods)}")
     lines.append(f"- Parse warnings: {len(inventory.parse_warnings)}")
     lines.append(f"- Duplicate UniqueIDs: {len(inventory.duplicate_unique_ids)}")
     lines.append(f"- Missing required dependencies: {len(inventory.missing_required_dependencies)}")
@@ -127,7 +127,7 @@ def build_findings_text(inventory: ModsInventory) -> str:
     elif inventory.parse_warnings:
         lines.append("- Inspect manifest warnings and replace or fix broken mod folders.")
     elif inventory.disabled_mods:
-        lines.append("- Review disabled rows in Library and re-enable any sandbox folders you want active again.")
+        lines.append("- Review inactive rows in Library and enable any mods you want active in this view.")
     else:
         lines.append("- Run update check to see if newer versions are available.")
 

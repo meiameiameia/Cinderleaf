@@ -4624,6 +4624,7 @@ def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
     assert updated_status.text() == "not_in_profile"
+    assert main_window._status_strip_label.text() == "Removed from sandbox profile: Alpha Mod"
 
 
 def test_main_window_create_sandbox_profile_dispatches_create_operation(
@@ -4721,6 +4722,8 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
     output_text = main_window._inventory_output_box.toPlainText()
     assert "Sandbox profile created" in output_text
     assert "Starts with no enabled mods." in output_text
+    assert "Mods not in profile: 1" in output_text
+    assert "add the mods you want to this profile" in output_text
 
 
 def test_main_window_selected_sandbox_profile_change_dispatches_select_operation(
@@ -4823,6 +4826,9 @@ def test_main_window_selected_sandbox_profile_change_dispatches_select_operation
     assert isinstance(select_kwargs, dict)
     assert select_kwargs["profile_id"] == profile.profile_id
     assert select_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
+    output_text = main_window._inventory_output_box.toPlainText()
+    assert "Mods not in profile: 1" in output_text
+    assert "add or remove mods in this profile" in output_text
     updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
     updated_item = main_window._mods_table.item(updated_row, 0)
     updated_status = main_window._mods_table.item(updated_row, 4)
@@ -5046,6 +5052,14 @@ def test_main_window_real_toggle_checkbox_dispatches_toggle_operation(
     assert toggle_kwargs["mod_folder_path_text"] == str(active_path)
     assert toggle_kwargs["enabled"] is False
     assert toggle_kwargs["profile_id"] == custom_profile.profile_id
+    updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    updated_item = main_window._mods_table.item(updated_row, 0)
+    updated_status = main_window._mods_table.item(updated_row, 4)
+    assert updated_item is not None
+    assert updated_status is not None
+    assert updated_item.checkState() == Qt.CheckState.Unchecked
+    assert updated_status.text() == "not_in_profile"
+    assert main_window._status_strip_label.text() == "Removed from real profile: Alpha Mod"
 
 
 def test_main_window_real_container_rows_share_profile_toggle_ownership(
@@ -5306,6 +5320,8 @@ def test_main_window_create_real_profile_dispatches_create_operation(
     output_text = main_window._inventory_output_box.toPlainText()
     assert "Real profile created" in output_text
     assert "Starts with no enabled mods." in output_text
+    assert "Mods not in profile: 1" in output_text
+    assert "add the mods you want to this profile" in output_text
 
 
 def test_main_window_selected_real_profile_change_dispatches_select_operation(
@@ -5420,6 +5436,9 @@ def test_main_window_selected_real_profile_change_dispatches_select_operation(
     assert isinstance(select_kwargs, dict)
     assert select_kwargs["profile_id"] == profile.profile_id
     assert select_kwargs["configured_mods_path_text"] == str(real_mods_root)
+    output_text = main_window._inventory_output_box.toPlainText()
+    assert "Mods not in profile: 1" in output_text
+    assert "add or remove mods in this profile" in output_text
     updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
     updated_item = main_window._mods_table.item(updated_row, 0)
     updated_status = main_window._mods_table.item(updated_row, 4)
@@ -5427,6 +5446,141 @@ def test_main_window_selected_real_profile_change_dispatches_select_operation(
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
     assert updated_status.text() == "not_in_profile"
+
+
+def test_main_window_custom_profile_update_report_keeps_not_in_profile_guidance(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        sandbox_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    alpha_path = profile_root / "AlphaMod"
+    beta_path = sandbox_mods_root / "BetaMod"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=alpha_path,
+                manifest_path=alpha_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Beta",
+                name="Beta Mod",
+                version="2.0.0",
+                folder_path=beta_path,
+                manifest_path=beta_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    report = ModUpdateReport(
+        statuses=(
+            ModUpdateStatus(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                folder_path=alpha_path,
+                installed_version="1.0.0",
+                remote_version="1.1.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+            ModUpdateStatus(
+                unique_id="Sample.Beta",
+                name="Beta Mod",
+                folder_path=beta_path,
+                installed_version="2.0.0",
+                remote_version="2.1.0",
+                state="update_available",
+                remote_link=None,
+                message="Update available.",
+            ),
+        )
+    )
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(
+        inventory,
+        context_target=SCAN_TARGET_SANDBOX_MODS,
+        context_scan_path=profile_root,
+    )
+    main_window._apply_update_report(
+        report,
+        context_target=SCAN_TARGET_SANDBOX_MODS,
+        context_scan_path=profile_root,
+    )
+
+    beta_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert beta_row >= 0
+    beta_status = main_window._mods_table.item(beta_row, 4)
+    assert beta_status is not None
+    assert beta_status.text() == "not_in_profile"
+    assert "not part of the active profile yet" in beta_status.toolTip()
+
+    main_window._mods_table.setCurrentCell(beta_row, 0)
+    qapp.processEvents()
+
+    open_remote_button = main_window.findChild(
+        QPushButton,
+        "inventory_open_remote_page_button",
+    )
+    assert open_remote_button is not None
+    assert (
+        main_window._inventory_update_guidance_label.text()
+        == "Beta Mod: not in profile. Add this mod to the active profile before update and source actions."
+    )
+    assert open_remote_button.isEnabled() is False
+    assert "not in the active profile" in open_remote_button.toolTip()
 
 
 def test_main_window_delete_real_profile_dispatches_delete_operation(

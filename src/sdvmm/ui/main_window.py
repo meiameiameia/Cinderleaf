@@ -7226,7 +7226,7 @@ class MainWindow(QMainWindow):
         if self._is_custom_profile_view(current_target):
             return (
                 "not_in_profile",
-                "This mod is not part of the active profile yet. Enable it to add it before update and source actions.",
+                "This mod is not part of the active profile yet. Add it to the profile before update and source actions.",
             )
         return (
             "disabled",
@@ -8022,7 +8022,11 @@ class MainWindow(QMainWindow):
             if name_item is None:
                 continue
             if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
-                self._apply_disabled_inventory_update_row(row=row, name_item=name_item)
+                self._apply_disabled_inventory_update_row(
+                    row=row,
+                    name_item=name_item,
+                    current_target=self._current_scan_target(),
+                )
                 continue
             resolved_row = self._resolve_inventory_update_row_state(
                 name_item=name_item,
@@ -8062,10 +8066,14 @@ class MainWindow(QMainWindow):
         *,
         row: int,
         name_item: QTableWidgetItem,
+        current_target: str,
     ) -> None:
-        reason = "This mod is disabled. Re-enable it before update and source actions."
+        status_text, reason = self._inventory_mod_row_state_text(
+            current_target=current_target,
+            is_enabled=False,
+        )
         self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
-        status_item = QTableWidgetItem("disabled")
+        status_item = QTableWidgetItem(status_text)
         status_item.setToolTip(reason)
         self._mods_table.setItem(row, 4, status_item)
         name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
@@ -10041,7 +10049,7 @@ class MainWindow(QMainWindow):
             if selected_profile.profile_id == DEFAULT_REAL_PROFILE_ID:
                 return (
                     False,
-                    "Default mirrors the canonical real Mods library. Create a custom profile to change enabled mods.",
+                    "Default mirrors the canonical real Mods library. Create a custom profile to add or remove mods.",
                 )
             canonical_root = Path(os.path.abspath(os.path.normpath(str(real_root.expanduser()))))
             current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_CONFIGURED_REAL_MODS)
@@ -10064,8 +10072,8 @@ class MainWindow(QMainWindow):
             if (active_entry if is_enabled else canonical_entry) is None:
                 return False, "Only top-level real profile entries can be toggled right now."
             if is_enabled:
-                return True, f"Disable real profile mod: {mod.name}"
-            return True, f"Enable real profile mod: {mod.name}"
+                return True, f"Remove from real profile: {mod.name}"
+            return True, f"Add to real profile: {mod.name}"
 
         if current_target != SCAN_TARGET_SANDBOX_MODS:
             return False, ""
@@ -10077,7 +10085,7 @@ class MainWindow(QMainWindow):
         if selected_profile.profile_id == DEFAULT_SANDBOX_PROFILE_ID:
             return (
                 False,
-                "Default mirrors the canonical sandbox library. Create a custom profile to change enabled mods.",
+                "Default mirrors the canonical sandbox library. Create a custom profile to add or remove mods.",
             )
         canonical_root = Path(os.path.abspath(os.path.normpath(str(sandbox_root.expanduser()))))
         current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_SANDBOX_MODS)
@@ -10100,8 +10108,8 @@ class MainWindow(QMainWindow):
         if (active_entry if is_enabled else canonical_entry) is None:
             return False, "Only top-level sandbox profile entries can be toggled right now."
         if is_enabled:
-            return True, f"Disable sandbox mod: {mod.name}"
-        return True, f"Enable sandbox mod: {mod.name}"
+            return True, f"Remove from sandbox profile: {mod.name}"
+        return True, f"Add to sandbox profile: {mod.name}"
 
     def _on_mods_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._suppress_mod_toggle_events:
@@ -10133,7 +10141,11 @@ class MainWindow(QMainWindow):
             self._run_background_operation(
                 operation_name="Real profile mod toggle",
                 running_label="Real profile mod toggle",
-                started_status=f"{'Enabling' if desired_enabled else 'Disabling'} real profile mod: {mod_name}",
+                started_status=(
+                    f"Adding {mod_name} to real profile..."
+                    if desired_enabled
+                    else f"Removing {mod_name} from real profile..."
+                ),
                 error_title="Real profile mod toggle failed",
                 task_fn=lambda _mod_folder_path=mod_folder_path, _desired_enabled=desired_enabled, _profile_id=self._selected_real_profile_id(): self._shell_service.set_real_mod_enabled_state(
                     configured_mods_path_text=self._mods_path_input.text(),
@@ -10154,7 +10166,11 @@ class MainWindow(QMainWindow):
         self._run_background_operation(
             operation_name="Sandbox mod toggle",
             running_label="Sandbox mod toggle",
-            started_status=f"{'Enabling' if desired_enabled else 'Disabling'} sandbox mod: {mod_name}",
+            started_status=(
+                f"Adding {mod_name} to sandbox profile..."
+                if desired_enabled
+                else f"Removing {mod_name} from sandbox profile..."
+            ),
             error_title="Sandbox mod toggle failed",
             task_fn=lambda _mod_folder_path=mod_folder_path, _desired_enabled=desired_enabled, _profile_id=self._selected_sandbox_profile_id(): self._shell_service.set_sandbox_mod_enabled_state(
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -10187,7 +10203,9 @@ class MainWindow(QMainWindow):
         self._cache_scan_result(result)
         self._show_scan_result(result)
         self._set_current_scan_target(result.target_kind)
-        self._set_status(f"Sandbox mod {'enabled' if enabled else 'disabled'}: {mod_name}")
+        self._set_status(
+            f"{'Added to' if enabled else 'Removed from'} sandbox profile: {mod_name}"
+        )
 
     def _on_real_mod_toggle_completed(
         self,
@@ -10199,7 +10217,9 @@ class MainWindow(QMainWindow):
         self._cache_scan_result(result)
         self._show_scan_result(result)
         self._set_current_scan_target(result.target_kind)
-        self._set_status(f"Real profile mod {'enabled' if enabled else 'disabled'}: {mod_name}")
+        self._set_status(
+            f"{'Added to' if enabled else 'Removed from'} real profile: {mod_name}"
+        )
 
     def _refresh_selected_mod_update_guidance(self) -> None:
         actionable_targets = self._selected_actionable_update_targets()
@@ -10225,22 +10245,36 @@ class MainWindow(QMainWindow):
             return
 
         if not context.is_enabled:
-            message = (
-                f"{context.mod_name}: disabled. "
-                "Re-enable this sandbox mod row before update and source actions."
-            )
+            if context.status_text == "not_in_profile":
+                message = (
+                    f"{context.mod_name}: not in profile. "
+                    "Add this mod to the active profile before update and source actions."
+                )
+                remote_tooltip = (
+                    "Mods that are not in the active profile do not offer remote-page actions."
+                )
+                source_tooltip = (
+                    "Mods that are not in the active profile do not offer source-fix actions."
+                )
+            else:
+                message = (
+                    f"{context.mod_name}: disabled. "
+                    "Re-enable this mod row before update and source actions."
+                )
+                remote_tooltip = "Disabled mod rows do not offer remote-page actions."
+                source_tooltip = "Disabled mod rows do not offer source-fix actions."
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip="Disabled mod rows do not offer remote-page actions.",
+                tooltip=remote_tooltip,
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Disabled mod rows do not offer source-hint actions.",
+                tooltip=source_tooltip,
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Disabled mod rows do not offer suggested-source actions.",
+                tooltip=source_tooltip,
             )
         elif context.status is None and context.status_text == "not_checked":
             message = (
@@ -12785,7 +12819,7 @@ def _build_sandbox_profile_create_text(result: SandboxModProfileCreateResult) ->
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: enable the mods you want in this profile without changing Default.",
+        "Next step: add the mods you want to this profile without changing Default.",
     ]
     return "\n".join(lines)
 
@@ -12798,7 +12832,7 @@ def _build_real_profile_create_text(result: RealModProfileCreateResult) -> str:
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: enable the mods you want in this profile, then launch SMAPI against it.",
+        "Next step: add the mods you want to this profile, then launch SMAPI against it.",
     ]
     return "\n".join(lines)
 
@@ -12810,7 +12844,7 @@ def _build_sandbox_profile_select_text(result: SandboxModProfileSelectResult) ->
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: enable or disable mods in this profile, or launch sandbox dev against it.",
+        "Next step: add or remove mods in this profile, or launch sandbox dev against it.",
     ]
     return "\n".join(lines)
 
@@ -12822,7 +12856,7 @@ def _build_real_profile_select_text(result: RealModProfileSelectResult) -> str:
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: enable or disable mods in this profile, or launch SMAPI against it.",
+        "Next step: add or remove mods in this profile, or launch SMAPI against it.",
     ]
     return "\n".join(lines)
 
@@ -13099,8 +13133,8 @@ def _set_busy_control_text(control: QWidget, text: str) -> None:
 
 def _profile_inactive_count_summary_label(is_default_profile: bool) -> str:
     if is_default_profile:
-        return "Disabled mods in profile"
-    return "Canonical mods not in profile"
+        return "Disabled mods"
+    return "Mods not in profile"
 
 
 def _configure_combo_box_readability(

@@ -5,6 +5,7 @@ from pathlib import Path
 from sdvmm.app.shell_service import DiscoveryContextCorrelation
 from sdvmm.app.inventory_presenter import (
     build_archive_restore_result_text,
+    build_findings_text,
     build_mod_rollback_result_text,
     build_mod_removal_result_text,
     build_discovery_search_text,
@@ -25,6 +26,7 @@ from sdvmm.domain.models import (
     GameEnvironmentStatus,
     ModDiscoveryEntry,
     ModDiscoveryResult,
+    InstalledMod,
     ModRemovalPlan,
     ModRemovalResult,
     ModsInventory,
@@ -67,6 +69,33 @@ def test_update_report_text_is_human_readable_and_includes_next_step() -> None:
     assert "Update available" in text
     assert "Recommended next step" in text
     assert "Open remote page" in text
+
+
+def test_findings_text_uses_inactive_rows_language() -> None:
+    inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Inactive",
+                name="Inactive Mod",
+                version="1.0.0",
+                folder_path=Path("/tmp/Mods/InactiveMod"),
+                manifest_path=Path("/tmp/Mods/InactiveMod/manifest.json"),
+                dependencies=tuple(),
+            ),
+        ),
+    )
+
+    text = build_findings_text(inventory)
+
+    assert "Inactive rows detected: 1" in text
+    assert "Disabled rows detected" not in text
+    assert "Review inactive rows in Library and enable any mods you want active in this view." in text
 
 
 def test_mod_removal_result_text_lists_grouped_included_folders() -> None:
