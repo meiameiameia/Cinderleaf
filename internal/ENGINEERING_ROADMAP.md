@@ -2,7 +2,7 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-08` after the `1.3.1` patch release, product-direction reset, and locked profile redesign audit
+Last refreshed: `2026-04-09` after the `1.3.1` patch release, product-direction reset, locked profile redesign audit, and external product critique review
 
 ## Baseline
 
@@ -70,6 +70,35 @@ Main current risks:
 4. Controller concentration
 - `main_window.py` and `shell_service.py` remain the biggest long-term change-risk surfaces
 
+## External Audit Synthesis
+
+An external product critique on `2026-04-09` largely confirmed the current strategic direction.
+
+Confirmed strengths:
+
+- Cinderleaf's strongest market differentiator is still the calm, reversible, review-before-write workflow.
+- Documentation quality is already a real product advantage and should stay that way.
+- Update-truthfulness, recovery, backup export, and grouped-mod handling are all meaningful strengths worth preserving.
+
+Confirmed weaknesses:
+
+1. UI still feels slightly more like a careful dev tool than a mainstream everyday manager.
+2. Screen chrome and helper density still compete too much with the actual mod-list/task surface.
+3. Trust friction is still real on Windows because unsigned-portable distribution creates first-run caution.
+4. Visibility/distribution is still much weaker than product quality.
+
+Adopted guidance:
+
+- keep pushing toward a calmer, lower-reading, mod-list-first default UI
+- continue trimming chrome and secondary text where it is not helping the immediate task
+- keep positioning Cinderleaf as a mainstream everyday manager with safety as the differentiator, not as an expert-only tool
+
+Not adopted as near-term engineering priorities:
+
+- broad cross-platform expansion
+- feature-for-feature cloning of Stardrop
+- license/contribution-policy changes as a substitute for product improvement
+
 ## Locked Guidance
 
 Do not try to compete by cloning Stardrop feature-for-feature.
@@ -114,6 +143,10 @@ Priority slices:
 3. Calmer status language
 - Prefer player-facing status copy over tool-facing diagnostics in the default view.
 - Keep detailed troubleshooting available, but not dominant.
+
+4. Chrome compression
+- Reduce persistent header/footer and surrounding frame weight where they shrink the working surface.
+- Make the table/list area feel like the main event, especially in `Library`, `Packages`, and `Install`.
 
 ### Phase 2: Profile Model Redesign
 
@@ -183,6 +216,10 @@ Priority targets:
 - continue the `1.3.1` direction carefully
 - prefer clarity, stronger hierarchy, and calmer defaults over dramatic visual experimentation
 
+4. workspace shell simplification
+- continue simplifying workspace shells so the mod/task content wins over surrounding UI furniture
+- favor compact context cards and lighter always-visible framing
+
 ### Phase 5: Maintainability And Decomposition
 
 Goal: keep the codebase change-safe while product work continues.
@@ -214,14 +251,28 @@ Priority targets:
 - Do not let advanced sandbox/recovery workflows define the first-run experience.
 - Do not rewrite `main_window.py` or `shell_service.py` wholesale.
 - Do not ship major new feature waves without checking them against this roadmap first.
+- Do not treat distribution, trust, or community growth problems as a reason to dilute the product direction into generic feature cloning.
+
+## Non-Code Tracks To Remember
+
+These matter, but they are not the next engineering slice:
+
+1. Distribution and trust
+- code signing or other Windows trust improvements remain valuable later
+- checksum guidance should stay simple and user-facing
+
+2. Visibility
+- refreshed screenshots, demo material, Nexus polish, and community presence still matter materially for adoption
+
+3. Platform reach
+- cross-platform support is strategically interesting, but should follow a stronger mainstream Windows experience rather than precede it
 
 ## Immediate Next Safe Increment
 
-`empty custom profile creation foundation`
+`profile membership truthfulness pass`
 
 Reason:
 
-- the audit is now complete and the target model is locked
-- it solves the slow, clone-heavy custom-profile creation behavior directly
-- it is the smallest code slice that moves the app toward a simpler mainstream profile mental model
-- it keeps later dependency-warning and UI-truthfulness work grounded on a stable foundation
+- the empty-profile foundation is now landed
+- the next product risk is inconsistency between custom-profile membership truth and what the UI/status surfaces communicate
+- it keeps the roadmap moving toward the dependency-warning slice without widening into templates or automation
