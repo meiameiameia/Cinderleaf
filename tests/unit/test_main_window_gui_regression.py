@@ -4638,8 +4638,22 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
     assert sandbox_index >= 0
     main_window._scan_target_combo.setCurrentIndex(sandbox_index)
     main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    profile_root = (
+        sandbox_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / "profile_alpha_root"
+        / "Mods"
+    )
     inventory = ModsInventory(
-        mods=(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
             InstalledMod(
                 unique_id="Sample.Alpha",
                 name="Alpha Mod",
@@ -4649,11 +4663,6 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
                 dependencies=tuple(),
             ),
         ),
-        parse_warnings=tuple(),
-        duplicate_unique_ids=tuple(),
-        missing_required_dependencies=tuple(),
-        scan_entry_findings=tuple(),
-        ignored_entries=tuple(),
     )
     default_profile = SandboxModProfile(
         profile_id="default",
@@ -4673,10 +4682,10 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
         ),
         scan_result=ScanResult(
             target_kind=SCAN_TARGET_SANDBOX_MODS,
-            scan_path=sandbox_mods_root,
+            scan_path=profile_root,
             inventory=inventory,
         ),
-        linked_mod_count=1,
+        linked_mod_count=0,
     )
     captured: dict[str, object] = {}
 
@@ -4709,7 +4718,9 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
     assert create_kwargs["name"] == "Alpha Only"
     assert create_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
     assert main_window._sandbox_profile_combo.currentData() == profile.profile_id
-    assert "Sandbox profile created" in main_window._inventory_output_box.toPlainText()
+    output_text = main_window._inventory_output_box.toPlainText()
+    assert "Sandbox profile created" in output_text
+    assert "Starts with no enabled mods." in output_text
 
 
 def test_main_window_selected_sandbox_profile_change_dispatches_select_operation(
@@ -5208,8 +5219,22 @@ def test_main_window_create_real_profile_dispatches_create_operation(
     assert real_index >= 0
     main_window._scan_target_combo.setCurrentIndex(real_index)
     main_window._mods_path_input.setText(str(real_mods_root))
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / "profile_alpha_root"
+        / "Mods"
+    )
     inventory = ModsInventory(
-        mods=(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
             InstalledMod(
                 unique_id="Sample.Alpha",
                 name="Alpha Mod",
@@ -5219,11 +5244,6 @@ def test_main_window_create_real_profile_dispatches_create_operation(
                 dependencies=tuple(),
             ),
         ),
-        parse_warnings=tuple(),
-        duplicate_unique_ids=tuple(),
-        missing_required_dependencies=tuple(),
-        scan_entry_findings=tuple(),
-        ignored_entries=tuple(),
     )
     default_profile = SandboxModProfile(
         profile_id="default",
@@ -5243,10 +5263,10 @@ def test_main_window_create_real_profile_dispatches_create_operation(
         ),
         scan_result=ScanResult(
             target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
-            scan_path=real_mods_root,
+            scan_path=profile_root,
             inventory=inventory,
         ),
-        linked_mod_count=1,
+        linked_mod_count=0,
     )
     captured: dict[str, object] = {}
 
@@ -5283,7 +5303,9 @@ def test_main_window_create_real_profile_dispatches_create_operation(
     assert create_kwargs["name"] == "Alpha Only"
     assert create_kwargs["configured_mods_path_text"] == str(real_mods_root)
     assert main_window._real_profile_combo.currentData() == profile.profile_id
-    assert "Real profile created" in main_window._inventory_output_box.toPlainText()
+    output_text = main_window._inventory_output_box.toPlainText()
+    assert "Real profile created" in output_text
+    assert "Starts with no enabled mods." in output_text
 
 
 def test_main_window_selected_real_profile_change_dispatches_select_operation(

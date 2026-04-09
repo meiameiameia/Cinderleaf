@@ -7760,8 +7760,7 @@ class MainWindow(QMainWindow):
         self._set_current_scan_target(result.scan_result.target_kind)
         self._set_inventory_output_text(_build_real_profile_create_text(result))
         self._set_status(
-            f"Real profile created: {result.profile.name} "
-            f"({result.linked_mod_count} canonical folder link(s) added)."
+            f"Real profile created: {result.profile.name} (starts empty)."
         )
 
     def _on_selected_real_profile_changed(self, *_: object) -> None:
@@ -7900,8 +7899,7 @@ class MainWindow(QMainWindow):
         self._set_current_scan_target(result.scan_result.target_kind)
         self._set_inventory_output_text(_build_sandbox_profile_create_text(result))
         self._set_status(
-            f"Sandbox profile created: {result.profile.name} "
-            f"({result.linked_mod_count} canonical folder link(s) added)."
+            f"Sandbox profile created: {result.profile.name} (starts empty)."
         )
 
     def _on_selected_sandbox_profile_changed(self, *_: object) -> None:
@@ -12783,11 +12781,11 @@ def _build_sandbox_profile_create_text(result: SandboxModProfileCreateResult) ->
     lines = [
         "Sandbox profile created",
         f"Profile: {result.profile.name}",
-        f"Linked canonical folders: {result.linked_mod_count}",
+        "Starts with no enabled mods.",
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: toggle mods in this profile without changing Default.",
+        "Next step: enable the mods you want in this profile without changing Default.",
     ]
     return "\n".join(lines)
 
@@ -12796,11 +12794,11 @@ def _build_real_profile_create_text(result: RealModProfileCreateResult) -> str:
     lines = [
         "Real profile created",
         f"Profile: {result.profile.name}",
-        f"Linked canonical folders: {result.linked_mod_count}",
+        "Starts with no enabled mods.",
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: toggle mods in this profile and launch SMAPI against it.",
+        "Next step: enable the mods you want in this profile, then launch SMAPI against it.",
     ]
     return "\n".join(lines)
 
@@ -12812,7 +12810,7 @@ def _build_sandbox_profile_select_text(result: SandboxModProfileSelectResult) ->
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: toggle mods in this profile or launch sandbox dev against it.",
+        "Next step: enable or disable mods in this profile, or launch sandbox dev against it.",
     ]
     return "\n".join(lines)
 
@@ -12824,7 +12822,7 @@ def _build_real_profile_select_text(result: RealModProfileSelectResult) -> str:
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: toggle mods in this profile or launch SMAPI against it.",
+        "Next step: enable or disable mods in this profile, or launch SMAPI against it.",
     ]
     return "\n".join(lines)
 

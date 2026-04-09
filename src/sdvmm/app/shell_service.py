@@ -3422,21 +3422,7 @@ class AppShellService:
         if profile_root.exists():
             raise OSError(f"Profile root already exists: {profile_root}")
         profile_root.mkdir(parents=True, exist_ok=False)
-        linked_count = 0
-        try:
-            for child in sorted(sandbox_mods_path.iterdir(), key=lambda path: path.name.casefold()):
-                if not child.is_dir():
-                    continue
-                link_path = profile_root / child.name
-                _create_directory_link(link_path, child)
-                linked_count += 1
-        except OSError:
-            self._remove_materialized_profile_root(
-                profile,
-                sandbox_mods_path=sandbox_mods_path,
-            )
-            raise
-        return linked_count
+        return 0
 
     def _materialize_real_profile_from_canonical_library(
         self,
@@ -3452,21 +3438,7 @@ class AppShellService:
         if profile_root.exists():
             raise OSError(f"Profile root already exists: {profile_root}")
         profile_root.mkdir(parents=True, exist_ok=False)
-        linked_count = 0
-        try:
-            for child in sorted(real_mods_path.iterdir(), key=lambda path: path.name.casefold()):
-                if not child.is_dir():
-                    continue
-                link_path = profile_root / child.name
-                _create_directory_link(link_path, child)
-                linked_count += 1
-        except OSError:
-            self._remove_materialized_real_profile_root(
-                profile,
-                real_mods_path=real_mods_path,
-            )
-            raise
-        return linked_count
+        return 0
 
     def _remove_materialized_profile_root(
         self,

@@ -299,6 +299,20 @@ def test_set_sandbox_mod_enabled_state_toggles_direct_top_level_mod_in_custom_pr
     )
     profile_mod_path = profile_root / "AlphaMod"
 
+    enabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(sandbox_mods / "AlphaMod"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.target_kind == SCAN_TARGET_SANDBOX_MODS
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == ["Sample.Alpha"]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert canonical_mod_path.exists()
+    assert profile_mod_path.exists()
+
     disabled_result = service.set_sandbox_mod_enabled_state(
         sandbox_mods_path_text=str(sandbox_mods),
         mod_folder_path_text=str(profile_mod_path),
@@ -314,20 +328,6 @@ def test_set_sandbox_mod_enabled_state_toggles_direct_top_level_mod_in_custom_pr
     ]
     assert canonical_mod_path.exists()
     assert not profile_mod_path.exists()
-
-    enabled_result = service.set_sandbox_mod_enabled_state(
-        sandbox_mods_path_text=str(sandbox_mods),
-        mod_folder_path_text=str(sandbox_mods / "AlphaMod"),
-        enabled=True,
-        profile_id=profile.profile_id,
-    )
-
-    assert enabled_result.target_kind == SCAN_TARGET_SANDBOX_MODS
-    assert enabled_result.scan_path == profile_root
-    assert [mod.unique_id for mod in enabled_result.inventory.mods] == ["Sample.Alpha"]
-    assert enabled_result.inventory.disabled_mods == ()
-    assert canonical_mod_path.exists()
-    assert profile_mod_path.exists()
 
 
 def test_set_sandbox_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_profile(
@@ -362,6 +362,21 @@ def test_set_sandbox_mod_enabled_state_toggles_multi_mod_container_entry_in_cust
         / "NestedAlpha"
     )
 
+    enabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(container / "NestedBeta"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == [
+        "Sample.Alpha",
+        "Sample.Beta",
+    ]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "PackFolder").exists()
+
     disabled_result = service.set_sandbox_mod_enabled_state(
         sandbox_mods_path_text=str(sandbox_mods),
         mod_folder_path_text=str(nested_mod_path),
@@ -378,23 +393,7 @@ def test_set_sandbox_mod_enabled_state_toggles_multi_mod_container_entry_in_cust
     assert container.exists()
     assert not (profile_root / "PackFolder").exists()
 
-    enabled_result = service.set_sandbox_mod_enabled_state(
-        sandbox_mods_path_text=str(sandbox_mods),
-        mod_folder_path_text=str(container / "NestedBeta"),
-        enabled=True,
-        profile_id=profile.profile_id,
-    )
-
-    assert enabled_result.scan_path == profile_root
-    assert [mod.unique_id for mod in enabled_result.inventory.mods] == [
-        "Sample.Alpha",
-        "Sample.Beta",
-    ]
-    assert enabled_result.inventory.disabled_mods == ()
-    assert (profile_root / "PackFolder").exists()
-
-
-def test_create_sandbox_mod_profile_creates_linked_profile_root_from_canonical_library(
+def test_create_sandbox_mod_profile_creates_empty_profile_root_and_surfaces_canonical_mods_as_not_in_profile(
     tmp_path: Path,
 ) -> None:
     sandbox_mods = tmp_path / "SandboxMods"
@@ -411,14 +410,14 @@ def test_create_sandbox_mod_profile_creates_linked_profile_root_from_canonical_l
     )
 
     assert result.profile.name == "Testing Set"
-    assert result.linked_mod_count == 3
+    assert result.linked_mod_count == 0
     assert result.scan_result.scan_path.name == "Mods"
-    assert [mod.unique_id for mod in result.scan_result.inventory.mods] == [
+    assert result.scan_result.inventory.mods == tuple()
+    assert [mod.unique_id for mod in result.scan_result.inventory.disabled_mods] == [
         "Sample.Alpha",
         "Sample.Beta",
         "Sample.Gamma",
     ]
-    assert result.scan_result.inventory.disabled_mods == tuple()
 
     reloaded = service.load_sandbox_mod_profiles()
     assert reloaded.active_profile_id == result.profile.profile_id
@@ -443,8 +442,8 @@ def test_select_sandbox_mod_profile_scans_profile_root_and_shows_missing_canonic
     )
     service.set_sandbox_mod_enabled_state(
         sandbox_mods_path_text=str(sandbox_mods),
-        mod_folder_path_text=str(created.scan_result.scan_path / "BetaMod"),
-        enabled=False,
+        mod_folder_path_text=str(sandbox_mods / "AlphaMod"),
+        enabled=True,
         profile_id=created.profile.profile_id,
     )
     result = service.select_sandbox_mod_profile(
@@ -500,8 +499,8 @@ def test_scan_with_target_uses_active_sandbox_profile_root(tmp_path: Path) -> No
     )
     service.set_sandbox_mod_enabled_state(
         sandbox_mods_path_text=str(sandbox_mods),
-        mod_folder_path_text=str(created.scan_result.scan_path / "BetaMod"),
-        enabled=False,
+        mod_folder_path_text=str(sandbox_mods / "AlphaMod"),
+        enabled=True,
         profile_id=created.profile.profile_id,
     )
 
@@ -584,7 +583,7 @@ def test_set_real_mod_enabled_state_rejects_toggling_default_profile(tmp_path: P
     assert mod_path.exists()
 
 
-def test_create_real_mod_profile_creates_linked_profile_root_from_canonical_library(
+def test_create_real_mod_profile_creates_empty_profile_root_and_surfaces_canonical_mods_as_not_in_profile(
     tmp_path: Path,
 ) -> None:
     real_mods = tmp_path / "RealMods"
@@ -601,14 +600,14 @@ def test_create_real_mod_profile_creates_linked_profile_root_from_canonical_libr
     )
 
     assert result.profile.name == "Daily Set"
-    assert result.linked_mod_count == 3
+    assert result.linked_mod_count == 0
     assert result.scan_result.scan_path.name == "Mods"
-    assert [mod.unique_id for mod in result.scan_result.inventory.mods] == [
+    assert result.scan_result.inventory.mods == tuple()
+    assert [mod.unique_id for mod in result.scan_result.inventory.disabled_mods] == [
         "Sample.Alpha",
         "Sample.Beta",
         "Sample.Gamma",
     ]
-    assert result.scan_result.inventory.disabled_mods == tuple()
 
     reloaded = service.load_real_mod_profiles()
     assert reloaded.active_profile_id == result.profile.profile_id
@@ -640,6 +639,20 @@ def test_set_real_mod_enabled_state_toggles_direct_top_level_mod_in_custom_profi
     )
     profile_mod_path = profile_root / "AlphaMod"
 
+    enabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(real_mods / "AlphaMod"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.target_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == ["Sample.Alpha"]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert canonical_mod_path.exists()
+    assert profile_mod_path.exists()
+
     disabled_result = service.set_real_mod_enabled_state(
         configured_mods_path_text=str(real_mods),
         mod_folder_path_text=str(profile_mod_path),
@@ -655,20 +668,6 @@ def test_set_real_mod_enabled_state_toggles_direct_top_level_mod_in_custom_profi
     ]
     assert canonical_mod_path.exists()
     assert not profile_mod_path.exists()
-
-    enabled_result = service.set_real_mod_enabled_state(
-        configured_mods_path_text=str(real_mods),
-        mod_folder_path_text=str(real_mods / "AlphaMod"),
-        enabled=True,
-        profile_id=profile.profile_id,
-    )
-
-    assert enabled_result.target_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
-    assert enabled_result.scan_path == profile_root
-    assert [mod.unique_id for mod in enabled_result.inventory.mods] == ["Sample.Alpha"]
-    assert enabled_result.inventory.disabled_mods == ()
-    assert canonical_mod_path.exists()
-    assert profile_mod_path.exists()
 
 
 def test_set_real_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_profile(
@@ -698,6 +697,21 @@ def test_set_real_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_
         / "Mods"
     )
 
+    enabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(container / "ComponentB"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == [
+        "Sample.ComponentA",
+        "Sample.ComponentB",
+    ]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "PackFolder").exists()
+
     disabled_result = service.set_real_mod_enabled_state(
         configured_mods_path_text=str(real_mods),
         mod_folder_path_text=str(profile_root / "PackFolder" / "ComponentA"),
@@ -713,21 +727,6 @@ def test_set_real_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_
     ]
     assert container.exists()
     assert not (profile_root / "PackFolder").exists()
-
-    enabled_result = service.set_real_mod_enabled_state(
-        configured_mods_path_text=str(real_mods),
-        mod_folder_path_text=str(container / "ComponentB"),
-        enabled=True,
-        profile_id=profile.profile_id,
-    )
-
-    assert enabled_result.scan_path == profile_root
-    assert [mod.unique_id for mod in enabled_result.inventory.mods] == [
-        "Sample.ComponentA",
-        "Sample.ComponentB",
-    ]
-    assert enabled_result.inventory.disabled_mods == ()
-    assert (profile_root / "PackFolder").exists()
 
 
 def test_scan_with_target_uses_active_real_profile_root(tmp_path: Path) -> None:
@@ -745,8 +744,8 @@ def test_scan_with_target_uses_active_real_profile_root(tmp_path: Path) -> None:
     )
     service.set_real_mod_enabled_state(
         configured_mods_path_text=str(real_mods),
-        mod_folder_path_text=str(created.scan_result.scan_path / "BetaMod"),
-        enabled=False,
+        mod_folder_path_text=str(real_mods / "AlphaMod"),
+        enabled=True,
         profile_id=created.profile.profile_id,
     )
 
