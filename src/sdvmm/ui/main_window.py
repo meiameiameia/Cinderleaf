@@ -1310,7 +1310,7 @@ class MainWindow(QMainWindow):
         self._intake_filter_stats_label = QLabel("0/0 shown")
         self._archive_filter_stats_label = QLabel("0/0 shown")
         self._inventory_update_guidance_label = QLabel(
-            "Select an installed mod row to see update guidance."
+            "Select a mod to see actions and guidance."
         )
         self._inventory_update_guidance_label.setObjectName(
             "inventory_update_guidance_label"
@@ -2452,7 +2452,7 @@ class MainWindow(QMainWindow):
         table_layout.addWidget(self._mods_inventory_state_label)
         table_layout.addWidget(self._mods_table, 1)
 
-        inspector_panel = QGroupBox("Mod details")
+        inspector_panel = QGroupBox("")
         inspector_panel.setObjectName("mods_selection_context_group")
         inspector_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         inspector_layout = QVBoxLayout(inspector_panel)
@@ -2492,6 +2492,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Maximum,
         )
+        inspector_intro.setVisible(False)
 
         selection_summary_card = QFrame()
         selection_summary_card.setObjectName("mods_selection_summary_card")
@@ -2517,6 +2518,7 @@ class MainWindow(QMainWindow):
         )
         selected_actions_hint.setWordWrap(True)
         _set_auxiliary_label_style(selected_actions_hint)
+        selected_actions_hint.setVisible(False)
         selected_actions_layout.addWidget(selected_actions_hint)
         selected_actions_row = QHBoxLayout()
         selected_actions_row.setContentsMargins(0, 0, 0, 0)
@@ -2924,6 +2926,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Maximum,
         )
+        flow_hint_label.setVisible(False)
         self._inventory_flow_hint_label = flow_hint_label
         return inventory_controls_tabs, flow_hint_label
 
@@ -10933,9 +10936,9 @@ class MainWindow(QMainWindow):
         compact_for_troubleshooting = has_actionable_smapi and not has_selected_mod
 
         if hasattr(self, "_mods_selection_context_intro_label"):
-            self._mods_selection_context_intro_label.setVisible(not compact_for_troubleshooting)
+            self._mods_selection_context_intro_label.setVisible(False)
         if hasattr(self, "_inventory_flow_hint_label"):
-            self._inventory_flow_hint_label.setVisible(not compact_for_troubleshooting)
+            self._inventory_flow_hint_label.setVisible(False)
 
         if compact_for_troubleshooting:
             compact_message = "No mod selected. Select a row for mod actions."

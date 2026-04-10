@@ -2621,7 +2621,7 @@ def test_main_window_inventory_selected_row_update_guidance_line_exists_and_defa
     assert guidance_label is not None
     assert blocked_detail_label is not None
     assert open_remote_button is not None
-    assert guidance_label.text() == "Select an installed mod row to see update guidance."
+    assert guidance_label.text() == "Select a mod to see actions and guidance."
     assert blocked_detail_label.text() == ""
     assert blocked_detail_label.isVisible() is False
     assert open_remote_button.isEnabled() is False
@@ -9013,6 +9013,26 @@ def test_main_window_selected_actions_hint_uses_friendly_archive_wording(
         label.text() == "Archive the selected mod or restore an archived copy."
         for label in labels
     )
+    assert any(
+        label.text() == "Archive the selected mod or restore an archived copy."
+        and not label.isVisible()
+        for label in labels
+    )
+
+
+def test_main_window_library_right_rail_hides_redundant_helper_copy(
+    main_window: MainWindow,
+) -> None:
+    inspector_group = main_window.findChild(QGroupBox, "mods_selection_context_group")
+    inspector_intro = main_window.findChild(QLabel, "mods_selection_context_intro_label")
+    flow_hint = main_window.findChild(QLabel, "compact_hint_label")
+
+    assert inspector_group is not None
+    assert inspector_intro is not None
+    assert flow_hint is not None
+    assert inspector_group.title() == ""
+    assert inspector_intro.isVisible() is False
+    assert flow_hint.isVisible() is False
 
 
 def test_main_window_key_actions_keep_clear_button_roles(main_window: MainWindow) -> None:
