@@ -6463,6 +6463,7 @@ def test_main_window_setup_surface_group_and_scroll_exist(
         setup_scroll.sizePolicy().verticalPolicy()
         == QSizePolicy.Policy.Expanding
     )
+    assert backup_group.geometry().top() <= managed_group.geometry().top()
     assert setup_output_box.isReadOnly() is True
     assert setup_output_box.minimumHeight() >= 70
     assert setup_output_group.isHidden() is True
@@ -6572,22 +6573,15 @@ def test_main_window_setup_surface_onboarding_copy_is_user_facing(
     assert app_update_status_label is not None
     assert check_app_update_button is not None
     assert open_app_release_page_button is not None
-    assert "confirm that Cinderleaf is ready" in main_intro_label.text()
-    assert "common workflow" in quickstart_intro_label.text()
-    assert "live game folder plus your real and sandbox Mods folders" in (
-        setup_intro_label.text()
-    )
+    assert main_intro_label.isHidden() is True
+    assert "Set folders once" in main_intro_label.text()
+    assert "Game folder, Real Mods folder, Sandbox Mods folder." in quickstart_intro_label.text()
+    assert "Save setup remembers these paths." in setup_intro_label.text()
     assert "Detect game folders only reads the installed environment" in setup_intro_label.text()
-    assert (
-        "Inspect stays read-only and prepares restore/import review"
-        in backup_intro_label.text()
-    )
-    assert "Execute restore still writes only into the configured folders." in (
-        backup_intro_label.text()
-    )
-    assert "backup bundle, a restore/import review, or migration detail" in (
-        secondary_intro_label.text()
-    )
+    assert "Inspect is read-only." in backup_intro_label.text()
+    assert "Execute restore writes only into the configured folders." in backup_intro_label.text()
+    assert secondary_intro_label.isHidden() is True
+    assert "Backup tools first, managed folders below." in secondary_intro_label.text()
     assert "Check for app updates" in app_update_status_label.text()
     assert check_app_update_button.text() == "Check for app updates"
     assert open_app_release_page_button.text() == "Open release page"
@@ -6601,14 +6595,14 @@ def test_main_window_setup_readiness_label_tracks_minimum_paths(
     status_label = main_window._status_strip_label
 
     assert readiness_label is not None
-    assert "Minimum to start" in readiness_label.text()
-    assert "Minimum setup is empty" in status_label.text()
+    assert "Quick start" in readiness_label.text()
+    assert "Quick start is empty" in status_label.text()
 
     main_window._game_path_input.setText(r"C:\Game")
     qapp.processEvents()
     assert "1/3 core paths set" in readiness_label.text()
     assert "Real Mods folder, Sandbox Mods folder" in readiness_label.text()
-    assert "Setup is in progress" in status_label.text()
+    assert "Setup is almost ready" in status_label.text()
 
     main_window._mods_path_input.setText(r"C:\Game\Mods")
     qapp.processEvents()
@@ -6617,9 +6611,9 @@ def test_main_window_setup_readiness_label_tracks_minimum_paths(
 
     main_window._sandbox_mods_path_input.setText(r"C:\Sandbox\Mods")
     qapp.processEvents()
-    assert "Configured enough to proceed" in readiness_label.text()
+    assert "Ready to go" in readiness_label.text()
     assert "inspect a package in Packages" in readiness_label.text()
-    assert "Core paths are ready" in status_label.text()
+    assert "Ready to go" in status_label.text()
 
 
 def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: MainWindow) -> None:
@@ -6721,7 +6715,7 @@ def test_main_window_setup_managed_folders_surface_tracks_game_folder(
 
     assert (
         summary_label.text()
-        == "Derived from the game folder. Optional: migrate the configured Sandbox Mods and archive folders here when you are ready."
+        == "Derived from the game folder. Migrate only when you want Cinderleaf-managed paths."
     )
     assert sandbox_mods_label.text() == str(game_path / "Cinderleaf" / "Sandbox Mods")
     assert sandbox_logs_label.text() == str(game_path / "Cinderleaf" / "Logs" / "Sandbox")

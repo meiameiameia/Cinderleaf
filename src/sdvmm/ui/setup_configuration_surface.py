@@ -135,20 +135,21 @@ class SetupConfigurationSurface(QScrollArea):
         primary_actions_layout.addStretch(1)
 
         main_intro_label = QLabel(
-            "Set the core folders once, confirm that Cinderleaf is ready, then spend most of your time in Packages, Review, Compare, and Mods."
+            "Set folders once, then use Packages, Compare, and Mods."
         )
         main_intro_label.setObjectName("setup_main_column_intro_label")
         main_intro_label.setWordWrap(True)
+        main_intro_label.setVisible(False)
 
         quickstart_panel = QFrame()
         quickstart_panel.setObjectName("setup_quickstart_panel")
         quickstart_layout = QVBoxLayout(quickstart_panel)
         quickstart_layout.setContentsMargins(12, 12, 12, 12)
         quickstart_layout.setSpacing(6)
-        quickstart_label = QLabel("Minimum to start")
+        quickstart_label = QLabel("Start here")
         quickstart_label.setObjectName("setup_quickstart_label")
         quickstart_intro_label = QLabel(
-            "You can start the common workflow once Game folder, Real Mods folder, and Sandbox Mods folder are in place."
+            "Game folder, Real Mods folder, Sandbox Mods folder."
         )
         quickstart_intro_label.setObjectName("setup_quickstart_intro_label")
         quickstart_intro_label.setWordWrap(True)
@@ -156,15 +157,14 @@ class SetupConfigurationSurface(QScrollArea):
         quickstart_layout.addWidget(quickstart_intro_label)
         quickstart_layout.addWidget(setup_readiness_label)
 
-        setup_group = QGroupBox("Configure paths")
+        setup_group = QGroupBox("Core folders")
         setup_group.setObjectName("setup_surface_group")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QVBoxLayout(setup_group)
         setup_layout.setContentsMargins(12, 12, 12, 12)
         setup_layout.setSpacing(10)
         setup_intro_label = QLabel(
-            "Point Cinderleaf at the live game folder plus your real and sandbox Mods folders. "
-            "Save setup keeps these paths. Detect game folders only reads the installed environment."
+            "Save setup remembers these paths. Detect game folders only reads the installed environment."
         )
         setup_intro_label.setObjectName("setup_local_setup_intro_label")
         setup_intro_label.setWordWrap(True)
@@ -197,14 +197,14 @@ class SetupConfigurationSurface(QScrollArea):
             )
         )
 
-        advanced_group = QGroupBox("Safety and integrations")
+        advanced_group = QGroupBox("Optional tools")
         advanced_group.setObjectName("setup_advanced_group")
         advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setContentsMargins(12, 12, 12, 12)
         advanced_layout.setSpacing(10)
         advanced_intro_label = QLabel(
-            "Archive folders keep live and sandbox changes reversible. Nexus and Steam options are optional helpers, not the minimum setup."
+            "Archive folders, Nexus, and Steam options are optional."
         )
         advanced_intro_label.setObjectName("setup_advanced_intro_label")
         advanced_intro_label.setWordWrap(True)
@@ -285,7 +285,7 @@ class SetupConfigurationSurface(QScrollArea):
         for column in range(2):
             setup_actions_layout.setColumnStretch(column, 1)
 
-        backup_group = QGroupBox("Backup and restore tools")
+        backup_group = QGroupBox("Backup and restore")
         backup_group.setObjectName("setup_backup_restore_group")
         backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         backup_layout = QVBoxLayout(backup_group)
@@ -293,8 +293,7 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.setSpacing(8)
 
         backup_intro_label = QLabel(
-            "Export creates a bundle. Inspect stays read-only and prepares restore/import review for the current machine. "
-            "Execute restore still writes only into the configured folders."
+            "Export creates a bundle. Inspect is read-only. Execute restore writes only into the configured folders."
         )
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")
         backup_intro_label.setWordWrap(True)
@@ -304,7 +303,7 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.addWidget(backup_bundle_inspection_summary_label)
         backup_layout.addWidget(restore_import_planning_summary_label)
 
-        managed_group = QGroupBox("Cinderleaf-managed folders")
+        managed_group = QGroupBox("Managed folders")
         managed_group.setObjectName("setup_managed_folders_group")
         managed_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         managed_layout = QVBoxLayout(managed_group)
@@ -364,7 +363,7 @@ class SetupConfigurationSurface(QScrollArea):
             )
         )
 
-        setup_output_group = QGroupBox("Restore and setup details")
+        setup_output_group = QGroupBox("Details")
         setup_output_group.setObjectName("setup_output_group")
         setup_output_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -418,17 +417,18 @@ class SetupConfigurationSurface(QScrollArea):
         secondary_panel_layout = QVBoxLayout(secondary_panel)
         secondary_panel_layout.setContentsMargins(12, 12, 12, 12)
         secondary_panel_layout.setSpacing(10)
-        secondary_section_label = QLabel("Backup and restore")
+        secondary_section_label = QLabel("Tools and folders")
         secondary_section_label.setObjectName("setup_secondary_section_label")
         secondary_intro_label = QLabel(
-            "Use this side when you need a backup bundle, a restore/import review, or migration detail."
+            "Backup tools first, managed folders below."
         )
         secondary_intro_label.setObjectName("setup_secondary_intro_label")
         secondary_intro_label.setWordWrap(True)
+        secondary_intro_label.setVisible(False)
         secondary_panel_layout.addWidget(secondary_section_label)
         secondary_panel_layout.addWidget(secondary_intro_label)
-        secondary_panel_layout.addWidget(managed_group)
         secondary_panel_layout.addWidget(backup_group)
+        secondary_panel_layout.addWidget(managed_group)
         secondary_panel_layout.addWidget(setup_output_group)
 
         secondary_layout.addWidget(secondary_panel)

@@ -1329,7 +1329,7 @@ class MainWindow(QMainWindow):
         self._mods_inventory_state_label.setWordWrap(True)
         _set_auxiliary_label_style(self._mods_inventory_state_label)
         self._setup_readiness_label = QLabel(
-            "Minimum to start: set Game folder, Real Mods folder, and Sandbox Mods folder."
+            "Quick start: set Game folder, Real Mods folder, and Sandbox Mods folder."
         )
         self._setup_readiness_label.setObjectName("setup_readiness_label")
         self._setup_readiness_label.setWordWrap(True)
@@ -1341,7 +1341,7 @@ class MainWindow(QMainWindow):
         self._setup_app_update_status_label.setWordWrap(True)
         _set_auxiliary_label_style(self._setup_app_update_status_label)
         self._managed_folders_summary_label = QLabel(
-            "Set the game folder to see the Cinderleaf-managed paths. Existing paths keep working until you choose migration."
+            "Derived from the game folder. Migrate only when you want Cinderleaf-managed paths."
         )
         self._managed_folders_summary_label.setObjectName("setup_managed_folders_summary_label")
         self._managed_folders_summary_label.setWordWrap(True)
@@ -3520,9 +3520,9 @@ class MainWindow(QMainWindow):
 
         setup_page = self._build_page_shell(
             object_name="setup_workspace_page",
-            eyebrow="Configure once, reuse everywhere",
-            title="Setup and migration",
-            subtitle="Set paths once. Backup and restore tools stay nearby when you need them.",
+            eyebrow="Folders and tools",
+            title="Setup",
+            subtitle="Set your folders. Backup and restore tools stay on the right.",
             body_widget=setup_scroll,
         )
         self._setup_scroll = setup_scroll
@@ -4351,7 +4351,7 @@ class MainWindow(QMainWindow):
             return
 
         self._managed_folders_summary_label.setText(
-            "Derived from the game folder. Optional: migrate the configured Sandbox Mods and archive folders here when you are ready."
+            "Derived from the game folder. Migrate only when you want Cinderleaf-managed paths."
         )
         self._managed_sandbox_mods_path_label.setText(str(managed_paths.sandbox_mods_path))
         self._managed_sandbox_mods_path_label.setToolTip(str(managed_paths.sandbox_mods_path))
@@ -8532,7 +8532,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._setup_readiness_label,
                 "ready",
-                "Configured enough to proceed. Save setup if you want to keep these paths, then inspect a package in Packages.",
+                "Ready to go. Save setup if you want to keep these paths, then inspect a package in Packages.",
             )
             self._refresh_first_run_status_hint(configured_count, missing_labels)
             return
@@ -8541,7 +8541,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._setup_readiness_label,
                 "empty",
-                "Minimum to start: set Game folder, Real Mods folder, and Sandbox Mods folder.",
+                "Quick start: set Game folder, Real Mods folder, and Sandbox Mods folder.",
             )
             self._refresh_first_run_status_hint(configured_count, missing_labels)
             return
@@ -8549,7 +8549,7 @@ class MainWindow(QMainWindow):
         _set_feedback_label_state(
             self._setup_readiness_label,
             "muted",
-            f"{configured_count}/3 core paths set. Add {', '.join(missing_labels)} to unlock the common sandbox-first workflow.",
+            f"{configured_count}/3 core paths set. Add {', '.join(missing_labels)} to get started in Packages, Compare, and Mods.",
         )
         self._refresh_first_run_status_hint(configured_count, missing_labels)
 
@@ -8564,29 +8564,29 @@ class MainWindow(QMainWindow):
         current_status = self._status_strip_label.text().strip()
         managed_prefixes = (
             "No saved configuration found.",
-            "Minimum setup is empty.",
-            "Setup is in progress.",
-            "Core paths are ready.",
+            "Quick start is empty.",
+            "Setup is almost ready.",
+            "Ready to go.",
         )
         if current_status and not current_status.startswith(managed_prefixes):
             return
 
         if configured_count == 3:
             self._set_status(
-                "Core paths are ready. You can inspect a package now, and save setup when you want to keep these paths."
+                "Ready to go. You can inspect a package now, and save setup when you want to keep these paths."
             )
             return
 
         if configured_count == 0:
             self._set_status(
-                "Minimum setup is empty. Set Game folder, Real Mods folder, and Sandbox Mods folder to unlock the common workflow."
+                "Quick start is empty. Set Game folder, Real Mods folder, and Sandbox Mods folder to get started."
             )
             return
 
         self._set_status(
-            "Setup is in progress. Add "
+            "Setup is almost ready. Add "
             + ", ".join(missing_labels)
-            + " to unlock the common workflow, then save setup when you want to keep these paths."
+            + " to get started, then save setup when you want to keep these paths."
         )
 
     def _refresh_mods_workspace_state(self) -> None:
