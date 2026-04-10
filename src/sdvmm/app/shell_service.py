@@ -2447,7 +2447,13 @@ class AppShellService:
             if enabled:
                 paths_to_create = [
                     (profile_path, canonical_path)
-                    for profile_path, canonical_path in zip(profile_member_paths, canonical_member_paths)
+                    for profile_path, canonical_path in _resolve_profile_enable_path_pairs(
+                        inventory=current_scan_result.inventory,
+                        roots=(profile_root, sandbox_mods_path),
+                        profile_root=profile_root,
+                        canonical_root=sandbox_mods_path,
+                        entry_state=entry_state,
+                    )
                     if not profile_path.exists()
                 ]
                 if not paths_to_create:
@@ -2567,7 +2573,13 @@ class AppShellService:
             if enabled:
                 paths_to_create = [
                     (profile_path, canonical_path)
-                    for profile_path, canonical_path in zip(profile_member_paths, canonical_member_paths)
+                    for profile_path, canonical_path in _resolve_profile_enable_path_pairs(
+                        inventory=current_scan_result.inventory,
+                        roots=(profile_root, real_mods_path),
+                        profile_root=profile_root,
+                        canonical_root=real_mods_path,
+                        entry_state=entry_state,
+                    )
                     if not profile_path.exists()
                 ]
                 if not paths_to_create:
@@ -2642,15 +2654,6 @@ class AppShellService:
         if entry_state.enabled:
             return tuple()
 
-        enabled_mods = list(inventory.mods)
-        enabled_mod_paths = {_path_lookup_key(mod.folder_path) for mod in enabled_mods}
-        for mod in entry_state.mods:
-            mod_path_key = _path_lookup_key(mod.folder_path)
-            if mod_path_key in enabled_mod_paths:
-                continue
-            enabled_mods.append(mod)
-            enabled_mod_paths.add(mod_path_key)
-
         selected_unique_ids = {
             canonicalize_unique_id(mod.unique_id) or mod.unique_id.strip().casefold()
             for mod in entry_state.mods
@@ -2659,11 +2662,15 @@ class AppShellService:
         if not selected_unique_ids:
             return tuple()
 
+        _, remaining_missing_findings = _resolve_profile_enable_dependency_closure(
+            inventory=inventory,
+            roots=(active_profile_root, canonical_mods_root),
+            entry_state=entry_state,
+        )
         missing_findings = tuple(
             finding
-            for finding in evaluate_installed_dependencies(tuple(enabled_mods))
-            if finding.state == MISSING_REQUIRED_DEPENDENCY
-            and (
+            for finding in remaining_missing_findings
+            if (
                 canonicalize_unique_id(finding.required_by_unique_id)
                 or finding.required_by_unique_id.strip().casefold()
             )
@@ -10951,6 +10958,107 @@ def _profile_entry_state_for_mod(
         roots=roots,
     )
     return state_by_mod_path.get(_path_lookup_key(mod_folder_path))
+
+
+def _resolve_profile_enable_path_pairs(
+    *,
+    inventory: ModsInventory,
+    roots: tuple[Path, ...],
+    profile_root: Path,
+    canonical_root: Path,
+    entry_state: _ProfileEntryState,
+) -> tuple[tuple[Path, Path], ...]:
+    resolved_states, _ = _resolve_profile_enable_dependency_closure(
+        inventory=inventory,
+        roots=roots,
+        entry_state=entry_state,
+    )
+
+    path_pairs: list[tuple[Path, Path]] = []
+    seen_profile_paths: set[str] = set()
+    for resolved_state in resolved_states:
+        for folder_name in resolved_state.folder_names:
+            profile_path = profile_root / folder_name
+            profile_key = _path_lookup_key(profile_path)
+            if profile_key in seen_profile_paths:
+                continue
+            seen_profile_paths.add(profile_key)
+            path_pairs.append((profile_path, canonical_root / folder_name))
+    return tuple(path_pairs)
+
+
+def _resolve_profile_enable_dependency_closure(
+    *,
+    inventory: ModsInventory,
+    roots: tuple[Path, ...],
+    entry_state: _ProfileEntryState,
+) -> tuple[tuple[_ProfileEntryState, ...], tuple[DependencyPreflightFinding, ...]]:
+    _, state_by_mod_path = _build_profile_entry_state_maps(inventory=inventory, roots=roots)
+
+    available_entry_states_by_unique_id: dict[str, _ProfileEntryState] = {}
+    for mod in (*inventory.mods, *inventory.disabled_mods):
+        unique_id_key = canonicalize_unique_id(mod.unique_id) or mod.unique_id.strip().casefold()
+        if not unique_id_key or unique_id_key in available_entry_states_by_unique_id:
+            continue
+        resolved_state = state_by_mod_path.get(_path_lookup_key(mod.folder_path))
+        if resolved_state is not None:
+            available_entry_states_by_unique_id[unique_id_key] = resolved_state
+
+    resolved_states: list[_ProfileEntryState] = []
+    queued_states: list[_ProfileEntryState] = [entry_state]
+    seen_state_keys: set[tuple[str, ...]] = set()
+
+    while queued_states:
+        current_state = queued_states.pop()
+        current_key = tuple(sorted(current_state.folder_names))
+        if current_key in seen_state_keys:
+            continue
+        seen_state_keys.add(current_key)
+        resolved_states.append(current_state)
+
+        enabled_mods = list(inventory.mods)
+        enabled_mod_paths = {_path_lookup_key(mod.folder_path) for mod in enabled_mods}
+        for selected_state in resolved_states:
+            for mod in selected_state.mods:
+                mod_path_key = _path_lookup_key(mod.folder_path)
+                if mod_path_key in enabled_mod_paths:
+                    continue
+                enabled_mods.append(mod)
+                enabled_mod_paths.add(mod_path_key)
+
+        missing_required_findings = tuple(
+            finding
+            for finding in evaluate_installed_dependencies(tuple(enabled_mods))
+            if finding.state == MISSING_REQUIRED_DEPENDENCY
+        )
+        for finding in missing_required_findings:
+            dependency_key = (
+                canonicalize_unique_id(finding.dependency_unique_id)
+                or finding.dependency_unique_id.strip().casefold()
+            )
+            dependency_state = available_entry_states_by_unique_id.get(dependency_key)
+            if dependency_state is None:
+                continue
+            dependency_state_key = tuple(sorted(dependency_state.folder_names))
+            if dependency_state_key not in seen_state_keys:
+                queued_states.append(dependency_state)
+
+    final_enabled_mods = list(inventory.mods)
+    final_enabled_paths = {_path_lookup_key(mod.folder_path) for mod in final_enabled_mods}
+    for resolved_state in resolved_states:
+        for mod in resolved_state.mods:
+            mod_path_key = _path_lookup_key(mod.folder_path)
+            if mod_path_key in final_enabled_paths:
+                continue
+            final_enabled_mods.append(mod)
+            final_enabled_paths.add(mod_path_key)
+
+    remaining_missing_findings = tuple(
+        finding
+        for finding in evaluate_installed_dependencies(tuple(final_enabled_mods))
+        if finding.state == MISSING_REQUIRED_DEPENDENCY
+    )
+    return tuple(resolved_states), remaining_missing_findings
 
 
 def _upsert_sandbox_mod_profile(

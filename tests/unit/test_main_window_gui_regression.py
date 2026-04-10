@@ -5373,6 +5373,148 @@ def test_main_window_real_toggle_confirms_before_enabling_when_dependencies_woul
     assert "Sample.Framework" in str(question_calls[0]["text"])
 
 
+def test_main_window_real_toggle_skips_confirmation_when_dependency_can_be_auto_added(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+    default_profile = SandboxModProfile(profile_id="default", name="Default", is_default=True)
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Profile 2",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_real_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    alpha_path = real_mods_root / "AlphaMod"
+    framework_path = real_mods_root / "FrameworkMod"
+    inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=alpha_path,
+                manifest_path=alpha_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+            InstalledMod(
+                unique_id="Sample.Framework",
+                name="Framework Mod",
+                version="1.0.0",
+                folder_path=framework_path,
+                manifest_path=framework_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    enabled_inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=profile_root / "AlphaMod",
+                manifest_path=profile_root / "AlphaMod" / "manifest.json",
+                dependencies=(
+                    ManifestDependency(unique_id="Sample.Framework", required=True),
+                ),
+            ),
+            InstalledMod(
+                unique_id="Sample.Framework",
+                name="Framework Mod",
+                version="1.0.0",
+                folder_path=profile_root / "FrameworkMod",
+                manifest_path=profile_root / "FrameworkMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    captured: dict[str, object] = {}
+    question_calls: list[dict[str, object]] = []
+
+    def fake_toggle(**kwargs: object) -> ScanResult:
+        captured["toggle_kwargs"] = kwargs
+        return ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=enabled_inventory,
+        )
+
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        question_calls.append({"title": args[1], "text": args[2]})
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    alpha_item = main_window._mods_table.item(alpha_row, 0)
+    assert alpha_item is not None
+
+    alpha_item.setCheckState(Qt.CheckState.Checked)
+    qapp.processEvents()
+
+    toggle_kwargs = captured.get("toggle_kwargs")
+    assert captured.get("operation_names") == ["Real profile mod toggle"]
+    assert isinstance(toggle_kwargs, dict)
+    assert toggle_kwargs["mod_folder_path_text"] == str(alpha_path)
+    assert toggle_kwargs["enabled"] is True
+    assert question_calls == []
+
+
 def test_main_window_real_container_rows_share_profile_toggle_ownership(
     main_window: MainWindow,
     qapp: QApplication,

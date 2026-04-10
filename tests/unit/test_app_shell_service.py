@@ -964,6 +964,71 @@ def test_set_real_mod_enabled_state_toggles_grouped_top_level_mod_in_custom_prof
     assert not (profile_root / "[CP]ZebrusLawnRobot").exists()
 
 
+def test_set_real_mod_enabled_state_auto_enables_available_required_dependencies(
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    real_mods.mkdir()
+    framework_path = _create_mod(
+        real_mods,
+        "ContentPatcher",
+        "Pathoschild.ContentPatcher",
+        name="Content Patcher",
+    )
+    primary_path = _create_mod(
+        real_mods,
+        "ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobot",
+        name="Zebrus Lawn Robot",
+        update_keys=("Nexus:44383",),
+    )
+    content_path = _create_mod(
+        real_mods,
+        "[CP]ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+        name="Zebrus Lawn Robot - Content",
+        dependencies=(
+            ("Zebrus.ZebrusLawnRobot", True),
+            ("Pathoschild.ContentPatcher", True),
+        ),
+        update_keys=("Nexus:44383",),
+    )
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_real_mod_profile(
+        name="Lean Set",
+        configured_mods_path_text=str(real_mods),
+    ).profile
+    profile_root = (
+        real_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+
+    enabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(content_path),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert {mod.unique_id for mod in enabled_result.inventory.mods} == {
+        "Pathoschild.ContentPatcher",
+        "Zebrus.ZebrusLawnRobot",
+        "Zebrus.ZebrusLawnRobotCP",
+    }
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "ContentPatcher").exists()
+    assert (profile_root / "ZebrusLawnRobot").exists()
+    assert (profile_root / "[CP]ZebrusLawnRobot").exists()
+    assert framework_path.exists()
+    assert primary_path.exists()
+    assert content_path.exists()
+
+
 def test_scan_with_target_uses_active_real_profile_root(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
     real_mods = tmp_path / "RealMods"
@@ -2693,9 +2758,8 @@ def test_execute_restore_import_replaces_conflicting_mod_with_archive_aware_rest
     assert archived_target.exists() is True
     assert (archived_target / "config.json").read_text(encoding="utf-8") == '{"enabled":false}'
     assert local_real_alpha.exists() is True
-    assert '"Version":"1.0.0"' in local_real_alpha.joinpath("manifest.json").read_text(
-        encoding="utf-8"
-    )
+    restored_manifest = json.loads(local_real_alpha.joinpath("manifest.json").read_text(encoding="utf-8"))
+    assert restored_manifest["Version"] == "1.0.0"
 
 
 def test_execute_restore_import_replaces_conflicting_config_by_archiving_and_replacing_mod_folder(
