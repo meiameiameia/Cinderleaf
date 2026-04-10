@@ -2414,11 +2414,9 @@ class MainWindow(QMainWindow):
 
         page_layout.addWidget(
             self._build_page_header(
-                eyebrow="Library and launch",
+                eyebrow="Installed mods",
                 title="Library",
-                subtitle=(
-                    "Scan installed mods, check updates, and use the right-side actions."
-                ),
+                subtitle="Scan mods, check updates, and launch the game.",
             )
         )
 
