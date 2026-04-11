@@ -9077,6 +9077,19 @@ def test_main_window_workflow_state_labels_exist(main_window: MainWindow) -> Non
     )
 
 
+def test_main_window_global_status_strip_uses_single_status_heading(
+    main_window: MainWindow,
+) -> None:
+    summary_label = main_window.findChild(QLabel, "global_status_summary_label")
+    panel_title = main_window.findChild(QLabel, "global_status_panel_title")
+    current_status_label = main_window.findChild(QLabel, "global_status_current_label")
+
+    assert summary_label is not None
+    assert summary_label.text() == "Status"
+    assert panel_title is None
+    assert current_status_label is not None
+
+
 def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
     main_window: MainWindow,
     qapp: QApplication,
