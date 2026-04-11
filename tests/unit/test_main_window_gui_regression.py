@@ -1309,8 +1309,7 @@ def test_main_window_tall_workspace_pages_use_scrollable_body_shells(
         "discovery_workspace_page_scroll_area",
         "compare_tab_scroll_area",
         "packages_workspace_page_scroll_area",
-        "archive_workspace_page_scroll_area",
-        "recovery_tab_scroll_area",
+        "history_workspace_page_scroll_area",
     )
 
     for object_name in scroll_area_names:
@@ -1496,7 +1495,8 @@ def test_main_window_bottom_details_toggle_contract_is_removed(
 
 def test_main_window_recovery_inspection_controls_exist(main_window: MainWindow) -> None:
     recovery_tab = main_window._recovery_page
-    recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
+    history_tabs = main_window.findChild(QTabWidget, "history_workspace_tabs")
+    recovery_group = main_window.findChild(QWidget, "recovery_inspection_group")
     recovery_output_group = main_window.findChild(QGroupBox, "recovery_output_group")
     recovery_combo = main_window.findChild(QComboBox, "recovery_inspection_operation_combo")
     recovery_filter_combo = main_window.findChild(QComboBox, "recovery_selector_filter_combo")
@@ -1512,7 +1512,7 @@ def test_main_window_recovery_inspection_controls_exist(main_window: MainWindow)
     assert recovery_summary_label is not None
     assert recovery_button is not None
     assert run_recovery_button is not None
-    assert recovery_group.parentWidget() is not recovery_tab
+    assert recovery_group.parentWidget() is recovery_tab
     assert recovery_output_group.parentWidget() is recovery_group
     assert main_window._install_history_combo is recovery_combo
     assert main_window._install_history_filter_combo is recovery_filter_combo
@@ -1528,7 +1528,7 @@ def test_main_window_review_tab_no_longer_hosts_recovery_controls(
     main_window: MainWindow,
 ) -> None:
     plan_content = main_window.findChild(QWidget, "plan_install_tab_content")
-    recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
+    recovery_group = main_window.findChild(QWidget, "recovery_inspection_group")
 
     assert plan_content is not None
     assert recovery_group is not None
@@ -1548,13 +1548,18 @@ def test_main_window_recovery_controls_remain_visible_without_bottom_details_reg
         lambda: SimpleNamespace(operations=(operation,)),
     )
     main_window._refresh_install_operation_selector()
-    recovery_tab = main_window.findChild(QWidget, "recovery_tab")
-    recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    history_tabs = main_window.findChild(QTabWidget, "history_workspace_tabs")
+    recovery_tab = main_window.findChild(QWidget, "history_recovery_panel")
+    recovery_group = main_window.findChild(QWidget, "recovery_inspection_group")
 
+    assert history_page is not None
+    assert history_tabs is not None
     assert recovery_tab is not None
     assert recovery_group is not None
 
-    main_window._context_tabs.setCurrentWidget(recovery_tab)
+    main_window._context_tabs.setCurrentWidget(history_page)
+    history_tabs.setCurrentWidget(recovery_tab)
     qapp.processEvents()
     assert recovery_group.isVisible() is True
     assert main_window._install_history_combo.isEnabled() is True
@@ -1564,7 +1569,7 @@ def test_main_window_recovery_controls_remain_visible_without_bottom_details_reg
 def test_main_window_recovery_surface_keeps_detail_group_tight_with_review_controls(
     main_window: MainWindow,
 ) -> None:
-    recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
+    recovery_group = main_window.findChild(QWidget, "recovery_inspection_group")
     recovery_output_group = main_window.findChild(QGroupBox, "recovery_output_group")
 
     assert recovery_group is not None
@@ -1583,12 +1588,16 @@ def test_main_window_local_detail_groups_start_hidden_until_they_have_useful_tex
     setup_tab = main_window._setup_scroll
     discovery_page = main_window.findChild(QWidget, "discovery_workspace_page")
     compare_tab = main_window.findChild(QWidget, "compare_tab")
-    archive_page = main_window.findChild(QWidget, "archive_workspace_page")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    history_tabs = main_window.findChild(QTabWidget, "history_workspace_tabs")
+    archive_page = main_window.findChild(QWidget, "history_archive_panel")
     review_tab = main_window.findChild(QWidget, "plan_install_tab")
-    recovery_tab = main_window.findChild(QWidget, "recovery_tab")
+    recovery_tab = main_window.findChild(QWidget, "history_recovery_panel")
 
     assert discovery_page is not None
     assert compare_tab is not None
+    assert history_page is not None
+    assert history_tabs is not None
     assert archive_page is not None
     assert review_tab is not None
     assert recovery_tab is not None
@@ -1601,7 +1610,8 @@ def test_main_window_local_detail_groups_start_hidden_until_they_have_useful_tex
     qapp.processEvents()
     assert main_window._compare_output_group.isHidden() is True
 
-    main_window._context_tabs.setCurrentWidget(archive_page)
+    main_window._context_tabs.setCurrentWidget(history_page)
+    history_tabs.setCurrentWidget(archive_page)
     qapp.processEvents()
     assert main_window._archive_output_group.isHidden() is True
 
@@ -1613,7 +1623,8 @@ def test_main_window_local_detail_groups_start_hidden_until_they_have_useful_tex
     qapp.processEvents()
     assert main_window._review_output_group.isHidden() is True
 
-    main_window._context_tabs.setCurrentWidget(recovery_tab)
+    main_window._context_tabs.setCurrentWidget(history_page)
+    history_tabs.setCurrentWidget(recovery_tab)
     qapp.processEvents()
     assert main_window._recovery_output_group.isHidden() is True
 
@@ -1641,6 +1652,11 @@ def test_main_window_stylesheet_explicitly_themes_message_boxes(
     assert "QMessageBox" in stylesheet
     assert "background: #16191d;" in stylesheet
     assert "QMessageBox QLabel" in stylesheet
+    assert "QWidget#history_workspace_page" in stylesheet
+    assert "QWidget#history_workspace_body" in stylesheet
+    assert "QScrollArea#history_workspace_page_scroll_area" in stylesheet
+    assert "QTabWidget#history_workspace_tabs::pane" in stylesheet
+    assert "background: transparent;" in stylesheet
 
 
 def test_main_window_top_context_surface_has_expected_panels(main_window: MainWindow) -> None:
@@ -6624,8 +6640,7 @@ def test_main_window_top_level_context_tabs_follow_v1_workflow_order(
         "Install",
         "Discover",
         "Compare",
-        "Archive",
-        "Recovery",
+        "History",
     ]
 
 
@@ -9082,6 +9097,12 @@ def test_main_window_plan_install_surface_has_expected_structure(
     assert inventory_tabs.tabBar().objectName() == "mods_workspace_mode_tabbar"
     assert inventory_tabs.documentMode() is True
     assert inventory_tabs.tabBar().drawBase() is False
+
+    history_tabs = main_window.findChild(QTabWidget, "history_workspace_tabs")
+    assert history_tabs is not None
+    assert history_tabs.documentMode() is True
+    assert history_tabs.tabBar().objectName() == "mods_workspace_mode_tabbar"
+    assert history_tabs.tabBar().drawBase() is False
 
     assert plan_scroll.parentWidget() is plan_tab
     assert plan_scroll.widget() is plan_content
@@ -12900,16 +12921,20 @@ def test_main_window_archive_surface_has_expected_structure(
     main_window: MainWindow,
 ) -> None:
     context_tabs = main_window._context_tabs
+    history_tabs = main_window.findChild(QTabWidget, "history_workspace_tabs")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
     archive_page = main_window._archive_page
     archive_tab = main_window.findChild(QWidget, "archive_tab")
     archive_empty_state_label = main_window.findChild(QLabel, "archive_empty_state_label")
     archive_state_panel = main_window.findChild(QWidget, "archive_state_panel")
     archive_output_group = main_window.findChild(QGroupBox, "archive_output_group")
-    archive_controls_group = main_window.findChild(QGroupBox, "archive_controls_group")
+    archive_controls_group = main_window.findChild(QWidget, "archive_controls_group")
     archive_results_group = main_window.findChild(QGroupBox, "archive_results_group")
 
     assert context_tabs is not None
     assert isinstance(context_tabs, QTabWidget)
+    assert history_tabs is not None
+    assert history_page is not None
     assert archive_page is not None
     assert archive_tab is not None
     assert archive_empty_state_label is not None
@@ -12919,9 +12944,14 @@ def test_main_window_archive_surface_has_expected_structure(
     assert archive_results_group is not None
 
     tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
-    assert "Archive" in tab_labels
-    assert context_tabs.indexOf(archive_page) >= 0
-    assert archive_tab.parentWidget() is not archive_page
+    assert "History" in tab_labels
+    assert context_tabs.indexOf(history_page) >= 0
+    assert [history_tabs.tabText(index) for index in range(history_tabs.count())] == [
+        "Archived copies",
+        "Install history",
+    ]
+    assert history_tabs.indexOf(archive_page) >= 0
+    assert archive_tab.parentWidget() is archive_page
     assert archive_empty_state_label.isHidden() is False
     assert archive_empty_state_label.parentWidget() is archive_state_panel
     assert archive_results_group.isHidden() is True
@@ -12960,25 +12990,30 @@ def test_main_window_recovery_surface_has_expected_structure(
     main_window: MainWindow,
 ) -> None:
     context_tabs = main_window._context_tabs
+    history_tabs = main_window.findChild(QTabWidget, "history_workspace_tabs")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
     recovery_tab = main_window._recovery_page
-    recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
+    recovery_group = main_window.findChild(QWidget, "recovery_inspection_group")
     recovery_output_group = main_window.findChild(QGroupBox, "recovery_output_group")
 
     assert context_tabs is not None
     assert isinstance(context_tabs, QTabWidget)
+    assert history_tabs is not None
+    assert history_page is not None
     assert recovery_tab is not None
     assert recovery_group is not None
     assert recovery_output_group is not None
 
     tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
-    assert "Recovery" in tab_labels
-    assert context_tabs.indexOf(recovery_tab) >= 0
+    assert "History" in tab_labels
+    assert context_tabs.indexOf(history_page) >= 0
+    assert history_tabs.indexOf(recovery_tab) >= 0
 
 
 def test_main_window_archive_surface_uses_tighter_spacing_between_actions_and_results(
     main_window: MainWindow,
 ) -> None:
-    archive_controls_group = main_window.findChild(QGroupBox, "archive_controls_group")
+    archive_controls_group = main_window.findChild(QWidget, "archive_controls_group")
     archive_results_group = main_window.findChild(QGroupBox, "archive_results_group")
     archive_tab = main_window.findChild(QWidget, "archive_tab")
     archive_filter_row = main_window.findChild(QWidget, "archive_filter_row")

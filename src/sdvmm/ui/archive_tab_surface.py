@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import QGridLayout
+from PySide6.QtWidgets import QFrame
 from PySide6.QtWidgets import QGroupBox
 from PySide6.QtWidgets import QLabel
 from PySide6.QtWidgets import QLineEdit
@@ -31,9 +32,8 @@ class ArchiveTabSurface(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        archive_controls_group = QGroupBox("Archive Browser")
+        archive_controls_group = QFrame()
         archive_controls_group.setObjectName("archive_controls_group")
-        archive_controls_group.setFlat(True)
         archive_controls_group.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
         )

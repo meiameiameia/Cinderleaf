@@ -3299,7 +3299,7 @@ class MainWindow(QMainWindow):
         self._discovery_page = discovery_page
         return discovery_page
 
-    def _build_archive_workspace_page(self) -> QWidget:
+    def _build_archive_history_panel(self) -> QWidget:
         self._refresh_archives_button = QPushButton("Refresh archive list")
         self._refresh_archives_button.setObjectName("archive_refresh_button")
         self._refresh_archives_button.clicked.connect(self._on_refresh_archives)
@@ -3334,17 +3334,11 @@ class MainWindow(QMainWindow):
             delete_archived_button=self._delete_archived_button,
         )
         self._archive_table.itemSelectionChanged.connect(self._on_archive_selection_changed)
-        archive_page_body = QWidget()
-        archive_page_body.setObjectName("archive_workspace_body")
-        archive_page_layout = QVBoxLayout(archive_page_body)
+        archive_panel = QWidget()
+        archive_panel.setObjectName("history_archive_panel")
+        archive_page_layout = QVBoxLayout(archive_panel)
         archive_page_layout.setContentsMargins(0, 0, 0, 0)
         archive_page_layout.setSpacing(6)
-        archive_intro_label = QLabel(
-            "Browse archived folders from real and sandbox workflows. Restore and delete stay explicit."
-        )
-        archive_intro_label.setObjectName("archive_intro_label")
-        archive_intro_label.setWordWrap(True)
-        _set_auxiliary_label_style(archive_intro_label)
         archive_page_layout.addWidget(archive_tab)
         archive_output_group = QGroupBox("Archive detail")
         archive_output_group.setObjectName("archive_output_group")
@@ -3363,16 +3357,8 @@ class MainWindow(QMainWindow):
         self._archive_output_group = archive_output_group
         archive_output_group.setVisible(False)
         archive_page_layout.addStretch(1)
-        archive_page = self._build_page_shell(
-            object_name="archive_workspace_page",
-            eyebrow="Reversible history",
-            title="Archive",
-            subtitle="Browse archived folders from real and sandbox workflows.",
-            body_widget=archive_page_body,
-            scroll_body=True,
-        )
-        self._archive_page = archive_page
-        return archive_page
+        self._archive_page = archive_panel
+        return archive_panel
 
     def _build_install_workspace_page(self) -> QWidget:
         plan_install_button = QPushButton("Plan install")
@@ -3480,15 +3466,14 @@ class MainWindow(QMainWindow):
         self._review_output_group.setVisible(False)
         return review_page
 
-    def _build_recovery_workspace_page(self) -> QWidget:
+    def _build_recovery_history_panel(self) -> QWidget:
         recovery_tab = QWidget()
-        recovery_tab.setObjectName("recovery_workspace_body")
+        recovery_tab.setObjectName("history_recovery_panel")
         recovery_layout = QVBoxLayout(recovery_tab)
         recovery_layout.setContentsMargins(0, 0, 0, 0)
         recovery_layout.setSpacing(8)
-        recovery_group = QGroupBox("Review and apply recovery")
+        recovery_group = QFrame()
         recovery_group.setObjectName("recovery_inspection_group")
-        recovery_group.setFlat(True)
         recovery_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         recovery_group_layout = QVBoxLayout(recovery_group)
         recovery_group_layout.setContentsMargins(8, 6, 8, 6)
@@ -3532,16 +3517,43 @@ class MainWindow(QMainWindow):
         recovery_output_group.setVisible(False)
         recovery_layout.addWidget(recovery_group)
         recovery_layout.addStretch(1)
-        recovery_page = self._build_page_shell(
-            object_name="recovery_tab",
-            eyebrow="Recorded rollback path",
-            title="Recovery",
-            subtitle="Inspect recorded installs and apply recovery only when it looks safe.",
-            body_widget=recovery_tab,
+        self._recovery_page = recovery_tab
+        return recovery_tab
+
+    def _build_history_workspace_page(self) -> QWidget:
+        history_body = QWidget()
+        history_body.setObjectName("history_workspace_body")
+        history_layout = QVBoxLayout(history_body)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        history_layout.setSpacing(6)
+
+        history_tabs = QTabWidget()
+        history_tabs.setObjectName("history_workspace_tabs")
+        history_tabs.setDocumentMode(True)
+        history_tabs.setUsesScrollButtons(True)
+        history_tabbar = history_tabs.tabBar()
+        history_tabbar.setObjectName("mods_workspace_mode_tabbar")
+        history_tabbar.setDrawBase(False)
+        history_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        history_tabs.addTab(self._build_archive_history_panel(), "Archived copies")
+        history_tabs.addTab(self._build_recovery_history_panel(), "Install history")
+        history_layout.addWidget(history_tabs, 1)
+
+        self._history_workspace_tabs = history_tabs
+
+        history_page = self._build_page_shell(
+            object_name="history_workspace_page",
+            eyebrow="Restore and rollback",
+            title="History",
+            subtitle="Browse archived copies or review install history before restoring anything.",
+            body_widget=history_body,
             scroll_body=True,
         )
-        self._recovery_page = recovery_page
-        return recovery_page
+        self._history_page = history_page
+        return history_page
 
     def _build_workspace_tabs(
         self,
@@ -3582,8 +3594,7 @@ class MainWindow(QMainWindow):
         context_tabs.addTab(self._build_install_workspace_page(), "Install")
         context_tabs.addTab(self._build_discovery_workspace_page(), "Discover")
         context_tabs.addTab(self._build_compare_workspace_page(), "Compare")
-        context_tabs.addTab(self._build_archive_workspace_page(), "Archive")
-        context_tabs.addTab(self._build_recovery_workspace_page(), "Recovery")
+        context_tabs.addTab(self._build_history_workspace_page(), "History")
         return context_tabs
 
     def _build_top_context_surface(self) -> TopContextSurface:

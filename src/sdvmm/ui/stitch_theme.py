@@ -67,6 +67,10 @@ QWidget#setup_workspace_page {
     background: #16191d;
 }
 
+QWidget#history_workspace_page {
+    background: #16191d;
+}
+
 QWidget#plan_install_tab_content,
 QWidget#setup_surface_content_widget,
 QWidget#setup_scroll_viewport,
@@ -77,7 +81,12 @@ QWidget#plan_install_scroll_viewport {
 QWidget#setup_surface_workspace_band,
 QWidget#setup_surface_main_column,
 QWidget#setup_surface_secondary_column,
-QWidget#setup_surface_primary_actions {
+QWidget#setup_surface_primary_actions,
+QWidget#history_workspace_body,
+QWidget#history_archive_panel,
+QWidget#history_recovery_panel,
+QWidget#archive_tab,
+QWidget#recovery_tab {
     background: transparent;
 }
 
@@ -455,6 +464,12 @@ QTabWidget#mods_workspace_mode_tabs::pane {
     top: 4px;
 }
 
+QTabWidget#history_workspace_tabs::pane {
+    border: none;
+    background: transparent;
+    top: 4px;
+}
+
 QTabBar#mods_workspace_mode_tabbar {
     background: transparent;
     margin-bottom: 10px;
@@ -585,6 +600,7 @@ QPushButton[buttonRole="utility"] {
 QScrollArea#discovery_workspace_page_scroll_area,
 QScrollArea#compare_tab_scroll_area,
 QScrollArea#packages_workspace_page_scroll_area,
+QScrollArea#history_workspace_page_scroll_area,
 QScrollArea#archive_workspace_page_scroll_area,
 QScrollArea#recovery_tab_scroll_area {
     border: none;
@@ -594,11 +610,13 @@ QScrollArea#recovery_tab_scroll_area {
 QWidget#discovery_workspace_page_scroll_area_viewport,
 QWidget#compare_tab_scroll_area_viewport,
 QWidget#packages_workspace_page_scroll_area_viewport,
+QWidget#history_workspace_page_scroll_area_viewport,
 QWidget#archive_workspace_page_scroll_area_viewport,
 QWidget#recovery_tab_scroll_area_viewport,
 QWidget#discovery_workspace_page_scroll_area_content,
 QWidget#compare_tab_scroll_area_content,
 QWidget#packages_workspace_page_scroll_area_content,
+QWidget#history_workspace_page_scroll_area_content,
 QWidget#archive_workspace_page_scroll_area_content,
 QWidget#recovery_tab_scroll_area_content {
     background: transparent;
