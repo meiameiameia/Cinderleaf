@@ -2653,6 +2653,52 @@ def test_main_window_inventory_update_actions_use_compact_labels(
     assert use_suggested_source_button.text() == "Try source"
 
 
+def test_main_window_inventory_right_rail_uses_compact_section_labels(
+    main_window: MainWindow,
+) -> None:
+    assert main_window._inventory_source_intent_actions_label.text() == "Saved source"
+    assert main_window._inventory_sandbox_sync_actions_label.text() == "Sandbox"
+    assert main_window._sync_selected_to_sandbox_button.text() == "Copy to sandbox"
+    assert main_window._promote_selected_to_real_button.text() == "Promote to real"
+    assert main_window._inventory_real_profile_actions_label.text() == "Profiles"
+
+
+def test_main_window_inventory_right_rail_actions_wrap_cleanly_at_narrow_width(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    main_window.resize(1280, 820)
+    qapp.processEvents()
+
+    source_widget = main_window._inventory_source_intent_actions_widget
+    profile_widget = main_window._inventory_real_profile_actions_widget
+    assert source_widget.isVisible() is True
+    assert profile_widget.isVisible() is True
+
+    assert main_window._manual_source_intent_button.y() > main_window._mark_local_private_button.y()
+    assert main_window._clear_source_intent_button.y() > main_window._manual_source_intent_button.y()
+    assert main_window._create_real_profile_button.y() > main_window._real_profile_combo.y()
+    assert (
+        main_window._clear_source_intent_button.geometry().right()
+        <= source_widget.contentsRect().right()
+    )
+    assert (
+        main_window._delete_real_profile_button.geometry().right()
+        <= profile_widget.contentsRect().right()
+    )
+
+
 def test_main_window_inventory_selected_row_guidance_shows_actionable_message(
     main_window: MainWindow,
     qapp: QApplication,
