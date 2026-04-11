@@ -2627,6 +2627,32 @@ def test_main_window_inventory_selected_row_update_guidance_line_exists_and_defa
     assert open_remote_button.isEnabled() is False
 
 
+def test_main_window_inventory_update_actions_use_compact_labels(
+    main_window: MainWindow,
+) -> None:
+    prepare_button = main_window.findChild(
+        QPushButton, "inventory_prepare_selected_updates_button"
+    )
+    open_remote_button = main_window.findChild(
+        QPushButton, "inventory_open_remote_page_button"
+    )
+    find_source_hint_button = main_window.findChild(
+        QPushButton, "inventory_find_source_hint_button"
+    )
+    use_suggested_source_button = main_window.findChild(
+        QPushButton, "inventory_use_suggested_source_button"
+    )
+
+    assert prepare_button is not None
+    assert open_remote_button is not None
+    assert find_source_hint_button is not None
+    assert use_suggested_source_button is not None
+    assert prepare_button.text() == "Open pages"
+    assert open_remote_button.text() == "Open page"
+    assert find_source_hint_button.text() == "Find source"
+    assert use_suggested_source_button.text() == "Try source"
+
+
 def test_main_window_inventory_selected_row_guidance_shows_actionable_message(
     main_window: MainWindow,
     qapp: QApplication,
@@ -2646,7 +2672,7 @@ def test_main_window_inventory_selected_row_guidance_shows_actionable_message(
         QPushButton, "inventory_open_remote_page_button"
     )
     assert (
-        "Alpha Mod: update available. Next step: use Open update page for this selected row. "
+        "Alpha Mod: update available. Next step: open the page for this row. "
         "Cinderleaf will start intake watch if needed."
         == guidance_text
     )
@@ -2718,7 +2744,7 @@ def test_main_window_inventory_multi_select_actionable_updates_enables_prepare_b
     assert prepare_button is not None
     assert prepare_button.isVisible() is True
     assert prepare_button.isEnabled() is True
-    assert "Open update pages for 2 selected update targets" in prepare_button.toolTip()
+    assert "Open pages for 2 selected update targets" in prepare_button.toolTip()
 
 
 def test_main_window_inventory_selected_row_guidance_shows_blocked_reason(
@@ -2745,7 +2771,7 @@ def test_main_window_inventory_selected_row_guidance_shows_blocked_reason(
     assert (
         guidance_text
         == "Beta Mod: No update source is declared or saved for this mod yet. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label is not None
     assert blocked_detail_label.isVisible() is True
@@ -2782,7 +2808,7 @@ def test_main_window_inventory_diagnostics_hides_when_blocked_reason_is_generic(
 
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Alpha Mod: Temporarily blocked. Open remote page is unavailable for this row."
+        == "Alpha Mod: Temporarily blocked. Open page is unavailable for this row."
     )
     assert blocked_detail_label.text() == ""
     assert blocked_detail_label.isVisible() is False
@@ -3005,7 +3031,7 @@ def test_main_window_use_suggested_source_saves_exact_nexus_match(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Next step: use Open update page for this selected row."
+        "Next step: open the page for this row."
     )
 
 
@@ -3318,7 +3344,7 @@ def test_main_window_built_in_rows_do_not_offer_source_repair_actions(
     assert clear_source_intent_button.isEnabled() is False
     assert main_window._inventory_update_guidance_label.text() == (
         "Save Backup: This row is bundled with SMAPI and does not need a separate source-repair workflow. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     blocked_detail_label = main_window.findChild(
         QLabel, "inventory_update_blocked_detail_label"
@@ -3405,7 +3431,7 @@ def test_main_window_inventory_guidance_surfaces_persisted_local_private_intent(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: marked as local/private in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3438,7 +3464,7 @@ def test_main_window_inventory_guidance_surfaces_persisted_no_tracking_intent(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: update tracking is intentionally disabled in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3471,7 +3497,7 @@ def test_main_window_actionable_row_marked_no_tracking_overrides_update_availabl
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Alpha Mod: update tracking is intentionally disabled in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3604,7 +3630,7 @@ def test_main_window_inventory_guidance_surfaces_persisted_manual_source_intent(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Next step: use Open update page for this selected row."
+        "Next step: open the page for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3634,7 +3660,7 @@ def test_main_window_inventory_guidance_falls_back_to_typed_diagnostics_without_
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: No update source is declared or saved for this mod yet. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3720,7 +3746,7 @@ def test_main_window_inventory_selected_row_can_be_marked_local_private(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: marked as local/private in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3765,7 +3791,7 @@ def test_main_window_inventory_selected_row_can_disable_tracking(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: update tracking is intentionally disabled in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3861,7 +3887,7 @@ def test_main_window_inventory_selected_row_can_save_manual_source_association(
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Next step: use Open update page for this selected row."
+        "Next step: open the page for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3916,7 +3942,7 @@ def test_main_window_inventory_manual_source_association_rejects_empty_required_
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: No update source is declared or saved for this mod yet. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -3970,7 +3996,7 @@ def test_main_window_inventory_manual_source_association_can_be_cleared_back_to_
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: No update source is declared or saved for this mod yet. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -4013,7 +4039,7 @@ def test_main_window_inventory_clearing_saved_source_intent_restores_typed_diagn
     assert (
         main_window._inventory_update_guidance_label.text()
         == "Beta Mod: No update source is declared or saved for this mod yet. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -4116,8 +4142,8 @@ def test_main_window_inventory_selected_row_guidance_shows_not_checked_prompt(
     )
     assert (
         guidance_text
-        == "Gamma Mod: run Check updates to evaluate update actionability. "
-        "Open remote page stays disabled until an actionable row is selected."
+        == "Gamma Mod: check updates first to evaluate update actionability. "
+        "Open page stays disabled until an actionable row is selected."
     )
     assert open_remote_button is not None
     assert open_remote_button.isEnabled() is False
@@ -4480,7 +4506,7 @@ def test_main_window_clearing_manual_source_for_companion_component_restores_no_
     assert (
         main_window._inventory_update_guidance_label.text()
         == "[FTM] Resource Chickens: update tracking is intentionally disabled in saved update-source intent. "
-        "Open remote page is unavailable for this row."
+        "Open page is unavailable for this row."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -9118,7 +9144,7 @@ def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
     )
     main_window._render_inventory(inventory)
     qapp.processEvents()
-    assert "Run Check for updates" in mods_label.text()
+    assert "Check updates" in mods_label.text()
 
     main_window._discovery_query_input.setText("SMAPI")
     main_window._refresh_workflow_surface_states()

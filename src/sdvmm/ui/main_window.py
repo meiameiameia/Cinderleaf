@@ -1316,7 +1316,7 @@ class MainWindow(QMainWindow):
             "inventory_update_guidance_label"
         )
         self._inventory_update_guidance_label.setWordWrap(True)
-        self._prepare_selected_updates_button = QPushButton("Open update pages for selected")
+        self._prepare_selected_updates_button = QPushButton("Open pages")
         self._prepare_selected_updates_button.setObjectName(
             "inventory_prepare_selected_updates_button"
         )
@@ -1546,19 +1546,19 @@ class MainWindow(QMainWindow):
             minimum_section_size=64,
             initial_widths=(230, 140, 96, 110, 240),
         )
-        self._open_remote_page_button = QPushButton("Open update page")
+        self._open_remote_page_button = QPushButton("Open page")
         self._open_remote_page_button.setObjectName("inventory_open_remote_page_button")
         self._open_remote_page_button.setEnabled(False)
         self._open_remote_page_button.setToolTip(
-            "Select an actionable mod row to open its remote page."
+            "Select an actionable mod row to open its page."
         )
-        self._find_source_hint_button = QPushButton("Find source hint")
+        self._find_source_hint_button = QPushButton("Find source")
         self._find_source_hint_button.setObjectName("inventory_find_source_hint_button")
         self._find_source_hint_button.setEnabled(False)
         self._find_source_hint_button.setToolTip(
             "Select a blocked mod row to search Discover for SMAPI compatibility hints."
         )
-        self._use_suggested_source_button = QPushButton("Use suggested source")
+        self._use_suggested_source_button = QPushButton("Try source")
         self._use_suggested_source_button.setObjectName("inventory_use_suggested_source_button")
         self._use_suggested_source_button.setEnabled(False)
         self._use_suggested_source_button.setToolTip(
@@ -2789,11 +2789,11 @@ class MainWindow(QMainWindow):
         _set_auxiliary_label_style(scan_source_label)
         source_row.addWidget(scan_source_label)
         source_row.addWidget(self._scan_target_combo, 1)
-        self._scan_button = QPushButton("Scan installed mods")
+        self._scan_button = QPushButton("Scan mods")
         self._scan_button.clicked.connect(self._on_scan)
         _set_primary_button_style(self._scan_button)
         source_row.addWidget(self._scan_button)
-        self._check_updates_button = QPushButton("Check for updates")
+        self._check_updates_button = QPushButton("Check updates")
         self._check_updates_button.clicked.connect(self._on_check_updates)
         _set_secondary_button_style(self._check_updates_button)
         source_row.addWidget(self._check_updates_button)
@@ -6378,7 +6378,7 @@ class MainWindow(QMainWindow):
             return
 
         if not QDesktopServices.openUrl(QUrl(url)):
-            message = f"Could not open remote page: {url}"
+            message = f"Could not open page: {url}"
             QMessageBox.critical(self, "Open failed", message)
             self._set_status(message)
             return
@@ -7265,7 +7265,7 @@ class MainWindow(QMainWindow):
         if is_enabled:
             return (
                 "not_checked",
-                "Run Check updates to evaluate update actionability.",
+                "Check updates to evaluate update actionability.",
             )
         if self._is_custom_profile_view(current_target):
             return (
@@ -8653,7 +8653,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "ready",
-                f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} {inactive_label}). Run Check for updates to unlock remote guidance and source-page actions for active mods.",
+                f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} {inactive_label}). Check updates to unlock page and source actions for active mods.",
             )
             return
         inactive_label = self._inventory_inactive_count_label(self._current_scan_target())
@@ -10359,9 +10359,7 @@ class MainWindow(QMainWindow):
                     f"{context.mod_name}: not in profile. "
                     "Add this mod to the active profile before update and source actions."
                 )
-                remote_tooltip = (
-                    "Mods that are not in the active profile do not offer remote-page actions."
-                )
+                remote_tooltip = "Mods that are not in the active profile do not offer page actions."
                 source_tooltip = (
                     "Mods that are not in the active profile do not offer source-fix actions."
                 )
@@ -10370,7 +10368,7 @@ class MainWindow(QMainWindow):
                     f"{context.mod_name}: disabled. "
                     "Re-enable this mod row before update and source actions."
                 )
-                remote_tooltip = "Disabled mod rows do not offer remote-page actions."
+                remote_tooltip = "Disabled mod rows do not offer page actions."
                 source_tooltip = "Disabled mod rows do not offer source-fix actions."
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
@@ -10387,21 +10385,21 @@ class MainWindow(QMainWindow):
             )
         elif context.status is None and context.status_text == "not_checked":
             message = (
-                f"{context.mod_name}: run Check updates to evaluate update actionability. "
-                "Open remote page stays disabled until an actionable row is selected."
+                f"{context.mod_name}: check updates first to evaluate update actionability. "
+                "Open page stays disabled until an actionable row is selected."
             )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip="Run Check updates and select an actionable row first.",
+                tooltip="Check updates and select an actionable row first.",
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Run Check updates and select a blocked row first.",
+                tooltip="Check updates and select a blocked row first.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Run Check updates and select a blocked row first.",
+                tooltip="Check updates and select a blocked row first.",
             )
         elif (
             context.effective_intent_state == "manual_source_association"
@@ -10414,17 +10412,17 @@ class MainWindow(QMainWindow):
                     target_count = len(actionable_targets)
                     message = (
                         f"{target_count} actionable updates selected. "
-                        "Next step: use Open update pages for selected. Cinderleaf will start intake watch if needed."
+                        "Next step: open the selected pages. Cinderleaf will start intake watch if needed."
                     )
                 else:
                     message = (
                         f"{context.mod_name}: update available via saved manual source. "
-                        "Next step: use Open update page for this selected row. Cinderleaf will start intake watch if needed."
+                        "Next step: open the page for this row. Cinderleaf will start intake watch if needed."
                     )
             else:
                 message = (
                     f"{context.mod_name}: manual source association is recorded in saved update-source intent. "
-                    "Next step: use Open update page for this selected row."
+                    "Next step: open the page for this row."
                 )
             self._set_inventory_blocked_detail_text(
                 f"Update source intent: manual source association is recorded in app state{provider_text}."
@@ -10432,17 +10430,17 @@ class MainWindow(QMainWindow):
             self._set_open_remote_page_state(
                 enabled=True,
                 tooltip=(
-                    f"Open update page for selected mod: {context.mod_name}. "
+                    f"Open page for selected mod: {context.mod_name}. "
                     "Cinderleaf will start intake watch if needed."
                 ),
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="A saved manual source already provides a direct update-page action.",
+                tooltip="A saved manual source already provides a direct page action.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="A saved manual source already provides a direct update-page action.",
+                tooltip="A saved manual source already provides a direct page action.",
             )
         elif context.effective_intent_state is not None:
             intent_state = context.effective_intent_state
@@ -10482,37 +10480,37 @@ class MainWindow(QMainWindow):
                 target_count = len(actionable_targets)
                 message = (
                     f"{target_count} actionable updates selected. "
-                    "Next step: use Open update pages for selected. Cinderleaf will start intake watch if needed."
+                    "Next step: open the selected pages. Cinderleaf will start intake watch if needed."
                 )
             else:
                 message = (
                     f"{context.mod_name}: update available. "
-                    "Next step: use Open update page for this selected row. Cinderleaf will start intake watch if needed."
+                    "Next step: open the page for this row. Cinderleaf will start intake watch if needed."
                 )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=True,
-                tooltip=f"Open update page for selected mod: {context.mod_name}. Cinderleaf will start intake watch if needed.",
+                tooltip=f"Open page for selected mod: {context.mod_name}. Cinderleaf will start intake watch if needed.",
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Actionable update rows already have a direct update-page action.",
+                tooltip="Actionable update rows already have a direct page action.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Actionable update rows already have a direct update-page action.",
+                tooltip="Actionable update rows already have a direct page action.",
             )
         elif isinstance(context.blocked_reason, str) and context.blocked_reason.strip():
             message = (
                 f"{context.mod_name}: {context.blocked_reason.strip()} "
-                "Open remote page is unavailable for this row."
+                "Open page is unavailable for this row."
             )
             self._set_inventory_blocked_detail_text(
                 _diagnostics_text_for_update_status(context.status)
             )
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip=f"Remote-page action unavailable: {context.blocked_reason.strip()}",
+                tooltip=f"Page action unavailable: {context.blocked_reason.strip()}",
             )
             can_open_discovery_hint = (
                 context.status is not None and _supports_discovery_source_hint(context.status)
@@ -10521,7 +10519,7 @@ class MainWindow(QMainWindow):
                 enabled=can_open_discovery_hint,
                 tooltip=(
                     "Search Discover for SMAPI compatibility hints, unofficial updates, "
-                    "or source-page suggestions for the selected mod."
+                    "or source suggestions for the selected mod."
                     if can_open_discovery_hint
                     else "Source hints are available only for blocked source/update rows."
                 ),
@@ -10544,7 +10542,7 @@ class MainWindow(QMainWindow):
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip="Remote-page action is unavailable for the selected row.",
+                tooltip="Page action is unavailable for the selected row.",
             )
             self._set_find_source_hint_state(
                 enabled=False,
@@ -10707,7 +10705,7 @@ class MainWindow(QMainWindow):
             return _ActionButtonState(
                 visible=False,
                 enabled=False,
-                tooltip="Select two or more actionable update rows after Check for updates.",
+                tooltip="Select two or more actionable update rows after Check updates.",
             )
         if self._active_operation_name is not None:
             return _ActionButtonState(
@@ -10717,7 +10715,7 @@ class MainWindow(QMainWindow):
         return _ActionButtonState(
             enabled=True,
             tooltip=(
-                f"Open update pages for {count} selected update targets and start intake watch if needed."
+                f"Open pages for {count} selected update targets and start intake watch if needed."
             ),
         )
 
@@ -10871,7 +10869,7 @@ class MainWindow(QMainWindow):
 
         for _, _, url in page_targets:
             if not QDesktopServices.openUrl(QUrl(url)):
-                message = f"Could not open remote page: {url}"
+                message = f"Could not open page: {url}"
                 QMessageBox.critical(self, "Open failed", message)
                 self._set_status(message)
                 return
@@ -12458,24 +12456,24 @@ def _inventory_guidance_for_update_source_intent(
     if intent_state == "local_private_mod":
         return (
             f"{mod_name}: marked as local/private in saved update-source intent. "
-            "Open remote page is unavailable for this row.",
+            "Open page is unavailable for this row.",
             "Update source intent: local/private mod is recorded in app state.",
-            "Remote-page action unavailable: mod is marked local/private in saved update-source intent.",
+            "Page action unavailable: mod is marked local/private in saved update-source intent.",
         )
     if intent_state == "no_tracking":
         return (
             f"{mod_name}: update tracking is intentionally disabled in saved update-source intent. "
-            "Open remote page is unavailable for this row.",
+            "Open page is unavailable for this row.",
             "Update source intent: no-tracking is recorded in app state.",
-            "Remote-page action unavailable: update tracking is intentionally disabled in saved update-source intent.",
+            "Page action unavailable: update tracking is intentionally disabled in saved update-source intent.",
         )
 
     provider_text = f" (provider: {manual_provider})" if manual_provider else ""
     return (
         f"{mod_name}: manual source association is recorded in saved update-source intent. "
-        "Open remote page is unavailable for this row.",
+        "Open page is unavailable for this row.",
         f"Update source intent: manual source association is recorded in app state{provider_text}.",
-        "Remote-page action unavailable: manual source association is recorded in saved update-source intent.",
+        "Page action unavailable: manual source association is recorded in saved update-source intent.",
     )
 
 
