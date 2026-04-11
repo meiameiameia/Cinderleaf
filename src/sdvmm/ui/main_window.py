@@ -220,10 +220,8 @@ _ROLE_MOD_TOGGLE_REASON = int(Qt.ItemDataRole.UserRole) + 13
 _ROLE_MOD_MEMBER_FOLDER_PATHS = int(Qt.ItemDataRole.UserRole) + 14
 _ROLE_MOD_IS_GROUPED = int(Qt.ItemDataRole.UserRole) + 15
 
-_NO_PLAN_REVIEW_SUMMARY_TEXT = (
-    "Install summary: no plan yet. Click Plan install to inspect changes."
-)
-_NO_PLAN_REVIEW_EXPLANATION_TEXT = "Install detail: no plan selected."
+_NO_PLAN_REVIEW_SUMMARY_TEXT = "No plan yet. Click Plan install to inspect changes."
+_NO_PLAN_REVIEW_EXPLANATION_TEXT = "No install detail yet."
 _NO_PLAN_FACTS_TEXT = (
     "Entries: -\n"
     "Replace existing: -\n"
@@ -3396,13 +3394,14 @@ class MainWindow(QMainWindow):
         )
         plan_tab_layout = plan_tab.content_layout
         if isinstance(plan_tab_layout, QVBoxLayout):
-            review_top_row = QWidget()
-            review_top_row.setObjectName("plan_install_top_row")
-            review_top_row_layout = QHBoxLayout(review_top_row)
-            review_top_row_layout.setContentsMargins(0, 0, 0, 0)
-            review_top_row_layout.setSpacing(6)
+            destination_index = plan_tab_layout.indexOf(plan_tab.destination_group)
+            if destination_index >= 0:
+                plan_tab_layout.takeAt(destination_index)
+            execute_index = plan_tab_layout.indexOf(plan_tab.execute_group)
+            if execute_index >= 0:
+                plan_tab_layout.takeAt(execute_index)
 
-            safety_group = QGroupBox("Safety context")
+            safety_group = QGroupBox("Safety")
             safety_group.setObjectName("plan_install_safety_panel_group")
             safety_group.setFlat(True)
             safety_group.setSizePolicy(
@@ -3418,7 +3417,7 @@ class MainWindow(QMainWindow):
             self._install_safety_panel_group = safety_group
             self._install_safety_panel_label = safety_label
 
-            staged_package_group = QGroupBox("Staged package(s)")
+            staged_package_group = QGroupBox("Package")
             staged_package_group.setObjectName("plan_install_staged_package_group")
             staged_package_group.setFlat(True)
             staged_package_group.setSizePolicy(
@@ -3427,20 +3426,9 @@ class MainWindow(QMainWindow):
             staged_package_layout = QVBoxLayout(staged_package_group)
             staged_package_layout.setContentsMargins(7, 5, 7, 5)
             staged_package_layout.setSpacing(4)
-            staged_package_layout.addWidget(QLabel("Current package"))
             staged_package_layout.addWidget(self._staged_package_label)
-            review_top_row_layout.addWidget(staged_package_group, 3)
-            review_top_row_layout.addWidget(plan_tab.execute_group, 2)
-            review_top_row_layout.addWidget(safety_group, 2)
-            plan_tab_layout.insertWidget(2, review_top_row)
 
-            review_middle_row = QWidget()
-            review_middle_row.setObjectName("plan_install_middle_row")
-            review_middle_row_layout = QHBoxLayout(review_middle_row)
-            review_middle_row_layout.setContentsMargins(0, 0, 0, 0)
-            review_middle_row_layout.setSpacing(6)
-
-            plan_review_summary_group = QGroupBox("Plan notes")
+            plan_review_summary_group = QGroupBox("Summary")
             plan_review_summary_group.setObjectName("plan_install_review_summary_group")
             plan_review_summary_group.setFlat(True)
             plan_review_summary_group.setSizePolicy(
@@ -3449,28 +3437,42 @@ class MainWindow(QMainWindow):
             plan_review_summary_layout = QVBoxLayout(plan_review_summary_group)
             plan_review_summary_layout.setContentsMargins(7, 5, 7, 5)
             plan_review_summary_layout.setSpacing(3)
+            plan_review_summary_layout.addWidget(self._plan_facts_label)
             plan_review_summary_layout.addWidget(self._plan_review_summary_label)
             plan_review_summary_layout.addWidget(self._plan_review_explanation_label)
 
-            plan_facts_group = QGroupBox("Plan summary")
-            plan_facts_group.setObjectName("plan_install_facts_group")
-            plan_facts_group.setFlat(True)
-            plan_facts_group.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
-            )
-            plan_facts_layout = QVBoxLayout(plan_facts_group)
-            plan_facts_layout.setContentsMargins(7, 5, 7, 5)
-            plan_facts_layout.setSpacing(3)
-            plan_facts_layout.addWidget(self._plan_facts_label)
-            review_middle_row_layout.addWidget(plan_facts_group, 2)
-            review_middle_row_layout.addWidget(plan_review_summary_group, 3)
-            plan_tab_layout.insertWidget(4, review_middle_row)
+            install_main_column = QWidget()
+            install_main_column.setObjectName("plan_install_main_column")
+            install_main_column_layout = QVBoxLayout(install_main_column)
+            install_main_column_layout.setContentsMargins(0, 0, 0, 0)
+            install_main_column_layout.setSpacing(6)
+            install_main_column_layout.addWidget(plan_tab.destination_group)
+            install_main_column_layout.addWidget(staged_package_group)
+            install_main_column_layout.addWidget(plan_review_summary_group)
+
+            install_side_column = QWidget()
+            install_side_column.setObjectName("plan_install_side_column")
+            install_side_column_layout = QVBoxLayout(install_side_column)
+            install_side_column_layout.setContentsMargins(0, 0, 0, 0)
+            install_side_column_layout.setSpacing(6)
+            install_side_column_layout.addWidget(plan_tab.execute_group)
+            install_side_column_layout.addWidget(safety_group)
+            install_side_column_layout.addStretch(1)
+
+            install_columns_row = QWidget()
+            install_columns_row.setObjectName("plan_install_columns_row")
+            install_columns_row_layout = QHBoxLayout(install_columns_row)
+            install_columns_row_layout.setContentsMargins(0, 0, 0, 0)
+            install_columns_row_layout.setSpacing(6)
+            install_columns_row_layout.addWidget(install_main_column, 3)
+            install_columns_row_layout.addWidget(install_side_column, 2)
+            plan_tab_layout.insertWidget(1, install_columns_row)
 
         review_page = self._build_page_shell(
             object_name="review_workspace_page",
-            eyebrow="Install before writing",
+            eyebrow="Review in Install",
             title="Install",
-            subtitle="Confirm the package, destination, and safety summary before writing.",
+            subtitle="Check the package, destination, and summary before writing.",
             body_widget=plan_tab,
         )
         self._plan_install_tab = review_page
@@ -8832,7 +8834,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "ready",
-                "Install plan is ready. Check destination, replace behavior, and plan summary, then Apply install when the plan looks right.",
+                "Install plan is ready. Check the summary, then apply when it looks right.",
             )
             return
         has_staged_package = bool(self._selected_zip_package_paths) or bool(
@@ -8842,7 +8844,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "muted",
-                "A package batch is staged for install. Plan install is the next step; it stays read-only until the plan summary is ready.",
+                "A package batch is staged. Plan install is the next step.",
             )
             return
         _set_feedback_label_state(

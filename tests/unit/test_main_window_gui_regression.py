@@ -9402,6 +9402,13 @@ def test_main_window_plan_install_surface_key_controls_exist(
         QLabel, "plan_install_review_explanation_label"
     )
     plan_facts_label = main_window.findChild(QLabel, "plan_install_facts_label")
+    execute_group = main_window.findChild(QGroupBox, "plan_install_execute_group")
+    review_output_group = main_window.findChild(QGroupBox, "plan_install_output_group")
+    destination_group = main_window.findChild(QGroupBox, "plan_install_destination_group")
+    columns_row = main_window.findChild(QWidget, "plan_install_columns_row")
+    main_column = main_window.findChild(QWidget, "plan_install_main_column")
+    side_column = main_window.findChild(QWidget, "plan_install_side_column")
+    safety_group = main_window.findChild(QGroupBox, "plan_install_safety_panel_group")
     plan_button = main_window.findChild(QPushButton, "plan_install_plan_button")
     run_button = main_window.findChild(QPushButton, "plan_install_run_button")
 
@@ -9414,6 +9421,13 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert plan_review_summary_label is not None
     assert plan_review_explanation_label is not None
     assert plan_facts_label is not None
+    assert execute_group is not None
+    assert review_output_group is not None
+    assert destination_group is not None
+    assert columns_row is not None
+    assert main_column is not None
+    assert side_column is not None
+    assert safety_group is not None
     assert plan_button is not None
     assert run_button is not None
     assert plan_tab is not None
@@ -9428,15 +9442,18 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert main_window._plan_review_explanation_label is plan_review_explanation_label
     assert main_window._plan_facts_label is plan_facts_label
     assert staged_package_label.isReadOnly() is True
-    assert staged_package_group.title() == "Staged package(s)"
+    assert staged_package_group.title() == "Package"
+    assert execute_group.title() == "Actions"
+    assert review_output_group.title() == "Details"
     assert overwrite_checkbox.text() == "Enable archive-aware replace"
     assert overwrite_checkbox.isVisible() is True
     assert plan_button.text() == "Plan install"
     assert "archive-aware replace" in overwrite_help_label.text().casefold()
     assert (
         plan_review_explanation_label.text()
-        == "Install detail: no plan selected."
+        == "No install detail yet."
     )
+    assert main_window._plan_install_tab.findChild(QLabel, "plan_install_intro_label") is None
     assert plan_facts_label.text() == (
         "Entries: -\n"
         "Replace existing: -\n"
@@ -9444,6 +9461,18 @@ def test_main_window_plan_install_surface_key_controls_exist(
         "Approval required: -\n"
         "Blocked entries: -"
     )
+    columns_row_layout = columns_row.layout()
+    assert columns_row_layout is not None
+    assert columns_row_layout.itemAt(0).widget() is main_column
+    assert columns_row_layout.itemAt(1).widget() is side_column
+    main_column_layout = main_column.layout()
+    assert main_column_layout is not None
+    assert main_column_layout.itemAt(0).widget() is destination_group
+    assert main_column_layout.itemAt(1).widget() is staged_package_group
+    side_column_layout = side_column.layout()
+    assert side_column_layout is not None
+    assert side_column_layout.itemAt(0).widget() is execute_group
+    assert side_column_layout.itemAt(1).widget() is safety_group
 
 
 def test_main_window_recovery_selector_uses_readability_contract(

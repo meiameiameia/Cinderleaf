@@ -52,16 +52,9 @@ class PlanInstallTabSurface(QWidget):
         scroll_area.setWidget(content)
         layout.addWidget(scroll_area)
 
-        intro_label = QLabel(
-            "Bring packages in from Packages, plan the install, then apply only when it looks right."
-        )
-        intro_label.setObjectName("plan_install_intro_label")
-        intro_label.setWordWrap(True)
-        _set_auxiliary_label_style(intro_label, bold=True)
-        content_layout.addWidget(intro_label)
         content_layout.addWidget(review_state_label)
 
-        destination_group = QGroupBox("Destination and replace")
+        destination_group = QGroupBox("Destination")
         destination_group.setObjectName("plan_install_destination_group")
         destination_group.setFlat(True)
         destination_group.setSizePolicy(
@@ -87,7 +80,7 @@ class PlanInstallTabSurface(QWidget):
         destination_layout.addWidget(install_archive_label, 3, 0, 1, 3)
         content_layout.addWidget(destination_group)
 
-        execute_group = QGroupBox("Primary actions")
+        execute_group = QGroupBox("Actions")
         execute_group.setObjectName("plan_install_execute_group")
         execute_group.setFlat(True)
         execute_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
@@ -103,7 +96,7 @@ class PlanInstallTabSurface(QWidget):
         execute_layout.addLayout(plan_actions)
 
         caution_label = QLabel(
-            "Install planning is read-only. Apply install stays disabled until the plan is ready."
+            "Planning is read-only. Apply stays disabled until the plan is ready."
         )
         caution_label.setObjectName("plan_install_execute_help_label")
         caution_label.setWordWrap(True)
@@ -112,7 +105,7 @@ class PlanInstallTabSurface(QWidget):
 
         content_layout.addWidget(execute_group)
 
-        review_output_group = QGroupBox("Install detail")
+        review_output_group = QGroupBox("Details")
         review_output_group.setObjectName("plan_install_output_group")
         review_output_group.setFlat(True)
         review_output_group.setSizePolicy(
