@@ -146,18 +146,19 @@ class SetupConfigurationSurface(QScrollArea):
         quickstart_layout = QVBoxLayout(quickstart_panel)
         quickstart_layout.setContentsMargins(12, 12, 12, 12)
         quickstart_layout.setSpacing(6)
-        quickstart_label = QLabel("Start here")
+        quickstart_label = QLabel("Quick start")
         quickstart_label.setObjectName("setup_quickstart_label")
         quickstart_intro_label = QLabel(
             "Game folder, Real Mods folder, Sandbox Mods folder."
         )
         quickstart_intro_label.setObjectName("setup_quickstart_intro_label")
         quickstart_intro_label.setWordWrap(True)
+        quickstart_intro_label.setVisible(False)
         quickstart_layout.addWidget(quickstart_label)
         quickstart_layout.addWidget(quickstart_intro_label)
         quickstart_layout.addWidget(setup_readiness_label)
 
-        setup_group = QGroupBox("Core folders")
+        setup_group = QGroupBox("Folders")
         setup_group.setObjectName("setup_surface_group")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QVBoxLayout(setup_group)
@@ -168,6 +169,7 @@ class SetupConfigurationSurface(QScrollArea):
         )
         setup_intro_label.setObjectName("setup_local_setup_intro_label")
         setup_intro_label.setWordWrap(True)
+        setup_intro_label.setVisible(False)
         setup_layout.addWidget(primary_actions_widget)
         setup_layout.addWidget(setup_intro_label)
         setup_layout.addWidget(
@@ -197,7 +199,7 @@ class SetupConfigurationSurface(QScrollArea):
             )
         )
 
-        advanced_group = QGroupBox("Optional tools")
+        advanced_group = QGroupBox("Extras")
         advanced_group.setObjectName("setup_advanced_group")
         advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         advanced_layout = QVBoxLayout(advanced_group)
@@ -208,6 +210,7 @@ class SetupConfigurationSurface(QScrollArea):
         )
         advanced_intro_label.setObjectName("setup_advanced_intro_label")
         advanced_intro_label.setWordWrap(True)
+        advanced_intro_label.setVisible(False)
         advanced_layout.addWidget(advanced_intro_label)
         advanced_layout.addWidget(
             _build_path_row(
@@ -285,7 +288,7 @@ class SetupConfigurationSurface(QScrollArea):
         for column in range(2):
             setup_actions_layout.setColumnStretch(column, 1)
 
-        backup_group = QGroupBox("Backup and restore")
+        backup_group = QGroupBox("Backup")
         backup_group.setObjectName("setup_backup_restore_group")
         backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         backup_layout = QVBoxLayout(backup_group)
@@ -297,6 +300,7 @@ class SetupConfigurationSurface(QScrollArea):
         )
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")
         backup_intro_label.setWordWrap(True)
+        backup_intro_label.setVisible(False)
         backup_layout.addWidget(backup_intro_label)
         backup_layout.addWidget(setup_actions_widget)
         backup_layout.addWidget(active_backup_bundle_label)
@@ -417,8 +421,9 @@ class SetupConfigurationSurface(QScrollArea):
         secondary_panel_layout = QVBoxLayout(secondary_panel)
         secondary_panel_layout.setContentsMargins(12, 12, 12, 12)
         secondary_panel_layout.setSpacing(10)
-        secondary_section_label = QLabel("Tools and folders")
+        secondary_section_label = QLabel("Support")
         secondary_section_label.setObjectName("setup_secondary_section_label")
+        secondary_section_label.setVisible(False)
         secondary_intro_label = QLabel(
             "Backup tools first, managed folders below."
         )

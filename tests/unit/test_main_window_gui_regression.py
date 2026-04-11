@@ -6674,9 +6674,12 @@ def test_main_window_setup_surface_onboarding_copy_is_user_facing(
     assert open_app_release_page_button is not None
     assert main_intro_label.isHidden() is True
     assert "Set folders once" in main_intro_label.text()
+    assert quickstart_intro_label.isHidden() is True
     assert "Game folder, Real Mods folder, Sandbox Mods folder." in quickstart_intro_label.text()
+    assert setup_intro_label.isHidden() is True
     assert "Save setup remembers these paths." in setup_intro_label.text()
     assert "Detect game folders only reads the installed environment" in setup_intro_label.text()
+    assert backup_intro_label.isHidden() is True
     assert "Inspect is read-only." in backup_intro_label.text()
     assert "Execute restore writes only into the configured folders." in backup_intro_label.text()
     assert secondary_intro_label.isHidden() is True

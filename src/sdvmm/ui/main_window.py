@@ -3570,7 +3570,7 @@ class MainWindow(QMainWindow):
             object_name="setup_workspace_page",
             eyebrow="Folders and tools",
             title="Setup",
-            subtitle="Set your folders. Backup and restore tools stay on the right.",
+            subtitle="Set your folders. Tools stay on the right.",
             body_widget=setup_scroll,
         )
         self._setup_scroll = setup_scroll
