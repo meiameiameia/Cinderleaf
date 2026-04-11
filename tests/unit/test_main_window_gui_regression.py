@@ -1275,7 +1275,7 @@ def test_main_window_low_height_smapi_troubleshooting_compacts_selected_mod_guid
     )
     assert inspector_intro.isVisible() is False
     assert main_window._inventory_flow_hint_label.isVisible() is False
-    assert main_window._inventory_update_guidance_label.text() == "No mod selected. Select a row for mod actions."
+    assert main_window._inventory_update_guidance_label.text() == "Select a mod row for actions."
     assert 88 <= main_window._smapi_troubleshooting_details_box.minimumHeight() <= 96
     assert 124 <= main_window._smapi_troubleshooting_details_box.maximumHeight() <= 140
     main_window._inventory_source_intent_actions_widget.setVisible(True)
@@ -2661,6 +2661,7 @@ def test_main_window_inventory_right_rail_uses_compact_section_labels(
     assert main_window._sync_selected_to_sandbox_button.text() == "Copy to sandbox"
     assert main_window._promote_selected_to_real_button.text() == "Promote to real"
     assert main_window._inventory_real_profile_actions_label.text() == "Profiles"
+    assert main_window._mods_smapi_troubleshooting_group.title() == "SMAPI log"
 
 
 def test_main_window_inventory_right_rail_actions_wrap_cleanly_at_narrow_width(
@@ -2747,8 +2748,7 @@ def test_main_window_inventory_selected_row_guidance_shows_actionable_message(
         QPushButton, "inventory_open_remote_page_button"
     )
     assert (
-        "Alpha Mod: update available. Next step: open the page for this row. "
-        "Cinderleaf will start intake watch if needed."
+        "Alpha Mod: update available. Open page to continue."
         == guidance_text
     )
     assert open_remote_button is not None
@@ -3105,8 +3105,7 @@ def test_main_window_use_suggested_source_saves_exact_nexus_match(
     )
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Next step: open the page for this row."
+        == "Beta Mod: saved source ready. Open page to review."
     )
 
 
@@ -3704,8 +3703,7 @@ def test_main_window_inventory_guidance_surfaces_persisted_manual_source_intent(
 
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Next step: open the page for this row."
+        == "Beta Mod: saved source ready. Open page to review."
     )
     assert blocked_detail_label.isVisible() is True
     assert (

@@ -2535,7 +2535,7 @@ class MainWindow(QMainWindow):
         inspector_content_layout.addWidget(self._inventory_sandbox_sync_actions_widget)
         inspector_content_layout.addWidget(self._inventory_source_intent_actions_widget)
         inspector_content_layout.addWidget(flow_hint_label)
-        smapi_troubleshooting_group = QGroupBox("SMAPI troubleshooting")
+        smapi_troubleshooting_group = QGroupBox("SMAPI log")
         smapi_troubleshooting_group.setObjectName("mods_smapi_troubleshooting_group")
         smapi_troubleshooting_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -6113,12 +6113,12 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "active",
-                "Parsing the latest SMAPI log. Missing dependency targets and launch context will appear here when the check completes.",
+                "Parsing latest SMAPI log...",
             )
             self._smapi_dependency_selector.setVisible(False)
             self._open_smapi_dependency_in_discover_button.setVisible(False)
             self._smapi_troubleshooting_details_box.setPlainText(
-                "SMAPI troubleshooting details will load here after the current log check finishes."
+                "SMAPI log details will appear here when the check finishes."
             )
             self._refresh_mods_troubleshooting_density()
             return
@@ -6128,13 +6128,12 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "empty",
-                "No SMAPI log parsed yet. Launch with SMAPI, then use Check latest SMAPI log or Open SMAPI log.",
+                "No SMAPI log checked yet.",
             )
             self._smapi_dependency_selector.setVisible(False)
             self._open_smapi_dependency_in_discover_button.setVisible(False)
             self._smapi_troubleshooting_details_box.setPlainText(
-                "Troubleshooting details appear here after you check a SMAPI log.\n\n"
-                "This area shows the detected launch context and any missing dependency targets."
+                "SMAPI log details appear here after you check a log."
             )
             self._refresh_mods_troubleshooting_density()
             return
@@ -6154,25 +6153,25 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "ready",
-                f"{context_label}: {report.missing_dependency_entry_count} missing dependency entry(s) across {report.missing_dependency_target_count} actionable target(s).",
+                f"{context_label}: {report.missing_dependency_target_count} missing dependency target(s).",
             )
         elif report.state == SMAPI_LOG_NOT_FOUND:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "empty",
-                "No SMAPI log was found yet. Launch with SMAPI once, then check again.",
+                "No SMAPI log found yet. Launch with SMAPI, then check again.",
             )
         elif report.state == SMAPI_LOG_UNABLE_TO_DETERMINE:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "muted",
-                f"{context_label}: the log could not be parsed confidently. Review the details below.",
+                f"{context_label}: couldn't parse this log cleanly.",
             )
         else:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "muted",
-                f"{context_label}: no missing dependency targets were detected in the latest parsed log.",
+                f"{context_label}: no missing dependencies in latest log.",
             )
 
         selector_items = _smapi_missing_dependency_targets(report)
@@ -10340,9 +10339,9 @@ class MainWindow(QMainWindow):
         if row < 0 or self._mods_table.isRowHidden(row) or not has_selected_items:
             self._reset_inventory_update_guidance_state(
                 message=(
-                    "No mod selected. Select a row for mod actions."
+                    "Select a mod row for actions."
                     if self._smapi_troubleshooting_has_actionable_entries()
-                    else "Select an installed mod row to see update guidance."
+                    else "Select a mod row to see actions."
                 ),
                 actionable_targets=actionable_targets,
             )
@@ -10351,7 +10350,7 @@ class MainWindow(QMainWindow):
         context = self._resolve_selected_inventory_update_guidance_context(row=row)
         if context is None:
             self._reset_inventory_update_guidance_state(
-                message="Select an installed mod row to see update guidance.",
+                message="Select a mod row to see actions.",
                 actionable_targets=actionable_targets,
             )
             return
@@ -10414,18 +10413,16 @@ class MainWindow(QMainWindow):
                 if len(actionable_targets) > 1:
                     target_count = len(actionable_targets)
                     message = (
-                        f"{target_count} actionable updates selected. "
-                        "Next step: open the selected pages. Cinderleaf will start intake watch if needed."
+                        f"{target_count} updates selected. Open pages to continue."
                     )
                 else:
                     message = (
-                        f"{context.mod_name}: update available via saved manual source. "
-                        "Next step: open the page for this row. Cinderleaf will start intake watch if needed."
+                        f"{context.mod_name}: update available via saved source. "
+                        "Open page to continue."
                     )
             else:
                 message = (
-                    f"{context.mod_name}: manual source association is recorded in saved update-source intent. "
-                    "Next step: open the page for this row."
+                    f"{context.mod_name}: saved source ready. Open page to review."
                 )
             self._set_inventory_blocked_detail_text(
                 f"Update source intent: manual source association is recorded in app state{provider_text}."
@@ -10482,13 +10479,11 @@ class MainWindow(QMainWindow):
             if len(actionable_targets) > 1:
                 target_count = len(actionable_targets)
                 message = (
-                    f"{target_count} actionable updates selected. "
-                    "Next step: open the selected pages. Cinderleaf will start intake watch if needed."
+                    f"{target_count} updates selected. Open pages to continue."
                 )
             else:
                 message = (
-                    f"{context.mod_name}: update available. "
-                    "Next step: open the page for this row. Cinderleaf will start intake watch if needed."
+                    f"{context.mod_name}: update available. Open page to continue."
                 )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
@@ -10940,7 +10935,7 @@ class MainWindow(QMainWindow):
             self._inventory_flow_hint_label.setVisible(False)
 
         if compact_for_troubleshooting:
-            compact_message = "No mod selected. Select a row for mod actions."
+            compact_message = "Select a mod row for actions."
             if self._inventory_update_guidance_label.text() != compact_message:
                 self._inventory_update_guidance_label.setText(compact_message)
                 self._inventory_update_guidance_label.setToolTip(compact_message)
