@@ -7051,6 +7051,7 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
 ) -> None:
     review_target_group = main_window.findChild(QGroupBox, "packages_review_target_group")
     review_actions_widget = main_window.findChild(QWidget, "packages_review_actions_widget")
+    add_package_button = main_window.findChild(QPushButton, "packages_add_package_button")
     review_controls_widget = main_window.findChild(QWidget, "packages_review_controls_widget")
     intake_controls_widget = main_window.findChild(QWidget, "packages_intake_controls_widget")
     queue_controls_widget = main_window.findChild(QWidget, "packages_queue_controls_widget")
@@ -7062,6 +7063,7 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
 
     assert review_target_group is not None
     assert review_actions_widget is not None
+    assert add_package_button is not None
     assert review_controls_widget is not None
     assert intake_controls_widget is not None
     assert queue_controls_widget is not None
@@ -7095,7 +7097,7 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
     queue_button_texts = {
         button.text() for button in queue_bulk_actions_widget.findChildren(QPushButton)
     }
-    assert review_button_texts == {"Open Install", "Open as update"}
+    assert review_button_texts == {"Add package", "Open Install", "Open as update"}
     assert queue_button_texts == {"Select all", "Deselect all"}
     assert main_window._package_queue_list.maximumHeight() > 1000
 
@@ -9601,6 +9603,48 @@ def test_main_window_browse_zip_accepts_multiple_selected_packages(
     assert main_window._package_inspection_selector.isHidden() is False
     assert main_window._package_inspection_selector_label.isHidden() is False
     assert "2 packages inspected" in main_window._package_inspection_summary_label.text()
+
+
+def test_main_window_packages_add_package_button_uses_browse_flow(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    add_package_button = main_window.findChild(QPushButton, "packages_add_package_button")
+    assert add_package_button is not None
+
+    selected_paths = [r"C:\Downloads\Single.zip"]
+    inspection = _package_inspection_result("Single.zip", "Sample.Single")
+    batch_result = PackageInspectionBatchResult(
+        entries=(
+            PackageInspectionBatchEntry(
+                package_path=inspection.package_path,
+                inspection=inspection,
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QFileDialog.getOpenFileNames",
+        lambda *args, **kwargs: (selected_paths, "Package archives (*.zip *.rar)"),
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "inspect_zip_batch_with_inventory_context",
+        lambda *args, **kwargs: batch_result,
+    )
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.build_package_inspection_text",
+        lambda payload: f"Inspection detail for {payload.package_path.name}",
+    )
+
+    add_package_button.click()
+    qapp.processEvents()
+
+    assert main_window._zip_path_input.text() == selected_paths[0]
+    assert main_window._selected_zip_package_paths == (Path(selected_paths[0]),)
+    assert main_window._package_inspection_result_box.toPlainText() == "Inspection detail for Single.zip"
+    assert main_window._plan_selected_intake_button.isEnabled() is True
 
 
 def test_main_window_package_queue_source_filter_limits_visible_rows(
