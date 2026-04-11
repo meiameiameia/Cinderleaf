@@ -1398,7 +1398,7 @@ class MainWindow(QMainWindow):
         self._manual_source_intent_button.setObjectName(
             "inventory_manual_source_association_button"
         )
-        self._test_source_button = QPushButton("Test source")
+        self._test_source_button = QPushButton("Check saved source")
         self._test_source_button.setObjectName("inventory_test_source_button")
         self._clear_source_intent_button = QPushButton("Clear saved intent")
         self._clear_source_intent_button.setObjectName("inventory_clear_source_intent_button")
@@ -1558,7 +1558,7 @@ class MainWindow(QMainWindow):
         self._find_source_hint_button.setToolTip(
             "Select a blocked mod row to search Discover for SMAPI compatibility hints."
         )
-        self._use_suggested_source_button = QPushButton("Try source")
+        self._use_suggested_source_button = QPushButton("Suggest source")
         self._use_suggested_source_button.setObjectName("inventory_use_suggested_source_button")
         self._use_suggested_source_button.setEnabled(False)
         self._use_suggested_source_button.setToolTip(
@@ -2530,10 +2530,10 @@ class MainWindow(QMainWindow):
         selected_actions_layout.addLayout(selected_actions_row)
         inspector_content_layout.addWidget(selected_actions_card)
         inspector_content_layout.addWidget(selection_summary_card)
-        inspector_content_layout.addWidget(self._inventory_source_intent_actions_widget)
-        inspector_content_layout.addWidget(self._inventory_sandbox_sync_actions_widget)
         inspector_content_layout.addWidget(self._inventory_real_profile_actions_widget)
         inspector_content_layout.addWidget(self._inventory_sandbox_profile_actions_widget)
+        inspector_content_layout.addWidget(self._inventory_sandbox_sync_actions_widget)
+        inspector_content_layout.addWidget(self._inventory_source_intent_actions_widget)
         inspector_content_layout.addWidget(flow_hint_label)
         smapi_troubleshooting_group = QGroupBox("SMAPI troubleshooting")
         smapi_troubleshooting_group.setObjectName("mods_smapi_troubleshooting_group")
@@ -10987,7 +10987,7 @@ class MainWindow(QMainWindow):
         self._test_source_button.setToolTip(
             "Check the selected row's saved manual source against the current provider metadata."
             if can_test_source
-            else "Test source is available after saving a manual source association."
+            else "Check saved source is available after saving a manual source association."
         )
         self._clear_source_intent_button.setEnabled(can_manage_intent and has_saved_intent)
 

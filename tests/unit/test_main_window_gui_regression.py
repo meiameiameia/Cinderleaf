@@ -2650,7 +2650,7 @@ def test_main_window_inventory_update_actions_use_compact_labels(
     assert prepare_button.text() == "Open pages"
     assert open_remote_button.text() == "Open page"
     assert find_source_hint_button.text() == "Find source"
-    assert use_suggested_source_button.text() == "Try source"
+    assert use_suggested_source_button.text() == "Suggest source"
 
 
 def test_main_window_inventory_right_rail_uses_compact_section_labels(
@@ -2696,6 +2696,35 @@ def test_main_window_inventory_right_rail_actions_wrap_cleanly_at_narrow_width(
     assert (
         main_window._delete_real_profile_button.geometry().right()
         <= profile_widget.contentsRect().right()
+    )
+
+
+def test_main_window_inventory_profiles_card_sits_above_source_and_sandbox_cards(
+    main_window: MainWindow,
+) -> None:
+    scroll_content = main_window._mods_selection_context_scroll_area.widget()
+    layout = scroll_content.layout()
+    assert layout is not None
+
+    assert (
+        layout.indexOf(main_window._inventory_real_profile_actions_widget)
+        < layout.indexOf(main_window._inventory_sandbox_sync_actions_widget)
+    )
+    assert (
+        layout.indexOf(main_window._inventory_real_profile_actions_widget)
+        < layout.indexOf(main_window._inventory_source_intent_actions_widget)
+    )
+    assert (
+        layout.indexOf(main_window._inventory_sandbox_profile_actions_widget)
+        < layout.indexOf(main_window._inventory_sandbox_sync_actions_widget)
+    )
+    assert (
+        layout.indexOf(main_window._inventory_sandbox_profile_actions_widget)
+        < layout.indexOf(main_window._inventory_source_intent_actions_widget)
+    )
+    assert (
+        layout.indexOf(main_window._inventory_sandbox_sync_actions_widget)
+        < layout.indexOf(main_window._inventory_source_intent_actions_widget)
     )
 
 
