@@ -1518,6 +1518,7 @@ class MainWindow(QMainWindow):
         self._compare_category_help_label.setObjectName("compare_category_help_label")
         self._compare_category_help_label.setWordWrap(True)
         _set_auxiliary_label_style(self._compare_category_help_label)
+        self._compare_category_help_label.setVisible(False)
         self._compare_results_table = QTableWidget(0, 5)
         self._compare_results_table.setObjectName("compare_results_table")
         self._compare_results_table.setHorizontalHeaderLabels(
@@ -5248,7 +5249,12 @@ class MainWindow(QMainWindow):
     def _on_compare_real_and_sandbox_completed(self, result: ModsCompareResult) -> None:
         self._current_mods_compare_result = result
         self._render_mods_compare_result(result)
-        self._set_compare_output_text(build_mods_compare_text(result))
+        self._findings_box = self._compare_output_box
+        self._compare_output_box.setPlainText(build_mods_compare_text(result))
+        self._set_local_detail_group_visibility(
+            getattr(self, "_compare_output_group", None),
+            "",
+        )
         self._set_status(
             f"Compare complete: {len(result.entries)} row(s) across real and sandbox Mods."
         )

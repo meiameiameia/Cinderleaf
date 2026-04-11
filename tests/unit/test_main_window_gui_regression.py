@@ -12578,6 +12578,7 @@ def test_main_window_compare_surface_has_expected_structure(
     assert compare_filter_combo.currentText() == "Actionable drift"
     assert compare_copy_button.isEnabled() is False
     assert "Ambiguous match means duplicate folders share one UniqueID" in compare_help_label.text()
+    assert compare_help_label.isHidden() is True
     assert compare_table.isHidden() is True
     assert compare_output_group.isHidden() is True
     compare_layout = compare_tab.layout()
@@ -12826,6 +12827,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
     assert main_window._compare_results_table.item(0, 0) is not None
     assert "Real vs sandbox Mods compare" in main_window._findings_box.toPlainText()
     assert "Category guide:" in main_window._findings_box.toPlainText()
+    assert main_window._compare_output_group.isHidden() is True
     rendered_rows = {
         main_window._compare_results_table.item(row, 0).text(): (
             main_window._compare_results_table.item(row, 1).text(),
