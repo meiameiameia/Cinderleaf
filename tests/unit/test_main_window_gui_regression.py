@@ -10194,6 +10194,92 @@ def test_main_window_single_new_actionable_package_auto_selects_and_surfaces_rev
     )
 
 
+def test_main_window_single_new_actionable_package_auto_opens_install_from_packages(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intake = _intake_result(
+        "AlphaPack.zip",
+        "new_install_candidate",
+        "Alpha Mod",
+        "Sample.Alpha",
+    )
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(intake.package_path,),
+            intakes=(intake,),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (_intake_correlation(intake, next_step="Open Install for AlphaPack.zip"),)
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+    main_window._context_tabs.setCurrentWidget(main_window._packages_page)
+
+    main_window._on_watch_tick()
+    qapp.processEvents()
+
+    assert main_window._context_tabs.currentWidget() is main_window._plan_install_tab
+    assert main_window._selected_zip_package_paths == (intake.package_path,)
+    assert main_window._zip_path_input.text() == str(intake.package_path)
+    assert main_window._staged_package_label.text() == str(intake.package_path)
+    assert main_window._status_strip_label.text() == (
+        "Opened Install for newly detected package AlphaPack.zip. Next step: Plan install."
+    )
+    assert main_window._packages_output_box.toPlainText() == (
+        "Opened Install for newly detected package AlphaPack.zip. Next step: Plan install."
+    )
+
+
+def test_main_window_single_new_actionable_package_stays_in_place_outside_packages(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intake = _intake_result(
+        "AlphaPack.zip",
+        "new_install_candidate",
+        "Alpha Mod",
+        "Sample.Alpha",
+    )
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(intake.package_path,),
+            intakes=(intake,),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (_intake_correlation(intake, next_step="Open Install for AlphaPack.zip"),)
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+    main_window._context_tabs.setCurrentWidget(main_window._mods_page)
+
+    main_window._on_watch_tick()
+
+    assert main_window._context_tabs.currentWidget() is main_window._mods_page
+    assert main_window._selected_intake_index() == 0
+    assert main_window._selected_zip_package_paths == (intake.package_path,)
+    assert main_window._status_strip_label.text() == (
+        "Detected package ready in Packages: AlphaPack.zip. Open Install when ready."
+    )
+
+
 def test_main_window_multiple_new_actionable_packages_do_not_guess_and_surface_review_handoff(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,

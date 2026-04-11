@@ -7103,6 +7103,7 @@ class MainWindow(QMainWindow):
             initial_result.intakes,
             allow_auto_select=True,
             update_status=True,
+            auto_open_install=False,
         )
         self._refresh_workflow_surface_states()
 
@@ -7164,6 +7165,7 @@ class MainWindow(QMainWindow):
             result.intakes,
             allow_auto_select=True,
             update_status=True,
+            auto_open_install=True,
         )
 
     def _render_inventory(
@@ -12371,6 +12373,7 @@ class MainWindow(QMainWindow):
         *,
         allow_auto_select: bool,
         update_status: bool,
+        auto_open_install: bool = False,
     ) -> None:
         if not new_intakes:
             return
@@ -12395,6 +12398,31 @@ class MainWindow(QMainWindow):
             if combo_index >= 0:
                 if allow_auto_select and not existing_focus:
                     self._intake_result_combo.setCurrentIndex(combo_index)
+                should_auto_open_install = (
+                    auto_open_install
+                    and not existing_focus
+                    and self._context_tabs.currentWidget() is self._packages_page
+                )
+                if should_auto_open_install:
+                    if correlation.actionable_as_update:
+                        self._stage_package_for_plan_install(
+                            str(intake.package_path),
+                            apply_update_intent=True,
+                            status_message=(
+                                "Opened Install for newly detected update package "
+                                f"{intake.package_path.name}. Archive-aware replace is "
+                                "preselected. Next step: Plan install."
+                            ),
+                        )
+                    else:
+                        self._stage_package_for_plan_install(
+                            str(intake.package_path),
+                            status_message=(
+                                "Opened Install for newly detected package "
+                                f"{intake.package_path.name}. Next step: Plan install."
+                            ),
+                        )
+                    return
                 if correlation.actionable_as_update:
                     message = (
                         f"Detected update package ready in Packages: "
