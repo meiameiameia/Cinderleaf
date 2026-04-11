@@ -1633,8 +1633,12 @@ class MainWindow(QMainWindow):
             QAbstractItemView.SelectionMode.NoSelection
         )
         self._package_queue_list.setAlternatingRowColors(True)
-        self._package_queue_list.setMinimumHeight(72)
-        self._package_queue_list.setMaximumHeight(300)
+        self._package_queue_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self._package_queue_list.setMinimumHeight(220)
+        self._package_queue_list.setMaximumHeight(16777215)
         self._package_queue_filter_input = QLineEdit()
         self._package_queue_filter_input.setObjectName("packages_queue_filter_input")
         self._package_queue_filter_input.setPlaceholderText(
@@ -1890,7 +1894,7 @@ class MainWindow(QMainWindow):
         self._package_inspection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._package_inspection_summary_label)
         self._zip_selection_summary_label = QLabel(
-            "No watched packages queued yet. Check packages in the queue to start install planning."
+            "No packages queued yet."
         )
         self._zip_selection_summary_label.setObjectName(
             "packages_intake_zip_selection_summary_label"
@@ -1898,7 +1902,7 @@ class MainWindow(QMainWindow):
         self._zip_selection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_selection_summary_label)
         self._zip_staging_rule_label = QLabel(
-            "Inspect first, then keep the staged package list ready for Install."
+            "Inspect packages, then open Install."
         )
         self._zip_staging_rule_label.setObjectName(
             "packages_intake_staging_rule_label"
@@ -1906,7 +1910,7 @@ class MainWindow(QMainWindow):
         self._zip_staging_rule_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_staging_rule_label)
         self._packages_workspace_state_label = QLabel(
-            "Watch downloads, check packages in the queue, then feed Install."
+            "Watch downloads, queue packages, then open Install."
         )
         self._packages_workspace_state_label.setObjectName(
             "packages_workspace_state_label"
@@ -2942,7 +2946,7 @@ class MainWindow(QMainWindow):
         packages_top_grid_layout.setContentsMargins(0, 0, 0, 0)
         packages_top_grid_layout.setHorizontalSpacing(8)
         packages_top_grid_layout.setVerticalSpacing(8)
-        inspect_group = QGroupBox("Import zip files")
+        inspect_group = QGroupBox("Added package")
         inspect_group.setObjectName("packages_import_group")
         inspect_group.setFlat(True)
         inspect_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
@@ -2959,7 +2963,7 @@ class MainWindow(QMainWindow):
         inspect_layout.addWidget(self._zip_selection_summary_label, 1, 0, 1, 2)
         inspect_layout.addWidget(self._zip_staging_rule_label, 2, 0, 1, 2)
 
-        watcher_group = QGroupBox("Watch downloaded zip folders")
+        watcher_group = QGroupBox("Watched folders")
         watcher_group.setObjectName("packages_watcher_group")
         watcher_group.setFlat(True)
         watcher_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
@@ -2968,8 +2972,7 @@ class MainWindow(QMainWindow):
         watcher_layout.setHorizontalSpacing(8)
         watcher_layout.setVerticalSpacing(3)
         watcher_layout.setColumnStretch(1, 1)
-        watcher_layout.addWidget(QLabel("Watched downloads path 1"), 0, 0)
-        watcher_layout.addWidget(self._watched_downloads_path_input, 0, 1, 1, 4)
+        watch_actions = QHBoxLayout()
         browse_downloads_button = QPushButton("Choose folder")
         browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
         _set_utility_button_style(browse_downloads_button)
@@ -2985,9 +2988,6 @@ class MainWindow(QMainWindow):
         primary_path_actions_layout.addWidget(browse_downloads_button)
         primary_path_actions_layout.addWidget(open_downloads_button)
         primary_path_actions_layout.addStretch(1)
-        watcher_layout.addWidget(primary_path_actions_widget, 1, 1, 1, 4)
-        watcher_layout.addWidget(QLabel("Watched downloads path 2 (optional)"), 2, 0)
-        watcher_layout.addWidget(self._secondary_watched_downloads_path_input, 2, 1, 1, 4)
         browse_secondary_downloads_button = QPushButton("Choose folder 2")
         browse_secondary_downloads_button.clicked.connect(
             self._on_browse_secondary_watched_downloads
@@ -3011,22 +3011,19 @@ class MainWindow(QMainWindow):
         secondary_path_actions_layout.addWidget(browse_secondary_downloads_button)
         secondary_path_actions_layout.addWidget(open_secondary_downloads_button)
         secondary_path_actions_layout.addStretch(1)
-        watcher_layout.addWidget(secondary_path_actions_widget, 3, 1, 1, 4)
         watcher_scope_label = QLabel(
             "Both watcher folders feed one package queue."
         )
         watcher_scope_label.setWordWrap(True)
         _set_auxiliary_label_style(watcher_scope_label)
         watcher_scope_label.setObjectName("packages_watcher_scope_label")
-        watcher_layout.addWidget(watcher_scope_label, 4, 1, 1, 4)
-        watch_actions = QHBoxLayout()
         start_watch_button = QPushButton("Start intake watch")
         start_watch_button.clicked.connect(self._on_start_watch)
-        _set_utility_button_style(start_watch_button)
+        _set_secondary_button_style(start_watch_button)
         watch_actions.addWidget(start_watch_button)
         stop_watch_button = QPushButton("Stop intake watch")
         stop_watch_button.clicked.connect(self._on_stop_watch)
-        _set_utility_button_style(stop_watch_button)
+        _set_secondary_button_style(stop_watch_button)
         watch_actions.addWidget(stop_watch_button)
         watch_actions.addStretch(1)
         watcher_runtime_actions_widget = QWidget()
@@ -3034,13 +3031,20 @@ class MainWindow(QMainWindow):
             "packages_watcher_runtime_actions_widget"
         )
         watcher_runtime_actions_widget.setLayout(watch_actions)
-        watcher_layout.addWidget(watcher_runtime_actions_widget, 5, 1, 1, 4)
+        watcher_layout.addWidget(watcher_runtime_actions_widget, 0, 1, 1, 4)
+        watcher_layout.addWidget(QLabel("Watched downloads path 1"), 1, 0)
+        watcher_layout.addWidget(self._watched_downloads_path_input, 1, 1, 1, 4)
+        watcher_layout.addWidget(primary_path_actions_widget, 2, 1, 1, 4)
+        watcher_layout.addWidget(QLabel("Watched downloads path 2 (optional)"), 3, 0)
+        watcher_layout.addWidget(self._secondary_watched_downloads_path_input, 3, 1, 1, 4)
+        watcher_layout.addWidget(secondary_path_actions_widget, 4, 1, 1, 4)
+        watcher_layout.addWidget(watcher_scope_label, 5, 1, 1, 4)
         self._start_watch_button = start_watch_button
         self._packages_watch_controls = (
             watcher_group,
             inspect_group,
         )
-        packages_top_grid_layout.addWidget(inspect_group, 1, 0)
+        packages_top_grid_layout.addWidget(inspect_group, 1, 1)
         inspection_result_group = QGroupBox("Inspection detail")
         inspection_result_group.setFlat(True)
         inspection_result_group.setSizePolicy(
@@ -3061,8 +3065,7 @@ class MainWindow(QMainWindow):
         self._package_inspection_selector_label = inspection_selector_label
         inspect_layout.addWidget(inspection_result_group, 3, 0, 1, 3)
 
-        packages_top_grid_layout.addWidget(watcher_group, 0, 0)
-        packages_output_group = QGroupBox("Packages detail")
+        packages_output_group = QGroupBox("Queue details")
         packages_output_group.setObjectName("packages_output_group")
         packages_output_group.setFlat(True)
         packages_output_group.setSizePolicy(
@@ -3073,73 +3076,107 @@ class MainWindow(QMainWindow):
         packages_output_layout.setContentsMargins(8, 6, 8, 6)
         packages_output_layout.setSpacing(4)
         packages_output_layout.addWidget(self._packages_output_box)
-        packages_top_grid_layout.addWidget(packages_output_group, 0, 1, 2, 1)
+        packages_top_grid_layout.addWidget(packages_output_group, 2, 1)
         self._packages_output_group = packages_output_group
         packages_output_group.setVisible(False)
-        packages_top_grid_layout.setColumnStretch(0, 1)
-        packages_top_grid_layout.setColumnStretch(1, 1)
-        intake_layout.addWidget(packages_top_grid)
+        packages_top_grid_layout.setColumnStretch(0, 3)
+        packages_top_grid_layout.setColumnStretch(1, 2)
 
         detected_group = QGroupBox("Install target")
         detected_group.setObjectName("packages_review_target_group")
         detected_group.setFlat(True)
-        detected_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        detected_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         detected_layout = QGridLayout(detected_group)
         detected_layout.setContentsMargins(8, 10, 8, 6)
         detected_layout.setHorizontalSpacing(8)
         detected_layout.setVerticalSpacing(6)
         detected_layout.setColumnStretch(1, 1)
-        detected_layout.addWidget(self._packages_workspace_state_label, 0, 0, 1, 4)
-        detected_layout.addWidget(QLabel("Filter"), 1, 0)
-        detected_layout.addWidget(self._intake_filter_input, 1, 1, 1, 2)
-        detected_layout.addWidget(self._intake_filter_stats_label, 1, 3)
-        detected_layout.addWidget(QLabel("Package batch"), 2, 0)
-        detected_layout.addWidget(self._intake_result_combo, 2, 1, 1, 2)
-        detected_layout.addWidget(self._packages_compare_target_label, 3, 0)
-        detected_layout.addWidget(self._packages_compare_target_combo, 3, 1)
-        detected_layout.addWidget(self._packages_compare_target_summary_label, 3, 2, 1, 2)
-        queue_filter_label = QLabel("Queue filter")
-        queue_filter_label.setObjectName("packages_queue_filter_label")
-        detected_layout.addWidget(queue_filter_label, 4, 0)
-        detected_layout.addWidget(self._package_queue_filter_input, 4, 1)
-        detected_layout.addWidget(self._package_queue_source_filter_combo, 4, 2)
-        queue_bulk_actions = QWidget()
-        queue_bulk_actions_layout = QHBoxLayout(queue_bulk_actions)
-        queue_bulk_actions_layout.setContentsMargins(0, 0, 0, 0)
-        queue_bulk_actions_layout.setSpacing(8)
-        queue_bulk_actions_layout.addWidget(self._package_queue_select_all_button)
-        queue_bulk_actions_layout.addWidget(self._package_queue_deselect_all_button)
-        queue_bulk_actions_layout.addStretch(1)
-        detected_layout.addWidget(queue_bulk_actions, 4, 3)
-        queue_label = QLabel("Watched package queue")
-        queue_label.setObjectName("packages_intake_queue_label")
-        detected_layout.addWidget(queue_label, 5, 0, 1, 4)
-        detected_layout.addWidget(self._package_queue_list, 6, 0, 1, 4)
-        review_flow_label = QLabel(
-            "Select packages, then use Open Install."
-        )
-        review_flow_label.setObjectName("packages_intake_review_flow_label")
-        review_flow_label.setWordWrap(True)
-        _set_auxiliary_label_style(review_flow_label)
-        detected_layout.addWidget(review_flow_label, 7, 0, 1, 4)
+        detected_layout.setRowStretch(4, 1)
         self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
         self._stage_update_intake_button.clicked.connect(self._on_stage_selected_intake_update)
         _set_secondary_button_style(self._stage_update_intake_button)
         detected_actions_widget = QWidget()
+        detected_actions_widget.setObjectName("packages_review_actions_widget")
         detected_actions_layout = QHBoxLayout(detected_actions_widget)
         detected_actions_layout.setContentsMargins(0, 0, 0, 0)
         detected_actions_layout.setSpacing(8)
         detected_actions_layout.addStretch(1)
         detected_actions_layout.addWidget(self._plan_selected_intake_button)
         detected_actions_layout.addWidget(self._stage_update_intake_button)
-        detected_layout.addWidget(detected_actions_widget, 8, 0, 1, 4)
-        intake_layout.addWidget(detected_group)
-        intake_layout.addStretch(1)
+        detected_layout.addWidget(detected_actions_widget, 0, 0, 1, 4)
+        detected_layout.addWidget(self._packages_workspace_state_label, 1, 0, 1, 4)
+        detected_controls_widget = QWidget()
+        detected_controls_widget.setObjectName("packages_review_controls_widget")
+        detected_controls_layout = QHBoxLayout(detected_controls_widget)
+        detected_controls_layout.setContentsMargins(0, 0, 0, 0)
+        detected_controls_layout.setSpacing(12)
+
+        intake_controls_widget = QWidget()
+        intake_controls_widget.setObjectName("packages_intake_controls_widget")
+        intake_controls_layout = QGridLayout(intake_controls_widget)
+        intake_controls_layout.setContentsMargins(0, 0, 0, 0)
+        intake_controls_layout.setHorizontalSpacing(8)
+        intake_controls_layout.setVerticalSpacing(4)
+        intake_controls_layout.setColumnStretch(1, 1)
+        intake_controls_layout.addWidget(QLabel("Filter"), 0, 0)
+        intake_controls_layout.addWidget(self._intake_filter_input, 0, 1)
+        intake_controls_layout.addWidget(self._intake_filter_stats_label, 0, 2)
+        intake_controls_layout.addWidget(QLabel("Package batch"), 1, 0)
+        intake_controls_layout.addWidget(self._intake_result_combo, 1, 1, 1, 2)
+
+        queue_controls_widget = QWidget()
+        queue_controls_widget.setObjectName("packages_queue_controls_widget")
+        queue_controls_layout = QGridLayout(queue_controls_widget)
+        queue_controls_layout.setContentsMargins(0, 0, 0, 0)
+        queue_controls_layout.setHorizontalSpacing(8)
+        queue_controls_layout.setVerticalSpacing(4)
+        queue_controls_layout.setColumnStretch(1, 1)
+        queue_controls_layout.addWidget(self._packages_compare_target_label, 0, 0)
+        queue_controls_layout.addWidget(self._packages_compare_target_combo, 0, 1)
+        self._packages_compare_target_summary_label.setVisible(False)
+        queue_filter_label = QLabel("Queue filter")
+        queue_filter_label.setObjectName("packages_queue_filter_label")
+        queue_controls_layout.addWidget(queue_filter_label, 1, 0)
+        queue_controls_layout.addWidget(self._package_queue_filter_input, 1, 1)
+        queue_controls_layout.addWidget(self._package_queue_source_filter_combo, 1, 2)
+        detected_controls_layout.addWidget(intake_controls_widget, 1)
+        detected_controls_layout.addWidget(queue_controls_widget, 1)
+        detected_layout.addWidget(detected_controls_widget, 2, 0, 1, 4)
+        queue_bulk_actions = QWidget()
+        queue_bulk_actions.setObjectName("packages_queue_bulk_actions_widget")
+        queue_bulk_actions_layout = QHBoxLayout(queue_bulk_actions)
+        queue_bulk_actions_layout.setContentsMargins(0, 0, 0, 0)
+        queue_bulk_actions_layout.setSpacing(8)
+        queue_bulk_actions_layout.addWidget(self._package_queue_select_all_button)
+        queue_bulk_actions_layout.addWidget(self._package_queue_deselect_all_button)
+        queue_bulk_actions_layout.addStretch(1)
+        queue_header_widget = QWidget()
+        queue_header_widget.setObjectName("packages_queue_header_widget")
+        queue_header_layout = QHBoxLayout(queue_header_widget)
+        queue_header_layout.setContentsMargins(0, 0, 0, 0)
+        queue_header_layout.setSpacing(8)
+        queue_label = QLabel("Watched package queue")
+        queue_label.setObjectName("packages_intake_queue_label")
+        queue_header_layout.addWidget(queue_label)
+        queue_header_layout.addStretch(1)
+        queue_header_layout.addWidget(queue_bulk_actions)
+        detected_layout.addWidget(queue_header_widget, 3, 0, 1, 4)
+        detected_layout.addWidget(self._package_queue_list, 4, 0, 1, 4)
+        review_flow_label = QLabel(
+            "Select packages, then open Install."
+        )
+        review_flow_label.setObjectName("packages_intake_review_flow_label")
+        review_flow_label.setWordWrap(True)
+        _set_auxiliary_label_style(review_flow_label)
+        detected_layout.addWidget(review_flow_label, 5, 0, 1, 4)
+        packages_top_grid_layout.addWidget(detected_group, 0, 0, 3, 1)
+        packages_top_grid_layout.addWidget(watcher_group, 0, 1)
+        intake_layout.addWidget(packages_top_grid, 1)
         intake_page = self._build_page_shell(
             object_name="packages_workspace_page",
-            eyebrow="Watch downloaded packages",
+            eyebrow="Queue downloaded packages",
             title="Packages",
-            subtitle="Watch package folders, queue installs, and send batches to Install.",
+            subtitle="Watch downloads, queue packages, and send them to Install.",
             body_widget=intake_tab,
             scroll_body=True,
         )
@@ -8719,21 +8756,21 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "active",
-                "Starting intake watch. The watcher will populate detected packages when initialization completes.",
+                "Starting watch...",
             )
             return
         if watch_active and not has_detected_intakes and not has_inspection:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "active",
-                "Watcher is running. New zip packages will appear here automatically as they land in watched folders.",
+                "Watcher is running. New packages will appear here automatically.",
             )
             return
         if has_inspection:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Inspection is ready. Use Open Install to carry the checked package queue into Install, or choose a different detected package below first.",
+                "Inspection ready. Open Install when the batch looks right.",
             )
             return
         if has_detected_intakes:
@@ -8745,22 +8782,22 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Detected packages are ready. Check one or more packages, choose an install target, then use Open Install. "
+                "Detected packages ready. Check packages, then open Install. "
                 + target_note
-                + " Open as update only appears when the checked package is newer than the selected target.",
+                + " Open as update appears only for newer packages.",
             )
             return
         if selected_count > 0:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "muted",
-                "Watched packages are queued. Inspect the queue, then open Install to stage the batch you want to write.",
+                "Packages queued. Inspect the queue, then open Install.",
             )
             return
         _set_feedback_label_state(
             self._packages_workspace_state_label,
             "empty",
-            "After Setup, watch downloads, then queue packages here and open Install to inspect and stage the batch.",
+            "Watch downloads or add packages here, then open Install.",
         )
 
     def _refresh_review_workspace_state(self) -> None:

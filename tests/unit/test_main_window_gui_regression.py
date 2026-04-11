@@ -6981,21 +6981,21 @@ def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_a
 
     watcher_layout = watcher_group.layout()
     assert isinstance(watcher_layout, QGridLayout)
-    assert watcher_layout.itemAtPosition(0, 1).widget() is main_window._watched_downloads_path_input
+    assert watcher_layout.itemAtPosition(0, 1).widget() is runtime_actions_widget
     assert (
         watcher_layout.itemAtPosition(1, 1).widget()
-        is primary_actions_widget
+        is main_window._watched_downloads_path_input
     )
     assert (
         watcher_layout.itemAtPosition(2, 1).widget()
-        is main_window._secondary_watched_downloads_path_input
+        is primary_actions_widget
     )
     assert (
         watcher_layout.itemAtPosition(3, 1).widget()
-        is secondary_actions_widget
+        is main_window._secondary_watched_downloads_path_input
     )
-    assert watcher_layout.itemAtPosition(4, 1).widget() is watcher_scope_label
-    assert watcher_layout.itemAtPosition(5, 1).widget() is runtime_actions_widget
+    assert watcher_layout.itemAtPosition(4, 1).widget() is secondary_actions_widget
+    assert watcher_layout.itemAtPosition(5, 1).widget() is watcher_scope_label
 
     primary_button_texts = {
         button.text() for button in primary_actions_widget.findChildren(QPushButton)
@@ -7010,10 +7010,13 @@ def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_a
     assert secondary_button_texts == {"Choose folder 2", "Open"}
 
     packages_top_grid = main_window.findChild(QWidget, "packages_top_grid")
+    review_target_group = main_window.findChild(QGroupBox, "packages_review_target_group")
     assert packages_top_grid is not None
+    assert review_target_group is not None
     top_grid_layout = packages_top_grid.layout()
     assert isinstance(top_grid_layout, QGridLayout)
-    assert top_grid_layout.itemAtPosition(0, 0).widget() is watcher_group
+    assert top_grid_layout.itemAtPosition(0, 0).widget() is review_target_group
+    assert top_grid_layout.itemAtPosition(0, 1).widget() is watcher_group
     assert runtime_button_texts == {"Start intake watch", "Stop intake watch"}
 
 
@@ -7037,9 +7040,64 @@ def test_main_window_packages_surface_uses_guided_intake_composition(
 
     top_grid_layout = packages_top_grid.layout()
     assert isinstance(top_grid_layout, QGridLayout)
-    assert top_grid_layout.itemAtPosition(0, 0).widget() is watcher_group
-    assert top_grid_layout.itemAtPosition(1, 0).widget() is import_group
-    assert top_grid_layout.itemAtPosition(0, 1).widget() is packages_output_group
+    assert top_grid_layout.itemAtPosition(0, 0).widget() is review_target_group
+    assert top_grid_layout.itemAtPosition(0, 1).widget() is watcher_group
+    assert top_grid_layout.itemAtPosition(1, 1).widget() is import_group
+    assert top_grid_layout.itemAtPosition(2, 1).widget() is packages_output_group
+
+
+def test_main_window_packages_surface_elevates_review_actions_and_queue_selection(
+    main_window: MainWindow,
+) -> None:
+    review_target_group = main_window.findChild(QGroupBox, "packages_review_target_group")
+    review_actions_widget = main_window.findChild(QWidget, "packages_review_actions_widget")
+    review_controls_widget = main_window.findChild(QWidget, "packages_review_controls_widget")
+    intake_controls_widget = main_window.findChild(QWidget, "packages_intake_controls_widget")
+    queue_controls_widget = main_window.findChild(QWidget, "packages_queue_controls_widget")
+    queue_header_widget = main_window.findChild(QWidget, "packages_queue_header_widget")
+    queue_bulk_actions_widget = main_window.findChild(
+        QWidget,
+        "packages_queue_bulk_actions_widget",
+    )
+
+    assert review_target_group is not None
+    assert review_actions_widget is not None
+    assert review_controls_widget is not None
+    assert intake_controls_widget is not None
+    assert queue_controls_widget is not None
+    assert queue_header_widget is not None
+    assert queue_bulk_actions_widget is not None
+
+    review_layout = review_target_group.layout()
+    assert isinstance(review_layout, QGridLayout)
+    assert review_layout.itemAtPosition(0, 0).widget() is review_actions_widget
+    assert review_layout.itemAtPosition(2, 0).widget() is review_controls_widget
+    assert review_layout.itemAtPosition(3, 0).widget() is queue_header_widget
+
+    controls_layout = review_controls_widget.layout()
+    assert isinstance(controls_layout, QHBoxLayout)
+
+    intake_layout = intake_controls_widget.layout()
+    assert isinstance(intake_layout, QGridLayout)
+    assert intake_layout.itemAtPosition(0, 1).widget() is main_window._intake_filter_input
+    assert intake_layout.itemAtPosition(1, 1).widget() is main_window._intake_result_combo
+
+    queue_layout = queue_controls_widget.layout()
+    assert isinstance(queue_layout, QGridLayout)
+    assert queue_layout.itemAtPosition(0, 1).widget() is main_window._packages_compare_target_combo
+    assert main_window._packages_compare_target_summary_label.isVisible() is False
+    assert queue_layout.itemAtPosition(1, 1).widget() is main_window._package_queue_filter_input
+    assert queue_layout.itemAtPosition(1, 2).widget() is main_window._package_queue_source_filter_combo
+
+    review_button_texts = {
+        button.text() for button in review_actions_widget.findChildren(QPushButton)
+    }
+    queue_button_texts = {
+        button.text() for button in queue_bulk_actions_widget.findChildren(QPushButton)
+    }
+    assert review_button_texts == {"Open Install", "Open as update"}
+    assert queue_button_texts == {"Select all", "Deselect all"}
+    assert main_window._package_queue_list.maximumHeight() > 1000
 
 
 def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
@@ -9205,7 +9263,7 @@ def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
 
     assert "Set the Real Mods folder in Setup" in mods_label.text()
     assert "Optional: search by mod name" in discovery_label.text()
-    assert "watch downloads" in packages_label.text()
+    assert "watch downloads" in packages_label.text().casefold()
     assert "Start in Packages" in review_label.text()
 
     inventory = _mods_inventory(
@@ -9229,7 +9287,7 @@ def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
         current_path=Path(r"C:\Downloads\AlphaPack.zip"),
     )
     qapp.processEvents()
-    assert "Inspect the queue" in packages_label.text()
+    assert "inspect the queue" in packages_label.text().casefold()
 
     main_window._apply_install_plan_review(_sandbox_install_plan())
     qapp.processEvents()
@@ -9695,7 +9753,7 @@ def test_main_window_packages_intake_shows_explicit_single_package_review_rule(
 ) -> None:
     assert (
         main_window._zip_staging_rule_label.text()
-        == "Inspect first, then keep the staged package list ready for Install."
+        == "Inspect packages, then open Install."
     )
 
 
