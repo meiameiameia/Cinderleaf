@@ -10149,6 +10149,158 @@ def test_main_window_no_actionable_guided_match_leaves_selection_and_output_unch
     )
 
 
+def test_main_window_single_new_actionable_package_auto_selects_and_surfaces_review_handoff(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intake = _intake_result(
+        "AlphaPack.zip",
+        "new_install_candidate",
+        "Alpha Mod",
+        "Sample.Alpha",
+    )
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(intake.package_path,),
+            intakes=(intake,),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (_intake_correlation(intake, next_step="Open Install for AlphaPack.zip"),)
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+
+    main_window._on_watch_tick()
+
+    assert main_window._selected_intake_index() == 0
+    assert main_window._intake_result_combo.currentData() == 0
+    assert main_window._selected_zip_package_paths == (intake.package_path,)
+    assert main_window._zip_path_input.text() == str(intake.package_path)
+    assert main_window._status_strip_label.text() == (
+        "Detected package ready in Packages: AlphaPack.zip. Open Install when ready."
+    )
+    assert main_window._findings_box.toPlainText() == (
+        "Comparison target: Real Mods\n"
+        "Status: Intake summary for AlphaPack.zip\n"
+        "Next: Open Install for AlphaPack.zip"
+    )
+
+
+def test_main_window_multiple_new_actionable_packages_do_not_guess_and_surface_review_handoff(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _intake_result(
+        "FirstPack.zip",
+        "new_install_candidate",
+        "First Mod",
+        "Sample.First",
+    )
+    second = _intake_result(
+        "SecondPack.zip",
+        "new_install_candidate",
+        "Second Mod",
+        "Sample.Second",
+    )
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(first.package_path, second.package_path),
+            intakes=(first, second),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (
+            _intake_correlation(first, next_step="Open Install for FirstPack.zip"),
+            _intake_correlation(second, next_step="Open Install for SecondPack.zip"),
+        )
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+
+    main_window._on_watch_tick()
+
+    assert main_window._selected_intake_index() == -1
+    assert main_window._selected_zip_package_paths == tuple()
+    assert main_window._status_strip_label.text() == (
+        "Detected 2 packages ready in Packages. Review them, then open Install."
+    )
+
+
+def test_main_window_new_actionable_package_does_not_steal_existing_review_focus(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = _intake_result(
+        "ExistingPack.zip",
+        "new_install_candidate",
+        "Existing Mod",
+        "Sample.Existing",
+    )
+    newcomer = _intake_result(
+        "NewPack.zip",
+        "new_install_candidate",
+        "New Mod",
+        "Sample.New",
+    )
+
+    main_window._detected_intakes = (existing,)
+    main_window._intake_correlations = (
+        _intake_correlation(existing, next_step="Open Install for ExistingPack.zip"),
+    )
+    main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(existing.package_path, newcomer.package_path),
+            intakes=(newcomer,),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (
+            _intake_correlation(existing, next_step="Open Install for ExistingPack.zip"),
+            _intake_correlation(newcomer, next_step="Open Install for NewPack.zip"),
+        )
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+
+    main_window._on_watch_tick()
+
+    assert main_window._selected_intake_index() == 0
+    assert main_window._intake_result_combo.currentData() == 0
+    assert main_window._zip_path_input.text() == str(existing.package_path)
+    assert main_window._status_strip_label.text() == (
+        "Detected package ready in Packages: NewPack.zip. Open Install when ready."
+    )
+    assert main_window._findings_box.toPlainText() == (
+        "Comparison target: Real Mods\n"
+        "Status: Intake summary for ExistingPack.zip\n"
+        "Next: Open Install for ExistingPack.zip"
+    )
+
+
 def test_main_window_staging_auto_selected_guided_match_switches_to_plan_install(
     main_window: MainWindow,
     qapp: QApplication,

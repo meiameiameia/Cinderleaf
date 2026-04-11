@@ -7073,18 +7073,29 @@ class MainWindow(QMainWindow):
             update_report=self._current_update_report,
             guided_update_unique_ids=self._guided_update_unique_ids,
         )
+        preserve_existing_focus = self._has_active_packages_review_focus()
+        has_guided_new_match = any(
+            correlation.actionable_as_update and correlation.matched_guided_update_unique_ids
+            for correlation in new_correlations
+        )
         self._detected_intakes = self._merge_detected_intakes(
             self._detected_intakes,
             initial_result.intakes,
         )
         self._recompute_intake_correlations()
-        self._set_packages_output_text(
-            "\n\n".join(self._watch_detail_sections(initial_result, new_correlations))
-        )
+        if not preserve_existing_focus or has_guided_new_match:
+            self._set_packages_output_text(
+                "\n\n".join(self._watch_detail_sections(initial_result, new_correlations))
+            )
         self._set_status(self._watch_detection_status_text(len(initial_result.intakes), started=True))
         self._sync_guided_update_intake_handoff(
             allow_auto_select=False,
             update_output=False,
+            update_status=True,
+        )
+        self._sync_new_intake_review_handoff(
+            initial_result.intakes,
+            allow_auto_select=True,
             update_status=True,
         )
         self._refresh_workflow_surface_states()
@@ -7123,18 +7134,29 @@ class MainWindow(QMainWindow):
             update_report=self._current_update_report,
             guided_update_unique_ids=self._guided_update_unique_ids,
         )
+        preserve_existing_focus = self._has_active_packages_review_focus()
+        has_guided_new_match = any(
+            correlation.actionable_as_update and correlation.matched_guided_update_unique_ids
+            for correlation in new_correlations
+        )
         self._detected_intakes = self._merge_detected_intakes(
             self._detected_intakes,
             result.intakes,
         )
         self._recompute_intake_correlations()
-        self._set_packages_output_text(
-            "\n\n".join(self._watch_detail_sections(result, new_correlations))
-        )
+        if not preserve_existing_focus or has_guided_new_match:
+            self._set_packages_output_text(
+                "\n\n".join(self._watch_detail_sections(result, new_correlations))
+            )
         self._set_status(self._watch_detection_status_text(len(result.intakes), started=False))
         self._sync_guided_update_intake_handoff(
             allow_auto_select=False,
             update_output=False,
+            update_status=True,
+        )
+        self._sync_new_intake_review_handoff(
+            result.intakes,
+            allow_auto_select=True,
             update_status=True,
         )
 
@@ -12314,6 +12336,82 @@ class MainWindow(QMainWindow):
             for index, correlation in enumerate(self._intake_correlations)
             if correlation.actionable_as_update and correlation.matched_guided_update_unique_ids
         ]
+
+    def _new_actionable_intake_indexes(
+        self,
+        new_intakes: tuple[DownloadsIntakeResult, ...],
+    ) -> list[int]:
+        new_paths = {
+            os.path.normcase(str(intake.package_path.resolve()))
+            for intake in new_intakes
+        }
+        return [
+            index
+            for index, correlation in enumerate(self._intake_correlations)
+            if correlation.actionable
+            and os.path.normcase(str(correlation.intake.package_path.resolve())) in new_paths
+        ]
+
+    def _has_active_packages_review_focus(self) -> bool:
+        return (
+            self._selected_intake_index() >= 0
+            or bool(self._selected_zip_package_paths)
+            or self._has_stageable_inspected_package()
+        )
+
+    def _sync_new_intake_review_handoff(
+        self,
+        new_intakes: tuple[DownloadsIntakeResult, ...],
+        *,
+        allow_auto_select: bool,
+        update_status: bool,
+    ) -> None:
+        if not new_intakes:
+            return
+
+        actionable_matches = self._new_actionable_intake_indexes(new_intakes)
+        if not actionable_matches:
+            return
+
+        if any(
+            self._intake_correlations[index].matched_guided_update_unique_ids
+            for index in actionable_matches
+        ):
+            return
+
+        existing_focus = self._has_active_packages_review_focus()
+        message: str
+        if len(actionable_matches) == 1:
+            match_index = actionable_matches[0]
+            combo_index = self._intake_result_combo.findData(match_index)
+            intake = self._detected_intakes[match_index]
+            correlation = self._intake_correlations[match_index]
+            if combo_index >= 0:
+                if allow_auto_select and not existing_focus:
+                    self._intake_result_combo.setCurrentIndex(combo_index)
+                if correlation.actionable_as_update:
+                    message = (
+                        f"Detected update package ready in Packages: "
+                        f"{intake.package_path.name}. Open as update when ready."
+                    )
+                else:
+                    message = (
+                        f"Detected package ready in Packages: "
+                        f"{intake.package_path.name}. Open Install when ready."
+                    )
+            else:
+                message = (
+                    "Detected package is ready in Packages, but the current filter hides it. "
+                    "Clear the filter or choose it manually."
+                )
+        else:
+            message = (
+                f"Detected {len(actionable_matches)} packages ready in Packages. "
+                "Review them, then open Install."
+            )
+
+        if update_status:
+            self._set_status(message)
 
     def _refresh_detected_intakes_for_current_inventory(self) -> None:
         if not self._detected_intakes:
