@@ -16,4 +16,5 @@ Docs direction for `1.4.0`:
 
 - explain Cinderleaf as an everyday mod manager first
 - keep safer testing, review-before-write, and recovery visible without making the app sound process-heavy
+- make dependency planning and profile dependency handling easy to understand for non-technical players
 - describe `History` as the combined home for archived copies and install rollback

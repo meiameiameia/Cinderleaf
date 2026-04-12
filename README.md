@@ -1,117 +1,152 @@
 # Cinderleaf
 
-**Cinderleaf** is a local-first mod manager **for Stardew Valley**. It is built for players who want a smoother everyday mod routine first, with safer testing and recovery available when they need them: pick up downloads automatically, add one package quickly, review installs before writing, keep favorite profiles around, and recover cleanly if something goes sideways.
+**Cinderleaf** is a Windows mod manager for **Stardew Valley**.
 
-`for Stardew Valley` is a descriptive subtitle, not an official affiliation. Cinderleaf is an independent community tool and is not affiliated with or endorsed by ConcernedApe.
+It is made for players who want modding to feel simpler:
+
+- keep your mod folders organized
+- catch downloaded mod archives in one place
+- review installs before anything is changed
+- catch missing required dependencies before install writes files
+- keep alternate profiles around for different saves or playstyles
+- use a sandbox when you want a safer place to test things first
+- recover or roll back cleanly if something goes wrong
+
+`for Stardew Valley` is just a description, not an official affiliation. Cinderleaf is a community tool and is not endorsed by ConcernedApe.
 
 Current project version: **1.4.0**
 
-Latest packaged public release: **1.3.1**
+Latest packaged public release: **1.4.0**
 
-If you want the full step-by-step walkthrough, start with the [User Manual](docs/USER_GUIDE.md).
+If you want the full walkthrough, start with the [User Guide](docs/USER_GUIDE.md).
 
-## Project snapshot
+## What Cinderleaf is good at
 
-- Windows-first, local-first desktop app for Stardew Valley mod management
-- built with Python, PySide6, pytest, and PyInstaller portable packaging
-- centered on review-before-write installs, calmer daily-use workflows, and read-only compare
-- shipped as a portable zip with GitHub Releases as the public distribution surface
+Cinderleaf is meant to help with the normal day-to-day modding routine:
 
-## Why people use Cinderleaf
+- scan what you already have installed
+- check for updates
+- launch the game or launch with SMAPI
+- watch your downloads folder and pick up new archives
+- add one package quickly when you do not want to use the watcher
+- review installs before writing files
+- warn or block when a required dependency is missing during install planning
+- count a dependency already staged in the same install batch when that is safe
+- compare your real setup and sandbox setup without making Compare a write tool
+- auto-add already installed dependencies when you enable a mod in a custom profile
+- keep restore, rollback, and backup tools easy to find
 
-- to make mod installs feel easier and less chaotic
-- to let the watcher pick up downloaded archives automatically
-- to add one package quickly without setting up a whole batch first
-- to review installs before writing files
-- to queue and install several downloaded mods together
-- to manage alternate mod profiles without losing a favorite setup
-- to export backups before a cleanup, migration, or riskier change
-- to compare real and sandbox folders without turning Compare into a write tool
-- to keep restore, rollback, and backup tools in one easy-to-find place
-- to go from a simple casual setup to a more organized, flexible routine without changing tools
+The goal is not to bury you in process. The goal is to make the normal flow feel calmer and clearer, while still keeping safer options nearby.
 
-## Core features
+## The main parts of the app
 
-- `Library` for scanning installed mods, checking updates, handling the main launch actions, and working with your installed library
-- `SMAPI` for SMAPI-specific helpers such as log checks, troubleshooting, and related actions
-- `Packages` intake with watcher support, direct `Add package` intake, batch selection, and queue filtering
-- `Install` planning before any write, including dependency-aware batch planning
-- curated real and sandbox profiles, with clear `not in profile` behavior for mods that exist in `Default` but are not part of a custom profile yet
-- read-only `Compare` for checking drift between real and sandbox mod folders
-- `History` for archived copies and install-history rollback review
-- backup bundle export with artifact selection, including:
-  - manager state and profiles
-  - managed mods and config snapshots
-  - archives
-  - optional Stardew save files
-- restore/import support for bundled mods, mod configs, and exported profile catalogs, with save files left as a manual restore step
-- optional sandbox workflows for trying changes before they reach your main setup
+- `Library`: your everyday mod list, update checks, launch actions, profiles, and related actions
+- `SMAPI`: SMAPI-specific helpers like version checks, latest log checks, and troubleshooting
+- `Packages`: where downloaded archives show up, either through watched folders or `Add package`
+- `Install`: the review screen before anything is written, including dependency checks before the write step
+- `Discover`: a read-only search area for finding mod pages and sources
+- `Compare`: a read-only way to check what is different between real and sandbox
+- `History`: archived copies and install rollback history in one place
+- `Setup`: folders, backups, restore/import tools, and a few extra configuration options
 
-## New in 1.4.0
+## Why `1.4.0` matters
 
-- The main workspaces are calmer and easier to scan, with cleaner hierarchy across `Library`, `Packages`, `Install`, `Setup`, and `History`.
-- `Archive` and `Recovery` are now unified under `History`, keeping restore and rollback tools together without splitting the mental model across two pages.
-- `Packages` is much faster in day-to-day use, with a visible one-package intake path, stronger watcher handoff, and automatic `Install` opening for a single fresh actionable download when that handoff is obvious.
-- The whole app now reads more like an everyday mod manager first, instead of asking players to understand the advanced tooling before they get value from it.
+This release is a usability release.
 
-For the full release history, see [CHANGELOG.md](CHANGELOG.md).
+The app now feels much more like an everyday mod manager first:
+
+- the main workspaces are calmer and easier to scan
+- `Archive` and `Recovery` are now together under `History`
+- `Packages` is faster to use, with `Add package`, better watcher handoff, and automatic `Install` opening when the next step is obvious
+- dependency handling is more visible in the normal flow, with install planning warnings and smarter profile enabling
+- `Compare` shows more rows at once
+- the packaged Windows build fixes a watcher issue that could flash a terminal window during RAR intake
+
+For the release history, see [CHANGELOG.md](CHANGELOG.md).
+
+## Download the portable build
+
+The public build is a Windows portable zip on GitHub Releases.
+
+1. Open the repository [Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
+2. Download `cinderleaf-1.4.0-windows-portable.zip`.
+3. Extract it to a normal folder.
+4. Run `Cinderleaf.exe`.
+
+If a checksum file is published with the release, you can verify it against `cinderleaf-1.4.0-windows-portable.zip.sha256`.
+
+Good to know:
+
+- this is a portable folder, not an installer
+- Cinderleaf can tell you when a newer release exists, but it does not update itself automatically
+- downloads from mod sites are still manual; Cinderleaf helps after the file reaches your machine
+
+## A simple way to use it
+
+1. Open `Setup` and point Cinderleaf at your game folder, real `Mods`, and sandbox `Mods`.
+2. Go to `Packages`.
+3. Either click `Add package` for one archive, or let the watcher pick up downloads for you.
+4. Open `Install` and review the plan.
+5. Apply the install only when it looks right.
+6. Use `Library` to scan, check updates, manage profiles, and launch the game.
+7. Use `History` if you need archived copies, rollback review, or recovery help later.
+
+If you never want to use the sandbox, Cinderleaf can still be useful. The sandbox is there when you want a safer place to try something first, not because the app expects every player to work that way all the time.
+
+## Dependency help that matters in practice
+
+This is one of the areas where Cinderleaf does more than just move files around.
+
+- `Install` planning checks manifest dependencies before the write step
+- if a required dependency is missing, the plan can warn or block before install happens
+- if the dependency is already in the same staged batch, Cinderleaf can count that instead of treating it like missing
+- when you enable a mod in a custom profile, Cinderleaf can automatically add its already-installed dependencies to that profile too
+- if the dependency is not installed at all, Cinderleaf can tell you that before pretending the enable worked cleanly
+
+That means dependency problems show up earlier, during review, instead of only after a broken launch.
 
 ## Screenshots
 
 These screenshots reflect the current `1.4.0` app surface.
 
-![Cinderleaf setup workspace](media/nexus-screenshots/00-setup-workspace.png)
+![Setup workspace](media/nexus-screenshots/00-setup-workspace.png)
 
-![Cinderleaf library workspace](media/nexus-screenshots/01-library-workspace.png)
+![Library workspace](media/nexus-screenshots/01-library-workspace.png)
 
-![Cinderleaf packages workspace](media/nexus-screenshots/02-packages-workspace.png)
+![SMAPI workspace](media/nexus-screenshots/02-smapi-workspace.png)
 
-![Cinderleaf install workspace](media/nexus-screenshots/03-install-workspace.png)
+![Packages workspace](media/nexus-screenshots/03-packages-workspace.png)
 
-![Cinderleaf discover workspace](media/nexus-screenshots/04-discover-workspace.png)
+![Install workspace](media/nexus-screenshots/04-install-workspace.png)
 
-![Cinderleaf compare workspace](media/nexus-screenshots/05-compare-workspace.png)
+![Discover workspace](media/nexus-screenshots/05-discover-workspace.png)
 
-![Cinderleaf history workspace](media/nexus-screenshots/06-archive-workspace.png)
+![Compare workspace](media/nexus-screenshots/06-compare-workspace.png)
 
-## Requirements
+![History workspace](media/nexus-screenshots/07-history-workspace.png)
 
-- Windows
-- Stardew Valley
-- SMAPI for most modded setups
+## Current limits
 
-## Download the portable build
+- downloads are still manual
+- `Compare` stays read-only
+- Cinderleaf helps you get to review faster, but it still does not install mods silently
+- save-file export exists in backup bundles, but save restore is still manual
+- Windows is the main supported desktop path today
 
-The supported public build is a Windows portable zip published on GitHub Releases.
+## Feedback
 
-1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Download `cinderleaf-1.3.1-windows-portable.zip`.
-3. Extract it to a normal folder.
-4. Run `Cinderleaf.exe`.
+Bug reports and feature suggestions are welcome through GitHub Issues.
 
-If a checksum file is published with the release, verify `cinderleaf-1.3.1-windows-portable.zip.sha256` before announcing or mirroring the build.
+If you report a bug, it helps to include:
 
-Good to know:
+- your Cinderleaf version
+- your Windows version
+- which workspace you were using
+- what you expected to happen
+- what happened instead
+- whether it only happens in the portable packaged build or also from source
 
-- this is a portable folder, not an installer
-- if you want to verify the download manually, compare the release zip against the published `.sha256` checksum on GitHub Releases
-- Cinderleaf can tell you when a newer release exists, but it does not download or install updates for you
-
-## A simple way to use it
-
-1. Set your game folder, real `Mods`, and sandbox `Mods` in `Setup`.
-2. Let `Packages` watch your download folders and queue the mods you want to work with.
-3. Open `Install` and read the plan before you apply anything.
-4. Use `Library` to keep track of what is installed and use its launch actions when you are ready to play or test.
-5. Use `SMAPI` when you want log checks, troubleshooting help, or other SMAPI-specific helpers.
-6. Use `Compare` when you want to see what is different between real and sandbox.
-7. Use `History`, restore/import, and backup/export tools before bigger cleanups, experiments, or machine moves.
-
-If you mainly want an easier everyday mod routine, Cinderleaf is built for that. The sandbox is there when you want a safer place to try changes first, but it is no longer the only story the app tries to tell.
-
-## Want the full walkthrough?
-
-The [User Manual](docs/USER_GUIDE.md) covers setup, packages, installs, profiles, backups, compare, recovery, restore/import, and troubleshooting in more detail.
+For more on that, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Build from source
 
@@ -131,32 +166,8 @@ dist\cinderleaf-1.4.0-windows-portable.zip
 dist\cinderleaf-1.4.0-windows-portable.zip.sha256
 ```
 
-## Current limitations
-
-- downloads are still manual; the watcher can monitor folders you choose, but it does not download from mod sites for you
-- Cinderleaf can auto-open `Install` for one fresh actionable watched package, but it still stops at review and does not install silently
-- `Compare` is intentionally read-only; it helps you review drift, not write changes
-- restore/import is archive-aware and folder-oriented; it is not a file-by-file merge tool
-- exported profile catalogs can now be restored through restore/import, but Stardew save files still need manual restore steps
-- there is no one-click `sync everything back to real` flow
-- Windows is the primary supported desktop path today
-
-## Feedback and issue reporting
-
-- use GitHub Issues for bugs and feature requests
-- include the Cinderleaf version, Windows version, and which workspace or workflow was involved
-- if the issue involves install, archive, recovery, restore/import, or SMAPI troubleshooting, include the status text, plan summary, or error message shown by the app
-- external code contributions and pull requests are not actively open right now
-
 ## License
 
 Cinderleaf is **source-available**, not open source.
 
-This repository is licensed under **PolyForm Noncommercial 1.0.0**. You can use, modify, and redistribute it for noncommercial purposes under the terms in [LICENSE](LICENSE).
-
-## Project files
-
-- [User Manual](docs/USER_GUIDE.md)
-- [Changelog](CHANGELOG.md)
-- [Feedback and issue notes](CONTRIBUTING.md)
-- [License](LICENSE)
+This repository uses **PolyForm Noncommercial 1.0.0**. You can use, modify, and redistribute it for noncommercial purposes under the terms in [LICENSE](LICENSE).

@@ -1,301 +1,278 @@
-# Cinderleaf User Manual
+# Cinderleaf User Guide
 
-This guide is the detailed, player-friendly walkthrough for the current `1.4.0` release line.
+This is the easy-to-read guide for the current `1.4.0` release line.
 
-If you just want the short version first, start with the main [README](../README.md).
+If you want the short version first, read the main [README](../README.md).
 
-## 1. What Cinderleaf is meant to help with
+## 1. What Cinderleaf is for
 
-Cinderleaf is for players who want an easier, more organized mod routine on Windows, whether they only install a few favorites or like keeping different setups for different saves.
+Cinderleaf is for Stardew Valley players who want modding to feel more organized without turning it into a chore.
 
-At its best, it helps you:
+It helps you:
 
-- look at mods before you install them
-- let the watcher pick up downloaded zip files for you
-- queue and install several mods together
-- keep different mod sets through profiles instead of manual folder juggling
-- keep backup and recovery tools nearby
-- export the parts of your setup you care about before a bigger change
-- compare folders without turning compare into a write action
-- use sandbox workflows when you want a dedicated trial space before changing your main setup
+- see what is installed
+- catch new mod archives in one place
+- review installs before changing files
+- catch missing required dependencies during install planning
+- keep different profiles for different saves or playstyles
+- use a sandbox when you want a safer test setup
+- recover from bad changes more easily
 
-The app can work with your real `Mods` folder, a sandbox `Mods` folder, custom profiles, backup bundles, `History`, and restore/import tools. The goal is not to make modding feel like paperwork. The goal is to make the normal install-and-play path clearer, with the safer tools nearby when you want them.
+You do not need to use every feature to get value from it.
 
-## 2. First stop: Setup
+If all you want is:
 
-Open `Setup` first. This is where you tell Cinderleaf where everything lives.
+- add a mod
+- check what is installed
+- update things
+- launch the game
 
-You can configure:
+Cinderleaf is meant to help with that too.
+
+## 2. Your simplest first setup
+
+Open `Setup` first.
+
+The main folders to set are:
 
 - your game folder
 - your real `Mods` folder
 - your sandbox `Mods` folder
-- your sandbox archive folder
-- your real archive folder
-- an optional Nexus API key
 
-Best practice:
+The sandbox folder is optional in spirit, but recommended if you like testing things before they touch your main setup.
 
-- keep your paths clear and consistent before you start changing things
-- treat the sandbox as an optional but very useful testing area when you want to try changes before moving them into your main setup
-- keep archive folders configured so rollback stays useful when you need it
+Once those are set, you are ready to use the normal flow.
 
-`Setup` also includes update status, release-page access, backup/export tools, and restore/import tools.
+## 3. The normal everyday flow
 
-## 3. Library and SMAPI
+The easiest way to think about the app is:
 
-`Library` is the everyday view for your installed mods, and it is also where the main launch actions live.
+1. bring mod archives into `Packages`
+2. review them in `Install`
+3. use `Library` to manage what is installed and launch the game
 
-Use it when you want to:
-
-- scan what is currently installed
-- browse your installed mods
-- check update guidance
-- look at source intent, type, and promotion context
-- archive or restore the selected mod
-- work with real or sandbox profiles
-
-Some of the calmer `1.3.x` improvements live here:
-
-- grouped multi-folder mods can stay visible as one logical entry more often
-- the old `Folder` column has been replaced with a clearer `Type` column
-- source state is easier to read through statuses like `Missing source`, `Needs API key`, `Built-in`, and `No tracking`
-- manual-source mods can use the same update-page workflow as automatic-source mods
-- checked update status now survives normal context switches more cleanly, and startup can warm update status for scanned inventories automatically
-
-`SMAPI` is the companion tab for SMAPI-specific checks and log review.
-
-Use it when you want to:
-
-- open the SMAPI website
-- check the installed SMAPI version
-- check the latest SMAPI log
-- open the latest SMAPI log file itself
-- handle SMAPI-specific troubleshooting details
-
-Use `Library` when you want the main launch actions:
-
-- launch the game normally
-- launch with SMAPI
-- run a sandbox test launch
-
-Important note:
-
-- scanning and update guidance are read-only
-- actual write actions stay explicit and live in the workflow areas where they belong
+Everything else supports that routine.
 
 ## 4. Packages
 
-`Packages` is where downloaded archive packages come in.
+`Packages` is where mod archives come in.
 
-You have two simple ways to use it:
+You can use it in two ways:
 
-- `Add package` when you just want to pick one archive and review it quickly
-- the watcher when you want Cinderleaf to keep watching one or two download folders for you
+- click `Add package` when you want to pick one archive quickly
+- use the watcher when you want Cinderleaf to keep checking one or two download folders for you
 
 Typical flow:
 
-1. Use `Add package` for a one-off archive, or set your watched download paths and start intake watch.
-2. Let Cinderleaf detect archives that are already there or appear later.
-3. Filter the queue by name or status text.
-4. Optionally filter the queue to watched path 1, watched path 2, or both together.
-5. Use `Select all` or `Deselect all` when you want to act on only the rows currently visible under that filter.
-6. Check the packages you want.
-7. Choose `Compare against`.
-8. Use `Open Install` to send that batch into `Install`.
+1. Open `Packages`.
+2. Either click `Add package` or start the intake watcher.
+3. Let the app detect your archive files.
+4. Check the package rows you want.
+5. Choose what to compare against.
+6. Open `Install`.
 
-If one fresh actionable watched package arrives while you are already on `Packages` and not reviewing something else, Cinderleaf can open `Install` automatically for that one obvious next step. It still does not install anything silently.
+Important:
 
-The queue status helps you understand what Cinderleaf sees, for example:
-
-- not installed in the selected target
-- same version in the selected target
-- newer than the selected target
-
-Supported package formats now include normal `.zip` files and `.rar` archives in the portable build.
-
-`Packages` is still a review step. It does not write anything by itself.
+- `Packages` does not install anything by itself
+- it is still a review step
+- the app may open `Install` automatically for one obvious watched package, but it still stops at review
 
 ## 5. Install
 
-`Install` is the planning screen before any files are written.
+`Install` is the last check before anything is written.
 
-It receives:
+This is where you:
 
-- the package batch you selected in `Packages`
-- the destination context inherited from that earlier step
+- confirm the destination
+- review whether something will replace an existing target
+- see dependency warnings before the write step
+- read the summary
+- apply the install only when it looks right
 
-Use it to:
+That is one of Cinderleaf’s main safety ideas:
 
-- confirm where the install is going
-- review replace behavior
-- read plan notes and install detail
-- see dependency-aware batch planning results
-- apply the install only after the plan looks right
+- get to review faster
+- still keep the write step explicit
 
-One helpful part of the current workflow is batch dependency handling:
+Dependency handling matters here too:
 
-- if a needed dependency is already in the same staged batch, the plan can count it
-- if that staged dependency is blocked or invalid, it does not count as safe
+- if a required dependency is missing, the plan can warn or block before install happens
+- if a dependency is already included in the same staged install batch, Cinderleaf can count that instead of treating it like missing
+- remote requirement hints are not the same thing as the blocking local dependency check
 
-The plan stays read-only until Cinderleaf says it is ready to execute.
+## 6. Library
 
-After a successful install, the Install page now leaves clearer success feedback instead of staying on stale planning text.
-
-## 6. Profiles
-
-Cinderleaf supports curated real and sandbox profiles.
-
-The basic idea is:
-
-- `Default` mirrors the main configured library
-- custom profiles are smaller, curated sets
-- new mods added later to the main library do not silently become enabled in older custom profiles
-- if something exists in `Default` but not in the active custom profile, it shows as `not in profile`
-
-That makes profiles useful for:
-
-- alternate mod sets
-- lighter testing setups
-- preserving an older favorite combination while you try newer mods somewhere else
-- keeping a cleaner test setup when you want to try changes without disturbing your main setup
-
-## 7. Compare
-
-`Compare` is there to help you review differences, not make changes.
+`Library` is the main everyday management screen.
 
 Use it to:
 
-- compare real and sandbox folders
-- focus on meaningful drift instead of noise
-- see cases that are only in real, only in sandbox, mismatched, or ambiguous
+- scan installed mods
+- check updates
+- open source pages
+- launch the game
+- launch with SMAPI
+- launch a sandbox test
+- work with profiles
 
-If you are looking for a button that makes `Compare` sync things automatically, that is not what this workspace is for. It is intentionally read-only.
+If you spend most of your time in one workspace, it will probably be `Library`.
 
-## 8. History
+## 7. SMAPI
 
-`History` combines the old archive and recovery areas into one workspace.
+`SMAPI` is the companion area for SMAPI-specific tasks.
+
+Use it when you want to:
+
+- check your SMAPI version
+- look at the latest SMAPI log
+- open the SMAPI website
+- get troubleshooting help for modded launches
+
+## 8. Profiles
+
+Profiles let you keep different mod sets without manually moving folders around.
+
+The simple way to think about them:
+
+- `Default` mirrors the main library
+- custom profiles let you keep smaller or different selections
+
+Profile dependency handling is built in too:
+
+- if you enable a mod in a custom profile and its required dependency is already installed, Cinderleaf can add that dependency to the profile automatically
+- if the dependency is not installed at all, Cinderleaf can warn you instead of silently leaving the profile in a confusing state
+
+This is useful if you want:
+
+- one setup for a long-running save
+- another for testing
+- another for a themed playthrough
+
+## 9. Sandbox
+
+The sandbox is a separate `Mods` setup.
+
+That means:
+
+- your real `Mods` folder stays your main setup
+- the sandbox gives you another place to try things first
+
+If a test goes well, you can keep moving from there.
+If it goes badly, your real mod setup was not the place where you experimented.
+
+This helps most with mod setup safety.
+
+It does **not** mean Cinderleaf is secretly creating a full isolated save-management system for you. If you are testing something that could affect save data directly, using a copied save is still the careful move.
+
+## 10. Compare
+
+`Compare` is read-only.
+
+It is there so you can check what is different between your real setup and your sandbox setup.
+
+Use it when you want to answer questions like:
+
+- what exists only in real?
+- what exists only in sandbox?
+- what versions do not match?
+
+It is a review tool, not a write tool.
+
+## 11. History
+
+`History` is where older state and rollback information now live.
 
 It has two tabs:
 
-- `Archived copies` for archived mod folders and restore targets
-- `Install history` for recorded install/recovery history and rollback review
+- `Archived copies`
+- `Install history`
 
-Use `Archived copies` when you want to:
+### Archived copies
 
-- browse what has been archived
-- inspect restore targets
-- clean up older retained copies when it makes sense
+Use this when you want to:
 
-Use `Install history` when you want to:
+- browse archived mod copies
+- restore an archived copy
+- delete an archived copy
+- clean up older retained copies
+
+### Install history
+
+Use this when you want to:
 
 - inspect recorded install history
-- review whether a recovery path looks safe
-- execute recovery only when the review says it is ready
+- review rollback information
+- apply recovery only after you have reviewed it
 
-These tools are part of what makes bigger experiments less stressful.
+The point is to keep restore and rollback tools together in one place instead of splitting them across two different workspace names.
 
-## 9. Backup export
+## 12. Backup and restore
 
-`Export backup` lets you choose what goes into a backup bundle instead of forcing one fixed package.
-
-Current export choices include:
+Cinderleaf can export backup bundles that include things like:
 
 - manager state and profiles
 - managed mods and config snapshots
 - archives
 - optional Stardew save files
 
-Restore/import can already bring back:
+This is useful before:
 
-- bundled mod folders
-- supported mod config artifacts
-- exported real and sandbox profile catalogs
+- bigger cleanup passes
+- machine moves
+- major mod changes
+- riskier experiments
 
-Stardew save files are still different. They are exportable for backup, but today they still need manual restore steps.
+Restore/import can already handle the guided mod/config/profile side of those bundles.
 
-In plain terms:
+Save files are still different:
 
-- export is your wider backup surface
-- restore/import can already handle the guided mod/config/profile part of that surface
-- save files are still the manual piece
+- they can be included in export
+- save restore is still manual
 
-## 10. Restore / import
+## 13. Discover
 
-Use `Inspect backup` and the related restore tools when you want to review a bundle before anything is written.
+`Discover` helps you look up mods by name, author, or UniqueID and open their pages.
 
-The expected posture is:
+It is meant to help with:
 
-- inspect first
-- plan first
-- execute only after you have reviewed the result
+- finding a mod page
+- checking source information
+- reconnecting tracking info
 
-Restore/import is archive-aware and folder-oriented. It is not meant to be a fine-grained merge tool.
+It does not install mods by itself.
 
-Today that means:
+## 14. If something goes wrong
 
-- bundled mods can be restored
-- supported mod config artifacts can be restored
-- exported real and sandbox profile catalogs can be restored
-- Stardew save files are still a manual restore step
-
-## 10a. Fixing missing sources and update tracking
-
-If a mod is missing tracking information, `Library` now gives you more guidance than the older `1.2.0` flow did.
-
-Useful states include:
-
-- `Missing source`
-- `Needs API key`
-- `Built-in`
-- `No tracking`
-
-If the app already has a strong hint, you can use:
-
-- `Find source`
-- `Suggest source`
-- `Check saved source`
-
-Important note:
-
-- `SMAPI.*` built-ins like bundled helpers are not normal missing-source mods and should not be treated like broken tracking rows
-
-## 11. Troubleshooting
-
-If something goes wrong, try to collect:
+If you want to report a bug, it helps to include:
 
 - your Cinderleaf version
 - your Windows version
 - which workspace you were using
-- the status text or error message the app showed
-- the install, archive, or recovery summary if it is relevant
-- whether the issue only happens in the portable packaged build or also from source
+- the status text or error message you saw
+- whether it only happens in the portable packaged build or also from source
 
-For SMAPI issues in particular:
+For SMAPI issues, it also helps to mention whether it happened in:
 
-- check the latest SMAPI log from the `SMAPI` tab
-- open the log file if needed
-- note whether the issue happened in real `Mods`, sandbox `Mods`, or a profile-backed launch
+- real `Mods`
+- sandbox `Mods`
+- a specific profile
 
-That makes bug reports much easier to understand and fix.
+## 15. Good habits
 
-## 12. A few habits that make life easier
+These habits make Cinderleaf easier to use:
 
-- use the sandbox when you want a dedicated testing space before touching live `Mods`
-- keep archive folders configured
-- export backups before big cleanup passes, experiments, or moving to another machine
-- use profiles for curated sets instead of trying to remember manual folder edits
-- treat `Compare` as a review surface
-- let `Install` be your last quiet checkpoint before any write happens
-- use `Add package` when you only want to inspect one archive quickly
+- use `Add package` when you only want to handle one archive quickly
+- use the watcher when you download several mods in a row
+- let `Install` be your final quiet checkpoint before a write
+- use profiles instead of manual folder juggling
+- use the sandbox when you want a safer place to experiment
+- use `History` when you need restore or rollback help
 
-## 13. Current boundaries
+## 16. Current limits
 
 Right now, it helps to remember:
 
 - downloads are still manual
-- watcher and one-package intake can hand you off into review faster, but they still stop at review and do not install silently
 - `Compare` is still read-only
-- restore/import is not a full catch-all restore for every exported artifact
-- there is no one-click `sync everything back to real` button
-- Windows is the primary supported desktop path
+- Cinderleaf helps you get to review faster, but it still does not install mods silently
+- save restore is still manual
+- Windows is the main supported desktop path
