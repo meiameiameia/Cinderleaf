@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
@@ -112,6 +113,7 @@ def _extract_rar_archive_to_directory(*, archive_path: Path, destination: Path) 
         capture_output=True,
         text=True,
         check=False,
+        **_hidden_console_subprocess_kwargs(),
     )
     if process.returncode != 0:
         detail = process.stderr.strip() or process.stdout.strip() or "unknown extraction error"
@@ -152,3 +154,9 @@ def _bundled_7zip_executable() -> Path:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS) / "tools" / "7zip" / "7z.exe"
     return Path(__file__).resolve().parents[3] / "assets" / "tools" / "7zip" / "7z.exe"
+
+
+def _hidden_console_subprocess_kwargs() -> dict[str, object]:
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}

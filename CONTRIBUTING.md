@@ -18,11 +18,13 @@ Please use the GitHub issue templates and include:
 - what happened instead
 - whether the issue happened in real `Mods`, sandbox `Mods`, `Compare`, `Packages`, `Install`, or a backup/archive/restore/recovery flow
 
-If the issue involves install, recovery, archive, or restore behavior, please also include the review summary, status text, or error message shown by the app.
+If the issue involves install, `History`, archive/restore behavior, or rollback review, please also include the review summary, status text, or error message shown by the app.
+
+If the problem only happens in the portable packaged build, please say that clearly. Packaged-only bugs are especially useful to call out early.
 
 ## Scope expectations
 
-- sandbox remains the recommended test path
+- sandbox remains the recommended safer test path when you want it
 - Compare stays read-only unless a specifically approved stage changes it
 - real-`Mods` operations stay explicit, reviewable, and recoverable
 - provider-compliant manual download flow remains the default

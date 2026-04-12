@@ -1284,6 +1284,21 @@ def test_main_window_low_height_smapi_troubleshooting_compacts_selected_mod_guid
     assert inspector_scroll_area.verticalScrollBar().maximum() > 0
 
 
+def test_main_window_packages_queue_details_output_keeps_full_height(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    main_window.resize(1366, 768)
+    main_window._set_packages_output_text("Watcher sources:\n- C:\\Downloads")
+    qapp.processEvents()
+
+    assert main_window._packages_output_box.maximumHeight() >= 100000
+    assert (
+        main_window._packages_output_box.sizePolicy().verticalPolicy()
+        == QSizePolicy.Policy.Expanding
+    )
+
+
 def test_main_window_major_tables_keep_row_budget_and_interactive_headers(
     main_window: MainWindow,
 ) -> None:
@@ -1801,7 +1816,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert brand_icon_pixmap.isNull() is False
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
-    assert brand_version.text() == "Version 1.3.1"
+    assert brand_version.text() == "Version 1.4.0"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(0).widget() is brand_header

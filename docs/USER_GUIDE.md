@@ -1,6 +1,6 @@
 # Cinderleaf User Manual
 
-This guide is the detailed, player-friendly walkthrough for the current `1.3.1` release line.
+This guide is the detailed, player-friendly walkthrough for the current `1.4.0` release line.
 
 If you just want the short version first, start with the main [README](../README.md).
 
@@ -17,9 +17,9 @@ At its best, it helps you:
 - keep backup and recovery tools nearby
 - export the parts of your setup you care about before a bigger change
 - compare folders without turning compare into a write action
-- use sandbox and testing workflows when you want a dedicated trial space before changing your main setup
+- use sandbox workflows when you want a dedicated trial space before changing your main setup
 
-The app can work with your real `Mods` folder, a sandbox `Mods` folder, custom profiles, backup bundles, archive history, and recovery/restore workflows. The goal is not to hide what is happening. The goal is to make each step clear before you commit to it.
+The app can work with your real `Mods` folder, a sandbox `Mods` folder, custom profiles, backup bundles, `History`, and restore/import tools. The goal is not to make modding feel like paperwork. The goal is to make the normal install-and-play path clearer, with the safer tools nearby when you want them.
 
 ## 2. First stop: Setup
 
@@ -88,19 +88,23 @@ Important note:
 
 `Packages` is where downloaded archive packages come in.
 
-Instead of browsing for one archive at a time, you point Cinderleaf at one or two download folders and let it watch them.
+You have two simple ways to use it:
+
+- `Add package` when you just want to pick one archive and review it quickly
+- the watcher when you want Cinderleaf to keep watching one or two download folders for you
 
 Typical flow:
 
-1. Set your watched download paths.
-2. Start intake watch.
-3. Let Cinderleaf detect zips that are already there or appear later.
-4. Filter the queue by name or status text.
-5. Optionally filter the queue to watched path 1, watched path 2, or both together.
-6. Use `Select all` or `Deselect all` when you want to act on only the rows currently visible under that filter.
-7. Check the packages you want.
-8. Choose `Compare against`.
-9. Use `Open Install` to send that batch into `Install`.
+1. Use `Add package` for a one-off archive, or set your watched download paths and start intake watch.
+2. Let Cinderleaf detect archives that are already there or appear later.
+3. Filter the queue by name or status text.
+4. Optionally filter the queue to watched path 1, watched path 2, or both together.
+5. Use `Select all` or `Deselect all` when you want to act on only the rows currently visible under that filter.
+6. Check the packages you want.
+7. Choose `Compare against`.
+8. Use `Open Install` to send that batch into `Install`.
+
+If one fresh actionable watched package arrives while you are already on `Packages` and not reviewing something else, Cinderleaf can open `Install` automatically for that one obvious next step. It still does not install anything silently.
 
 The queue status helps you understand what Cinderleaf sees, for example:
 
@@ -168,19 +172,22 @@ Use it to:
 
 If you are looking for a button that makes `Compare` sync things automatically, that is not what this workspace is for. It is intentionally read-only.
 
-## 8. Archive and Recovery
+## 8. History
 
-`Archive` is where you can inspect archived copies and restore them deliberately.
+`History` combines the old archive and recovery areas into one workspace.
 
-Use it to:
+It has two tabs:
+
+- `Archived copies` for archived mod folders and restore targets
+- `Install history` for recorded install/recovery history and rollback review
+
+Use `Archived copies` when you want to:
 
 - browse what has been archived
 - inspect restore targets
 - clean up older retained copies when it makes sense
 
-`Recovery` is the rollback side of the story. It uses recorded install/recovery history so you can review what happened before you try to undo it.
-
-Use it to:
+Use `Install history` when you want to:
 
 - inspect recorded install history
 - review whether a recovery path looks safe
@@ -245,9 +252,9 @@ Useful states include:
 
 If the app already has a strong hint, you can use:
 
-- `Find source hint`
-- `Use suggested source`
-- `Test source`
+- `Find source`
+- `Suggest source`
+- `Check saved source`
 
 Important note:
 
@@ -262,6 +269,7 @@ If something goes wrong, try to collect:
 - which workspace you were using
 - the status text or error message the app showed
 - the install, archive, or recovery summary if it is relevant
+- whether the issue only happens in the portable packaged build or also from source
 
 For SMAPI issues in particular:
 
@@ -279,12 +287,14 @@ That makes bug reports much easier to understand and fix.
 - use profiles for curated sets instead of trying to remember manual folder edits
 - treat `Compare` as a review surface
 - let `Install` be your last quiet checkpoint before any write happens
+- use `Add package` when you only want to inspect one archive quickly
 
 ## 13. Current boundaries
 
 Right now, it helps to remember:
 
 - downloads are still manual
+- watcher and one-package intake can hand you off into review faster, but they still stop at review and do not install silently
 - `Compare` is still read-only
 - restore/import is not a full catch-all restore for every exported artifact
 - there is no one-click `sync everything back to real` button

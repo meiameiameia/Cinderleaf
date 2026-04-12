@@ -2,6 +2,14 @@
 
 All notable user-facing changes for this repository are tracked here.
 
+## [1.4.0]
+
+- Reworked the everyday UI around calmer, more consistent workspace hierarchy across `Library`, `Packages`, `Install`, `Setup`, and `History`.
+- Consolidated `Archive` and `Recovery` into one `History` workspace with `Archived copies` and `Install history` tabs.
+- Made package intake feel much faster with clearer watcher handoff, a direct `Add package` path for single archives, and automatic `Install` opening for one fresh actionable watched download when the next step is obvious.
+- Exposed more visible rows in `Compare` and more usable detail space in `Packages`, so review-heavy pages waste less vertical room.
+- Fixed the packaged Windows intake watcher so RAR inspection no longer flashes a terminal window during normal use.
+
 ## [1.3.1]
 
 - Fixed the Windows profile-creation workflow so junction creation/removal no longer flashes terminal windows during profile setup.

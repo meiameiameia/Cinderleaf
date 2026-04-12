@@ -12550,7 +12550,6 @@ class MainWindow(QMainWindow):
             "_inventory_output_box",
             "_discovery_output_box",
             "_compare_output_box",
-            "_packages_output_box",
             "_archive_output_box",
             "_review_output_box",
             "_recovery_output_box",
@@ -12558,6 +12557,9 @@ class MainWindow(QMainWindow):
         ):
             if hasattr(self, output_box_name):
                 getattr(self, output_box_name).setMaximumHeight(details_cap)
+
+        if hasattr(self, "_packages_output_box"):
+            self._packages_output_box.setMaximumHeight(16777215)
 
     @staticmethod
     def _set_filter_stats(label: QLabel, *, shown_count: int, total_count: int) -> None:
