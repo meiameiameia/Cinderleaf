@@ -1346,11 +1346,11 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     main_window.resize(1366, 768)
     qapp.processEvents()
 
-    assert 18 <= archive_refresh_button.height() <= 25
-    assert 18 <= archive_cleanup_button.height() <= 25
-    assert 18 <= archive_restore_button.height() <= 25
-    assert 18 <= archive_delete_button.height() <= 25
-    assert 18 <= discovery_search_button.height() <= 25
+    assert 18 <= archive_refresh_button.sizeHint().height() <= 25
+    assert 18 <= archive_cleanup_button.sizeHint().height() <= 25
+    assert 18 <= archive_restore_button.sizeHint().height() <= 25
+    assert 18 <= archive_delete_button.sizeHint().height() <= 25
+    assert 18 <= discovery_search_button.sizeHint().height() <= 25
     assert 18 <= launch_smapi_button.sizeHint().height() <= 25
 
 
@@ -3975,8 +3975,7 @@ def test_main_window_inventory_selected_row_can_save_manual_source_association(
     assert saved_intent.manual_source_page_url == "https://example.test/mods/12345"
     assert (
         main_window._inventory_update_guidance_label.text()
-        == "Beta Mod: manual source association is recorded in saved update-source intent. "
-        "Next step: open the page for this row."
+        == "Beta Mod: saved source ready. Open page to review."
     )
     assert blocked_detail_label.isVisible() is True
     assert (
@@ -5323,6 +5322,11 @@ def test_main_window_real_toggle_checkbox_dispatches_toggle_operation(
         "_run_background_operation",
         _fake_background_operation_with_real_lifecycle(main_window, captured),
     )
+    monkeypatch.setattr(
+        main_window,
+        "_confirm_profile_enable_with_missing_dependencies",
+        lambda **_: True,
+    )
     monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
 
     main_window._cache_scan_result(
@@ -5601,6 +5605,11 @@ def test_main_window_real_toggle_skips_confirmation_when_dependency_can_be_auto_
         "_run_background_operation",
         _fake_background_operation_with_real_lifecycle(main_window, captured),
     )
+    monkeypatch.setattr(
+        main_window,
+        "_confirm_profile_enable_with_missing_dependencies",
+        lambda **_: True,
+    )
     monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
 
@@ -5755,6 +5764,11 @@ def test_main_window_real_container_rows_share_profile_toggle_ownership(
         main_window,
         "_run_background_operation",
         _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_confirm_profile_enable_with_missing_dependencies",
+        lambda **_: True,
     )
     monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
 
@@ -5956,6 +5970,11 @@ def test_main_window_real_grouped_profile_rows_share_toggle_ownership(
         "_run_background_operation",
         _fake_background_operation_with_real_lifecycle(main_window, captured),
     )
+    monkeypatch.setattr(
+        main_window,
+        "_confirm_profile_enable_with_missing_dependencies",
+        lambda **_: True,
+    )
     monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
 
     main_window._cache_scan_result(
@@ -5982,7 +6001,10 @@ def test_main_window_real_grouped_profile_rows_share_toggle_ownership(
     assert grouped_row_item.checkState() == Qt.CheckState.Unchecked
     assert grouped_status_item.text() == "not_in_profile"
 
+    main_window._suppress_mod_toggle_events = True
     grouped_row_item.setCheckState(Qt.CheckState.Checked)
+    main_window._suppress_mod_toggle_events = False
+    main_window._on_mods_table_item_changed(grouped_row_item)
     qapp.processEvents()
 
     toggle_kwargs = captured.get("toggle_kwargs")
@@ -7123,21 +7145,20 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
 def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
     main_window: MainWindow,
 ) -> None:
-    intro_label = main_window.findChild(QLabel, "plan_install_intro_label")
+    state_label = main_window.findChild(QLabel, "plan_install_state_label")
     execute_help_label = main_window.findChild(QLabel, "plan_install_execute_help_label")
     review_summary_label = main_window.findChild(
         QLabel,
         "plan_install_review_summary_label",
     )
 
-    assert intro_label is not None
+    assert state_label is not None
     assert execute_help_label is not None
     assert review_summary_label is not None
-    assert "plan the install" in intro_label.text()
-    assert "apply only when it looks right" in intro_label.text()
-    assert "Install planning is read-only." in execute_help_label.text()
-    assert "Apply install stays disabled until the plan is ready." in execute_help_label.text()
-    assert "Click Plan install" in review_summary_label.text()
+    assert state_label.text() == "Start in Packages: queue packages there, then use Open Install."
+    assert "Planning is read-only." in execute_help_label.text()
+    assert "Apply stays disabled until the plan is ready." in execute_help_label.text()
+    assert review_summary_label.text() == "No plan yet. Click Plan install to inspect changes."
 
 
 def test_main_window_loads_saved_steam_auto_start_preference(
@@ -9063,13 +9084,14 @@ def test_main_window_plan_install_surface_has_expected_structure(
     plan_tab = main_window.findChild(QWidget, "plan_install_tab")
     plan_scroll = main_window.findChild(QScrollArea, "plan_install_scroll_area")
     plan_content = main_window.findChild(QWidget, "plan_install_tab_content")
-    review_top_row = main_window.findChild(QWidget, "plan_install_top_row")
+    columns_row = main_window.findChild(QWidget, "plan_install_columns_row")
+    main_column = main_window.findChild(QWidget, "plan_install_main_column")
+    side_column = main_window.findChild(QWidget, "plan_install_side_column")
     destination_group = main_window.findChild(QGroupBox, "plan_install_destination_group")
     safety_panel_group = main_window.findChild(QGroupBox, "plan_install_safety_panel_group")
     staged_package_group = main_window.findChild(QGroupBox, "plan_install_staged_package_group")
     execute_group = main_window.findChild(QGroupBox, "plan_install_execute_group")
     plan_review_summary_group = main_window.findChild(QGroupBox, "plan_install_review_summary_group")
-    plan_facts_group = main_window.findChild(QGroupBox, "plan_install_facts_group")
     review_output_group = main_window.findChild(QGroupBox, "plan_install_output_group")
 
     assert inventory_tabs is not None
@@ -9080,12 +9102,14 @@ def test_main_window_plan_install_surface_has_expected_structure(
     assert plan_tab is not None
     assert plan_scroll is not None
     assert plan_content is not None
+    assert columns_row is not None
+    assert main_column is not None
+    assert side_column is not None
     assert destination_group is not None
     assert safety_panel_group is not None
     assert staged_package_group is not None
     assert execute_group is not None
     assert plan_review_summary_group is not None
-    assert plan_facts_group is not None
     assert review_output_group is not None
 
     tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
@@ -9108,30 +9132,20 @@ def test_main_window_plan_install_surface_has_expected_structure(
     assert plan_scroll.widget() is plan_content
 
     plan_layout = plan_content.layout()
-    intro_label = main_window.findChild(QLabel, "plan_install_intro_label")
     review_state_label = main_window.findChild(QLabel, "plan_install_state_label")
-    review_top_row = main_window.findChild(QWidget, "plan_install_top_row")
-    review_middle_row = main_window.findChild(QWidget, "plan_install_middle_row")
     assert plan_layout is not None
-    assert intro_label is not None
     assert review_state_label is not None
-    assert review_top_row is not None
-    assert review_middle_row is not None
-    assert safety_panel_group.parentWidget() is review_top_row
-    assert staged_package_group.parentWidget() is review_top_row
-    assert execute_group.parentWidget() is review_top_row
-    assert plan_review_summary_group.parentWidget() is review_middle_row
-    assert plan_facts_group.parentWidget() is review_middle_row
-    review_top_row_layout = review_top_row.layout()
-    assert isinstance(review_top_row_layout, QHBoxLayout)
-    assert review_top_row_layout.itemAt(0).widget() is staged_package_group
-    assert review_top_row_layout.itemAt(1).widget() is execute_group
-    assert review_top_row_layout.itemAt(2).widget() is safety_panel_group
-    assert plan_layout.indexOf(intro_label) < plan_layout.indexOf(review_state_label)
-    assert plan_layout.indexOf(review_state_label) < plan_layout.indexOf(review_top_row)
-    assert plan_layout.indexOf(review_top_row) < plan_layout.indexOf(destination_group)
-    assert plan_layout.indexOf(destination_group) < plan_layout.indexOf(review_middle_row)
-    assert plan_layout.indexOf(review_middle_row) < plan_layout.indexOf(review_output_group)
+    assert destination_group.parentWidget() is main_column
+    assert staged_package_group.parentWidget() is main_column
+    assert plan_review_summary_group.parentWidget() is main_column
+    assert execute_group.parentWidget() is side_column
+    assert safety_panel_group.parentWidget() is side_column
+    columns_row_layout = columns_row.layout()
+    assert isinstance(columns_row_layout, QHBoxLayout)
+    assert columns_row_layout.itemAt(0).widget() is main_column
+    assert columns_row_layout.itemAt(1).widget() is side_column
+    assert plan_layout.indexOf(review_state_label) < plan_layout.indexOf(columns_row)
+    assert plan_layout.indexOf(columns_row) < plan_layout.indexOf(review_output_group)
     assert main_window._review_output_box.minimumHeight() >= 168
 
 
@@ -9156,13 +9170,13 @@ def test_main_window_plan_install_safety_panel_exists_and_sandbox_text_is_presen
     panel_group = main_window.findChild(QGroupBox, "plan_install_safety_panel_group")
     panel_text = main_window.findChild(QLabel, "plan_install_safety_panel_text")
     plan_content = main_window.findChild(QWidget, "plan_install_tab_content")
-    review_top_row = main_window.findChild(QWidget, "plan_install_top_row")
+    side_column = main_window.findChild(QWidget, "plan_install_side_column")
 
     assert panel_group is not None
     assert panel_text is not None
     assert plan_content is not None
-    assert review_top_row is not None
-    assert panel_group.parentWidget() is review_top_row
+    assert side_column is not None
+    assert panel_group.parentWidget() is side_column
     assert "Sandbox destination selected (recommended/test path)." in panel_text.text()
     assert "Destination Mods path:" in panel_text.text()
     assert "Archive path:" in panel_text.text()
@@ -10572,9 +10586,9 @@ def test_main_window_install_related_inputs_invalidate_pending_plan(
         qapp.processEvents()
         assert main_window._pending_install_plan is None
         assert main_window._plan_review_summary_label.text() == (
-            "Install summary: no plan yet. Click Plan install to inspect changes."
+            "No plan yet. Click Plan install to inspect changes."
         )
-        assert main_window._plan_review_explanation_label.text() == "Install detail: no plan selected."
+        assert main_window._plan_review_explanation_label.text() == "No install detail yet."
         assert main_window._plan_facts_label.text() == (
             "Entries: -\n"
             "Replace existing: -\n"
