@@ -10186,30 +10186,30 @@ def _build_intake_flow_messages(
         if matched_guided:
             joined = ", ".join(matched_guided)
             return (
-                f"Package is newer than the installed version in {comparison_target_label}. {detail} Guided target match: {joined}.",
+                f"This download looks like an update for {comparison_target_label}. {detail} Guided target match: {joined}.",
                 f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
             )
         if matched_update_available:
             joined = ", ".join(matched_update_available)
             return (
-                f"Package is newer than the installed version in {comparison_target_label}. {detail} Update-available match: {joined}.",
+                f"This download looks like an update for {comparison_target_label}. {detail} Update-available match: {joined}.",
                 f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
             )
         return (
-            f"Package is newer than the installed version in {comparison_target_label}. {detail}",
+            f"This download looks like an update for {comparison_target_label}. {detail}",
             f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
         )
 
     if comparison_state == "same_version_installed":
         return (
-            f"Same version is already installed in {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Install stays available for inspection, but this package is not a truthful update candidate.",
+            f"This same version is already installed in {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
+            "Open Install stays available for inspection, but this download is not a real update.",
         )
 
     if comparison_state == "older_than_installed":
         return (
-            f"Installed version in {comparison_target_label} is newer than this package. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Install if you still need a manual check, but Open as update stays off for older packages.",
+            f"{comparison_target_label} already has a newer version than this download. {_first_version_comparison_detail(version_comparisons)}",
+            "Open Install if you still need a manual check, but Open as update stays off for older downloads.",
         )
 
     if comparison_state == "not_installed_in_target":

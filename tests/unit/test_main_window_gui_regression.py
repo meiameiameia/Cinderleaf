@@ -14008,7 +14008,7 @@ def test_main_window_packages_compare_target_switches_truthful_update_state(
         "Status is comparing against Real Mods (1 installed mod(s) cached)."
     )
     assert main_window._intake_result_combo.currentText() == (
-        "AlphaPack.zip [newer than installed in Real Mods]"
+        "AlphaPack.zip [update for Real Mods]"
     )
     assert "update_replace_candidate" not in main_window._intake_result_combo.currentText()
     assert "actionable" not in main_window._intake_result_combo.currentText()
@@ -14024,10 +14024,10 @@ def test_main_window_packages_compare_target_switches_truthful_update_state(
         "Status is comparing against Sandbox Mods (1 installed mod(s) cached)."
     )
     assert main_window._intake_result_combo.currentText() == (
-        "AlphaPack.zip [older than installed in Sandbox Mods]"
+        "AlphaPack.zip [older than Sandbox Mods]"
     )
     assert main_window._stage_update_intake_button.isHidden() is True
-    assert "Open as update stays off for older packages" in main_window._selected_intake_correlation().next_step
+    assert "Open as update stays off for older downloads" in main_window._selected_intake_correlation().next_step
     assert "Comparison target: Sandbox Mods" in main_window._packages_output_box.toPlainText()
 
 
@@ -14066,7 +14066,7 @@ def test_main_window_packages_same_version_does_not_present_update_candidate(
     qapp.processEvents()
 
     assert main_window._intake_result_combo.currentText() == (
-        "SamePack.zip [same version in Real Mods]"
+        "SamePack.zip [same version as Real Mods]"
     )
     assert "update_replace_candidate" not in main_window._intake_result_combo.currentText()
     assert "actionable" not in main_window._intake_result_combo.currentText()
@@ -14075,7 +14075,7 @@ def test_main_window_packages_same_version_does_not_present_update_candidate(
     assert correlation is not None
     assert correlation.comparison_state == "same_version_installed"
     assert correlation.actionable_as_update is False
-    assert "not a truthful update candidate" in correlation.next_step
+    assert "not a real update" in correlation.next_step
 
 
 def test_main_window_packages_not_installed_label_stays_neutral_and_target_specific(

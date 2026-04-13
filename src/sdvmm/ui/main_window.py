@@ -8832,7 +8832,7 @@ class MainWindow(QMainWindow):
                 "ready",
                 "Detected packages ready. Check packages, then open Install. "
                 + target_note
-                + " Open as update appears only for newer packages.",
+                + " Open as update appears when a download is a real update.",
             )
             return
         if selected_count > 0:
@@ -12409,9 +12409,9 @@ class MainWindow(QMainWindow):
                             str(intake.package_path),
                             apply_update_intent=True,
                             status_message=(
-                                "Opened Install for newly detected update package "
-                                f"{intake.package_path.name}. Archive-aware replace is "
-                                "preselected. Next step: Plan install."
+                                "Opened Install for a newly detected update for "
+                                f"{correlation.comparison_target_label}: {intake.package_path.name}. "
+                                "Archive-aware replace is preselected. Next step: Plan install."
                             ),
                         )
                     else:
@@ -12425,7 +12425,7 @@ class MainWindow(QMainWindow):
                     return
                 if correlation.actionable_as_update:
                     message = (
-                        f"Detected update package ready in Packages: "
+                        f"Detected update ready for {correlation.comparison_target_label}: "
                         f"{intake.package_path.name}. Open as update when ready."
                     )
                 else:
@@ -13598,17 +13598,17 @@ def _smapi_log_context_short_label(context_label: str) -> str:
 def _packages_comparison_badge_text(correlation: IntakeUpdateCorrelation) -> str:
     target_label = correlation.comparison_target_label
     if correlation.comparison_state == "newer_than_installed":
-        return f"newer than installed in {target_label}"
+        return f"update for {target_label}"
     if correlation.comparison_state == "same_version_installed":
-        return f"same version in {target_label}"
+        return f"same version as {target_label}"
     if correlation.comparison_state == "older_than_installed":
-        return f"older than installed in {target_label}"
+        return f"older than {target_label}"
     if correlation.comparison_state == "not_installed_in_target":
         return f"not installed in {target_label}"
     if correlation.comparison_state == "version_comparison_unavailable":
-        return f"version compare unavailable in {target_label}"
+        return f"can't compare with {target_label}"
     if correlation.comparison_state == "mixed_version_state":
-        return f"mixed version state in {target_label}"
+        return f"needs review against {target_label}"
     if correlation.comparison_state == "target_inventory_unavailable":
         return f"{target_label} not scanned yet"
     return f"install against {target_label}"
