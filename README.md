@@ -133,6 +133,39 @@ These screenshots reflect the current `1.4.0` app surface.
 - save-file export exists in backup bundles, but save restore is still manual
 - Windows is the main supported desktop path today
 
+## Public roadmap
+
+Cinderleaf is already usable today, and the next focus is making it easier to use for more players in more places.
+
+### Now
+
+- keep the install and update flow smooth and easy to review
+- keep the app calm, consistent, and easy to scan
+- keep packaged builds reliable before every public release
+
+### Next
+
+- add proper app localization infrastructure
+- ship Brazilian Portuguese (`pt-BR`) in the app
+- keep improving update recognition and review flow
+- make translation work easier to contribute to
+
+### Later
+
+- add more app languages based on community interest and help
+- explore Linux / Steam Deck support
+- keep reducing friction in install, update, and recovery flows
+
+This roadmap is directional, not a promise or deadline list. I would rather ship careful, solid improvements than rush features out half-finished.
+
+## Help translate Cinderleaf
+
+I am actively working toward app localization, starting with Brazilian Portuguese (`pt-BR`).
+
+If you would like to help translate Cinderleaf into your language, I would love the collaboration. Community help can make it much easier to support the languages that Stardew players actually use day to day.
+
+If you are interested, please open an issue or reach out on GitHub. Even if your language is not the first one planned, I would still love to hear from you.
+
 ## Feedback
 
 Bug reports and feature suggestions are welcome through GitHub Issues.
