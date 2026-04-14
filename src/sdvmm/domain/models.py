@@ -43,6 +43,7 @@ class AppConfig:
     nexus_api_key: str | None = None
     scan_target: str = "configured_real_mods"
     install_target: str = "sandbox_mods"
+    language_preference: str = "system"
     steam_auto_start_enabled: bool = True
 
 

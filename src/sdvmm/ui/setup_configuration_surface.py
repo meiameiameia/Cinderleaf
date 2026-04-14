@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QGridLayout
 from PySide6.QtWidgets import QGroupBox
 from PySide6.QtWidgets import QHBoxLayout
 from PySide6.QtWidgets import QCheckBox
+from PySide6.QtWidgets import QComboBox
 from PySide6.QtWidgets import QLabel
 from PySide6.QtWidgets import QLineEdit
 from PySide6.QtWidgets import QPlainTextEdit
@@ -15,17 +16,21 @@ from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
+from sdvmm.app.i18n import UiLocalizer
+
 
 class SetupConfigurationSurface(QScrollArea):
     def __init__(
         self,
         *,
+        localizer: UiLocalizer,
         game_path_input: QLineEdit,
         mods_path_input: QLineEdit,
         sandbox_mods_path_input: QLineEdit,
         sandbox_archive_path_input: QLineEdit,
         real_archive_path_input: QLineEdit,
         nexus_api_key_input: QLineEdit,
+        language_preference_combo: QComboBox,
         steam_auto_start_checkbox: QCheckBox,
         browse_game_button: QPushButton,
         browse_mods_button: QPushButton,
@@ -65,6 +70,7 @@ class SetupConfigurationSurface(QScrollArea):
         setup_output_box: QPlainTextEdit,
     ) -> None:
         super().__init__()
+        self._localizer = localizer
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -74,7 +80,7 @@ class SetupConfigurationSurface(QScrollArea):
         def _build_path_row(
             *,
             object_name: str,
-            label_text: str,
+            label_key: str,
             field_widget: QWidget,
             primary_button: QPushButton,
             secondary_button: QPushButton | None = None,
@@ -85,7 +91,8 @@ class SetupConfigurationSurface(QScrollArea):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
 
-            row_label = QLabel(label_text)
+            row_label = QLabel(localizer.text(label_key))
+            row_label.setProperty("translationKey", label_key)
             row_label.setProperty("setupFieldLabel", True)
             row_layout.addWidget(row_label)
 
@@ -102,7 +109,7 @@ class SetupConfigurationSurface(QScrollArea):
         def _build_read_only_path_row(
             *,
             object_name: str,
-            label_text: str,
+            label_key: str,
             value_label: QLabel,
             open_button: QPushButton,
         ) -> QWidget:
@@ -112,7 +119,8 @@ class SetupConfigurationSurface(QScrollArea):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
 
-            row_label = QLabel(label_text)
+            row_label = QLabel(localizer.text(label_key))
+            row_label.setProperty("translationKey", label_key)
             row_label.setProperty("setupFieldLabel", True)
             row_layout.addWidget(row_label)
 
@@ -134,9 +142,7 @@ class SetupConfigurationSurface(QScrollArea):
         primary_actions_layout.addWidget(detect_environment_button)
         primary_actions_layout.addStretch(1)
 
-        main_intro_label = QLabel(
-            "Set folders once, then use Packages, Compare, and Mods."
-        )
+        main_intro_label = QLabel(localizer.text("setup.main_intro"))
         main_intro_label.setObjectName("setup_main_column_intro_label")
         main_intro_label.setWordWrap(True)
         main_intro_label.setVisible(False)
@@ -146,11 +152,9 @@ class SetupConfigurationSurface(QScrollArea):
         quickstart_layout = QVBoxLayout(quickstart_panel)
         quickstart_layout.setContentsMargins(12, 12, 12, 12)
         quickstart_layout.setSpacing(6)
-        quickstart_label = QLabel("Quick start")
+        quickstart_label = QLabel(localizer.text("setup.quickstart"))
         quickstart_label.setObjectName("setup_quickstart_label")
-        quickstart_intro_label = QLabel(
-            "Game folder, Real Mods folder, Sandbox Mods folder."
-        )
+        quickstart_intro_label = QLabel(localizer.text("setup.quickstart.intro"))
         quickstart_intro_label.setObjectName("setup_quickstart_intro_label")
         quickstart_intro_label.setWordWrap(True)
         quickstart_intro_label.setVisible(False)
@@ -158,15 +162,13 @@ class SetupConfigurationSurface(QScrollArea):
         quickstart_layout.addWidget(quickstart_intro_label)
         quickstart_layout.addWidget(setup_readiness_label)
 
-        setup_group = QGroupBox("Folders")
+        setup_group = QGroupBox(localizer.text("setup.folders"))
         setup_group.setObjectName("setup_surface_group")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QVBoxLayout(setup_group)
         setup_layout.setContentsMargins(12, 12, 12, 12)
         setup_layout.setSpacing(10)
-        setup_intro_label = QLabel(
-            "Save setup remembers these paths. Detect game folders only reads the installed environment."
-        )
+        setup_intro_label = QLabel(localizer.text("setup.folders.intro"))
         setup_intro_label.setObjectName("setup_local_setup_intro_label")
         setup_intro_label.setWordWrap(True)
         setup_intro_label.setVisible(False)
@@ -175,7 +177,7 @@ class SetupConfigurationSurface(QScrollArea):
         setup_layout.addWidget(
             _build_path_row(
                 object_name="setup_game_path_row",
-                label_text="Game folder (live install)",
+                label_key="setup.game_folder",
                 field_widget=game_path_input,
                 primary_button=browse_game_button,
             )
@@ -183,7 +185,7 @@ class SetupConfigurationSurface(QScrollArea):
         setup_layout.addWidget(
             _build_path_row(
                 object_name="setup_real_mods_path_row",
-                label_text="Real Mods folder",
+                label_key="setup.real_mods_folder",
                 field_widget=mods_path_input,
                 primary_button=browse_mods_button,
                 secondary_button=open_mods_button,
@@ -192,22 +194,20 @@ class SetupConfigurationSurface(QScrollArea):
         setup_layout.addWidget(
             _build_path_row(
                 object_name="setup_sandbox_mods_path_row",
-                label_text="Sandbox Mods folder",
+                label_key="setup.sandbox_mods_folder",
                 field_widget=sandbox_mods_path_input,
                 primary_button=browse_sandbox_button,
                 secondary_button=open_sandbox_button,
             )
         )
 
-        advanced_group = QGroupBox("Extras")
+        advanced_group = QGroupBox(localizer.text("setup.extras"))
         advanced_group.setObjectName("setup_advanced_group")
         advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setContentsMargins(12, 12, 12, 12)
         advanced_layout.setSpacing(10)
-        advanced_intro_label = QLabel(
-            "Archive folders, Nexus, and Steam options are optional."
-        )
+        advanced_intro_label = QLabel(localizer.text("setup.extras.intro"))
         advanced_intro_label.setObjectName("setup_advanced_intro_label")
         advanced_intro_label.setWordWrap(True)
         advanced_intro_label.setVisible(False)
@@ -215,7 +215,7 @@ class SetupConfigurationSurface(QScrollArea):
         advanced_layout.addWidget(
             _build_path_row(
                 object_name="setup_sandbox_archive_path_row",
-                label_text="Sandbox archive folder",
+                label_key="setup.sandbox_archive_folder",
                 field_widget=sandbox_archive_path_input,
                 primary_button=browse_sandbox_archive_button,
                 secondary_button=open_sandbox_archive_button,
@@ -224,7 +224,7 @@ class SetupConfigurationSurface(QScrollArea):
         advanced_layout.addWidget(
             _build_path_row(
                 object_name="setup_real_archive_path_row",
-                label_text="Real Mods archive folder",
+                label_key="setup.real_archive_folder",
                 field_widget=real_archive_path_input,
                 primary_button=browse_real_archive_button,
                 secondary_button=open_real_archive_button,
@@ -236,7 +236,8 @@ class SetupConfigurationSurface(QScrollArea):
         nexus_row_layout = QVBoxLayout(nexus_row)
         nexus_row_layout.setContentsMargins(0, 0, 0, 0)
         nexus_row_layout.setSpacing(4)
-        nexus_label = QLabel("Nexus API key")
+        nexus_label = QLabel(localizer.text("setup.nexus_api_key"))
+        nexus_label.setProperty("translationKey", "setup.nexus_api_key")
         nexus_label.setProperty("setupFieldLabel", True)
         nexus_row_layout.addWidget(nexus_label)
         nexus_field_row = QHBoxLayout()
@@ -247,12 +248,25 @@ class SetupConfigurationSurface(QScrollArea):
         nexus_row_layout.addLayout(nexus_field_row)
         advanced_layout.addWidget(nexus_row)
 
+        language_row = QWidget()
+        language_row.setObjectName("setup_language_preference_row")
+        language_row_layout = QVBoxLayout(language_row)
+        language_row_layout.setContentsMargins(0, 0, 0, 0)
+        language_row_layout.setSpacing(4)
+        language_label = QLabel(localizer.text("setup.language"))
+        language_label.setProperty("translationKey", "setup.language")
+        language_label.setProperty("setupFieldLabel", True)
+        language_row_layout.addWidget(language_label)
+        language_row_layout.addWidget(language_preference_combo)
+        advanced_layout.addWidget(language_row)
+
         app_updates_row = QWidget()
         app_updates_row.setObjectName("setup_app_updates_row")
         app_updates_layout = QVBoxLayout(app_updates_row)
         app_updates_layout.setContentsMargins(0, 0, 0, 0)
         app_updates_layout.setSpacing(4)
-        app_updates_label = QLabel("Cinderleaf release")
+        app_updates_label = QLabel(localizer.text("setup.release"))
+        app_updates_label.setProperty("translationKey", "setup.release")
         app_updates_label.setProperty("setupFieldLabel", True)
         app_updates_layout.addWidget(app_updates_label)
         app_updates_button_row = QHBoxLayout()
@@ -288,16 +302,14 @@ class SetupConfigurationSurface(QScrollArea):
         for column in range(2):
             setup_actions_layout.setColumnStretch(column, 1)
 
-        backup_group = QGroupBox("Backup")
+        backup_group = QGroupBox(localizer.text("setup.backup"))
         backup_group.setObjectName("setup_backup_restore_group")
         backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         backup_layout = QVBoxLayout(backup_group)
         backup_layout.setContentsMargins(12, 12, 12, 12)
         backup_layout.setSpacing(8)
 
-        backup_intro_label = QLabel(
-            "Export creates a bundle. Inspect is read-only. Execute restore writes only into the configured folders."
-        )
+        backup_intro_label = QLabel(localizer.text("setup.backup.intro"))
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")
         backup_intro_label.setWordWrap(True)
         backup_intro_label.setVisible(False)
@@ -307,7 +319,7 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.addWidget(backup_bundle_inspection_summary_label)
         backup_layout.addWidget(restore_import_planning_summary_label)
 
-        managed_group = QGroupBox("Managed folders")
+        managed_group = QGroupBox(localizer.text("setup.managed"))
         managed_group.setObjectName("setup_managed_folders_group")
         managed_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         managed_layout = QVBoxLayout(managed_group)
@@ -329,7 +341,7 @@ class SetupConfigurationSurface(QScrollArea):
         managed_layout.addWidget(
             _build_read_only_path_row(
                 object_name="setup_managed_sandbox_mods_row",
-                label_text="Managed Sandbox Mods",
+                label_key="setup.managed_sandbox_mods",
                 value_label=managed_sandbox_mods_path_label,
                 open_button=open_managed_sandbox_mods_button,
             )
@@ -337,7 +349,7 @@ class SetupConfigurationSurface(QScrollArea):
         managed_layout.addWidget(
             _build_read_only_path_row(
                 object_name="setup_managed_sandbox_archive_row",
-                label_text="Managed Sandbox Archive",
+                label_key="setup.managed_sandbox_archive",
                 value_label=managed_sandbox_archive_path_label,
                 open_button=open_managed_sandbox_archive_button,
             )
@@ -345,7 +357,7 @@ class SetupConfigurationSurface(QScrollArea):
         managed_layout.addWidget(
             _build_read_only_path_row(
                 object_name="setup_managed_real_archive_row",
-                label_text="Managed Real Mods Archive",
+                label_key="setup.managed_real_archive",
                 value_label=managed_real_archive_path_label,
                 open_button=open_managed_real_archive_button,
             )
@@ -353,7 +365,7 @@ class SetupConfigurationSurface(QScrollArea):
         managed_layout.addWidget(
             _build_read_only_path_row(
                 object_name="setup_managed_real_logs_row",
-                label_text="Managed Logs / Real",
+                label_key="setup.managed_real_logs",
                 value_label=managed_real_logs_path_label,
                 open_button=open_managed_real_logs_button,
             )
@@ -361,13 +373,13 @@ class SetupConfigurationSurface(QScrollArea):
         managed_layout.addWidget(
             _build_read_only_path_row(
                 object_name="setup_managed_sandbox_logs_row",
-                label_text="Managed Logs / Sandbox",
+                label_key="setup.managed_sandbox_logs",
                 value_label=managed_sandbox_logs_path_label,
                 open_button=open_managed_sandbox_logs_button,
             )
         )
 
-        setup_output_group = QGroupBox("Details")
+        setup_output_group = QGroupBox(localizer.text("setup.details"))
         setup_output_group.setObjectName("setup_output_group")
         setup_output_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -421,12 +433,10 @@ class SetupConfigurationSurface(QScrollArea):
         secondary_panel_layout = QVBoxLayout(secondary_panel)
         secondary_panel_layout.setContentsMargins(12, 12, 12, 12)
         secondary_panel_layout.setSpacing(10)
-        secondary_section_label = QLabel("Support")
+        secondary_section_label = QLabel(localizer.text("setup.support"))
         secondary_section_label.setObjectName("setup_secondary_section_label")
         secondary_section_label.setVisible(False)
-        secondary_intro_label = QLabel(
-            "Backup tools first, managed folders below."
-        )
+        secondary_intro_label = QLabel(localizer.text("setup.support.intro"))
         secondary_intro_label.setObjectName("setup_secondary_intro_label")
         secondary_intro_label.setWordWrap(True)
         secondary_intro_label.setVisible(False)
@@ -454,6 +464,14 @@ class SetupConfigurationSurface(QScrollArea):
         self.quickstart_panel = quickstart_panel
         self.quickstart_label = quickstart_label
         self.quickstart_intro_label = quickstart_intro_label
+        self.setup_intro_label = setup_intro_label
+        self.advanced_intro_label = advanced_intro_label
+        self.nexus_label = nexus_label
+        self.language_label = language_label
+        self.app_updates_label = app_updates_label
+        self.backup_intro_label = backup_intro_label
+        self.secondary_section_label = secondary_section_label
+        self.secondary_intro_label = secondary_intro_label
         self.setup_readiness_label = setup_readiness_label
         self.app_update_status_label = app_update_status_label
         self.secondary_panel = secondary_panel
@@ -462,3 +480,26 @@ class SetupConfigurationSurface(QScrollArea):
         self.managed_group = managed_group
         self.backup_group = backup_group
         self.setup_output_group = setup_output_group
+
+    def retranslate(self, localizer: UiLocalizer) -> None:
+        self._localizer = localizer
+        self.main_intro_label.setText(localizer.text("setup.main_intro"))
+        self.quickstart_label.setText(localizer.text("setup.quickstart"))
+        self.quickstart_intro_label.setText(localizer.text("setup.quickstart.intro"))
+        self.setup_group.setTitle(localizer.text("setup.folders"))
+        self.setup_intro_label.setText(localizer.text("setup.folders.intro"))
+        self.advanced_group.setTitle(localizer.text("setup.extras"))
+        self.advanced_intro_label.setText(localizer.text("setup.extras.intro"))
+        self.backup_group.setTitle(localizer.text("setup.backup"))
+        self.backup_intro_label.setText(localizer.text("setup.backup.intro"))
+        self.managed_group.setTitle(localizer.text("setup.managed"))
+        self.setup_output_group.setTitle(localizer.text("setup.details"))
+        self.secondary_section_label.setText(localizer.text("setup.support"))
+        self.secondary_intro_label.setText(localizer.text("setup.support.intro"))
+        self.nexus_label.setText(localizer.text("setup.nexus_api_key"))
+        self.language_label.setText(localizer.text("setup.language"))
+        self.app_updates_label.setText(localizer.text("setup.release"))
+        for label in self.findChildren(QLabel):
+            translation_key = label.property("translationKey")
+            if isinstance(translation_key, str) and translation_key:
+                label.setText(localizer.text(translation_key))

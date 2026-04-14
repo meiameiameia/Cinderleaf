@@ -84,6 +84,7 @@ from sdvmm.app.inventory_presenter import (
     build_smapi_update_status_text,
     build_update_report_text,
 )
+from sdvmm.app.i18n import DEFAULT_LANGUAGE_PREFERENCE, UiLocalizer
 from sdvmm.app.table_filters import row_matches_filter
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
@@ -1172,9 +1173,15 @@ def _build_inventory_row_entries(
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, shell_service: AppShellService) -> None:
+    def __init__(
+        self,
+        shell_service: AppShellService,
+        *,
+        localizer: UiLocalizer | None = None,
+    ) -> None:
         super().__init__()
         self._shell_service = shell_service
+        self._localizer = localizer or UiLocalizer.from_preference("en")
         self._config: AppConfig | None = None
         self._pending_install_plan: SandboxInstallPlan | None = None
         self._last_install_completion_message: str | None = None
@@ -1326,41 +1333,38 @@ class MainWindow(QMainWindow):
         self._mods_inventory_state_label.setObjectName("mods_inventory_state_label")
         self._mods_inventory_state_label.setWordWrap(True)
         _set_auxiliary_label_style(self._mods_inventory_state_label)
-        self._setup_readiness_label = QLabel(
-            "Quick start: set Game folder, Real Mods folder, and Sandbox Mods folder."
-        )
+        self._setup_readiness_label = QLabel(self._tr("setup.quickstart.readiness"))
         self._setup_readiness_label.setObjectName("setup_readiness_label")
         self._setup_readiness_label.setWordWrap(True)
         _set_auxiliary_label_style(self._setup_readiness_label)
-        self._setup_app_update_status_label = QLabel(
-            "Check for app updates to compare this install with the latest Cinderleaf release."
-        )
+        self._setup_app_update_status_label = QLabel(self._tr("setup.app_update_status"))
         self._setup_app_update_status_label.setObjectName("setup_app_update_status_label")
         self._setup_app_update_status_label.setWordWrap(True)
         _set_auxiliary_label_style(self._setup_app_update_status_label)
         self._managed_folders_summary_label = QLabel(
-            "Derived from the game folder. Migrate only when you want Cinderleaf-managed paths."
+            self._tr("setup.managed_summary")
         )
         self._managed_folders_summary_label.setObjectName("setup_managed_folders_summary_label")
         self._managed_folders_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._managed_folders_summary_label)
-        self._managed_sandbox_mods_path_label = QLabel("<set the game folder first>")
+        managed_placeholder = self._tr("setup.managed.placeholder")
+        self._managed_sandbox_mods_path_label = QLabel(managed_placeholder)
         self._managed_sandbox_mods_path_label.setObjectName(
             "setup_managed_sandbox_mods_path_label"
         )
-        self._managed_sandbox_archive_path_label = QLabel("<set the game folder first>")
+        self._managed_sandbox_archive_path_label = QLabel(managed_placeholder)
         self._managed_sandbox_archive_path_label.setObjectName(
             "setup_managed_sandbox_archive_path_label"
         )
-        self._managed_real_archive_path_label = QLabel("<set the game folder first>")
+        self._managed_real_archive_path_label = QLabel(managed_placeholder)
         self._managed_real_archive_path_label.setObjectName(
             "setup_managed_real_archive_path_label"
         )
-        self._managed_real_logs_path_label = QLabel("<set the game folder first>")
+        self._managed_real_logs_path_label = QLabel(managed_placeholder)
         self._managed_real_logs_path_label.setObjectName(
             "setup_managed_real_logs_path_label"
         )
-        self._managed_sandbox_logs_path_label = QLabel("<set the game folder first>")
+        self._managed_sandbox_logs_path_label = QLabel(managed_placeholder)
         self._managed_sandbox_logs_path_label.setObjectName(
             "setup_managed_sandbox_logs_path_label"
         )
@@ -1572,16 +1576,23 @@ class MainWindow(QMainWindow):
             _set_auxiliary_label_style(stats_label)
         self._nexus_api_key_input = QLineEdit()
         self._nexus_api_key_input.setObjectName("setup_nexus_api_key_input")
-        self._nexus_api_key_input.setPlaceholderText("Nexus API key")
+        self._nexus_api_key_input.setPlaceholderText(self._tr("setup.nexus_api_key"))
         self._nexus_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._language_preference_combo = QComboBox()
+        self._language_preference_combo.setObjectName("setup_language_preference_combo")
+        self._populate_language_preference_options()
+        self._set_language_preference(DEFAULT_LANGUAGE_PREFERENCE)
+        _configure_combo_box_readability(
+            self._language_preference_combo,
+            minimum_contents_length=18,
+            sample_text="Português (Brasil)",
+        )
         self._steam_auto_start_checkbox = QCheckBox(
-            "Try to start Steam before game launch when Steam is not already running"
+            self._tr("setup.steam_auto_start")
         )
         self._steam_auto_start_checkbox.setObjectName("setup_steam_auto_start_checkbox")
         self._steam_auto_start_checkbox.setChecked(True)
-        self._steam_auto_start_checkbox.setToolTip(
-            "Best-effort Steam launch assistance for Vanilla, SMAPI, and Sandbox dev launch."
-        )
+        self._steam_auto_start_checkbox.setToolTip(self._tr("setup.steam_auto_start_tooltip"))
         self._overwrite_checkbox = QCheckBox("Enable archive-aware replace")
         self._overwrite_checkbox.setObjectName("plan_install_overwrite_checkbox")
         self._overwrite_checkbox.setToolTip(
@@ -2055,6 +2066,9 @@ class MainWindow(QMainWindow):
         self._real_archive_path_input.textChanged.connect(
             self._refresh_cinderleaf_managed_paths_surface
         )
+        self._language_preference_combo.currentIndexChanged.connect(
+            self._on_language_preference_changed
+        )
         self._overwrite_checkbox.toggled.connect(self._invalidate_pending_plan)
         self._overwrite_checkbox.toggled.connect(self._on_overwrite_checkbox_toggled)
         self._scan_target_combo.currentIndexChanged.connect(self._on_scan_target_changed)
@@ -2217,9 +2231,9 @@ class MainWindow(QMainWindow):
 
         brand_title = QLabel(_APP_BRAND_NAME)
         brand_title.setObjectName("workspace_nav_brand_title")
-        brand_version = QLabel(f"Version {self._app_version_text}")
+        brand_version = QLabel(self._tr("shell.version", version=self._app_version_text))
         brand_version.setObjectName("workspace_nav_brand_version")
-        brand_release_status = QLabel("Release check available in Setup")
+        brand_release_status = QLabel(self._tr("shell.release_check_available"))
         brand_release_status.setObjectName("workspace_nav_brand_release_status")
         brand_release_status.setWordWrap(True)
         brand_release_status.setVisible(False)
@@ -2237,11 +2251,13 @@ class MainWindow(QMainWindow):
         brand_layout.addWidget(brand_header)
         brand_layout.addWidget(brand_release_status)
         rail_layout.addWidget(brand_panel)
+        self._workspace_nav_brand_version_label = brand_version
         self._workspace_nav_release_status_label = brand_release_status
 
-        section_label = QLabel("Workspaces")
+        section_label = QLabel(self._tr("shell.workspaces"))
         section_label.setObjectName("workspace_nav_section_label")
         rail_layout.addWidget(section_label)
+        self._workspace_nav_section_label = section_label
 
         nav_buttons_widget = QWidget()
         nav_buttons_widget.setObjectName("workspace_nav_buttons_widget")
@@ -2258,7 +2274,8 @@ class MainWindow(QMainWindow):
             button = QPushButton(label)
             button.setCheckable(True)
             button.setProperty("navRole", "workspace")
-            button.setObjectName(f"workspace_nav_button_{label.lower()}")
+            nav_key = str(page.property("workspaceNavKey") or label.lower())
+            button.setObjectName(f"workspace_nav_button_{nav_key}")
             button.setFixedHeight(30)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(
@@ -2589,38 +2606,38 @@ class MainWindow(QMainWindow):
             button.blockSignals(False)
 
     def _build_setup_workspace_surface(self) -> SetupConfigurationSurface:
-        browse_game_button = QPushButton("Choose game folder")
+        browse_game_button = QPushButton(self._tr("setup.choose_game"))
         browse_game_button.clicked.connect(self._on_browse_game)
         _set_utility_button_style(browse_game_button)
-        browse_mods_button = QPushButton("Choose real Mods")
+        browse_mods_button = QPushButton(self._tr("setup.choose_real_mods"))
         browse_mods_button.clicked.connect(self._on_browse)
         _set_utility_button_style(browse_mods_button)
-        open_mods_button = QPushButton("Open real Mods")
+        open_mods_button = QPushButton(self._tr("setup.open_real_mods"))
         open_mods_button.setObjectName("setup_open_mods_button")
         open_mods_button.clicked.connect(self._on_open_real_mods_folder)
         _set_utility_button_style(open_mods_button)
-        browse_sandbox_button = QPushButton("Choose sandbox Mods")
+        browse_sandbox_button = QPushButton(self._tr("setup.choose_sandbox_mods"))
         browse_sandbox_button.clicked.connect(self._on_browse_sandbox_mods)
         _set_utility_button_style(browse_sandbox_button)
-        open_sandbox_button = QPushButton("Open sandbox Mods")
+        open_sandbox_button = QPushButton(self._tr("setup.open_sandbox_mods"))
         open_sandbox_button.setObjectName("setup_open_sandbox_mods_button")
         open_sandbox_button.clicked.connect(self._on_open_sandbox_mods_folder)
         _set_utility_button_style(open_sandbox_button)
-        browse_sandbox_archive_button = QPushButton("Choose sandbox archive")
+        browse_sandbox_archive_button = QPushButton(self._tr("setup.choose_sandbox_archive"))
         browse_sandbox_archive_button.clicked.connect(self._on_browse_sandbox_archive)
         _set_utility_button_style(browse_sandbox_archive_button)
-        open_sandbox_archive_button = QPushButton("Open sandbox archive")
+        open_sandbox_archive_button = QPushButton(self._tr("setup.open_sandbox_archive"))
         open_sandbox_archive_button.setObjectName("setup_open_sandbox_archive_button")
         open_sandbox_archive_button.clicked.connect(self._on_open_sandbox_archive_folder)
         _set_utility_button_style(open_sandbox_archive_button)
-        browse_real_archive_button = QPushButton("Choose real archive")
+        browse_real_archive_button = QPushButton(self._tr("setup.choose_real_archive"))
         browse_real_archive_button.clicked.connect(self._on_browse_real_archive)
         _set_utility_button_style(browse_real_archive_button)
-        open_real_archive_button = QPushButton("Open real archive")
+        open_real_archive_button = QPushButton(self._tr("setup.open_real_archive"))
         open_real_archive_button.setObjectName("setup_open_real_archive_button")
         open_real_archive_button.clicked.connect(self._on_open_real_archive_folder)
         _set_utility_button_style(open_real_archive_button)
-        open_managed_sandbox_mods_button = QPushButton("Open folder")
+        open_managed_sandbox_mods_button = QPushButton(self._tr("setup.open_folder"))
         open_managed_sandbox_mods_button.setObjectName(
             "setup_open_managed_sandbox_mods_button"
         )
@@ -2628,7 +2645,7 @@ class MainWindow(QMainWindow):
             self._on_open_managed_sandbox_mods_folder
         )
         _set_utility_button_style(open_managed_sandbox_mods_button)
-        open_managed_sandbox_archive_button = QPushButton("Open folder")
+        open_managed_sandbox_archive_button = QPushButton(self._tr("setup.open_folder"))
         open_managed_sandbox_archive_button.setObjectName(
             "setup_open_managed_sandbox_archive_button"
         )
@@ -2636,7 +2653,7 @@ class MainWindow(QMainWindow):
             self._on_open_managed_sandbox_archive_folder
         )
         _set_utility_button_style(open_managed_sandbox_archive_button)
-        open_managed_real_archive_button = QPushButton("Open folder")
+        open_managed_real_archive_button = QPushButton(self._tr("setup.open_folder"))
         open_managed_real_archive_button.setObjectName(
             "setup_open_managed_real_archive_button"
         )
@@ -2644,13 +2661,13 @@ class MainWindow(QMainWindow):
             self._on_open_managed_real_archive_folder
         )
         _set_utility_button_style(open_managed_real_archive_button)
-        open_managed_real_logs_button = QPushButton("Open folder")
+        open_managed_real_logs_button = QPushButton(self._tr("setup.open_folder"))
         open_managed_real_logs_button.setObjectName(
             "setup_open_managed_real_logs_button"
         )
         open_managed_real_logs_button.clicked.connect(self._on_open_managed_real_logs_folder)
         _set_utility_button_style(open_managed_real_logs_button)
-        open_managed_sandbox_logs_button = QPushButton("Open folder")
+        open_managed_sandbox_logs_button = QPushButton(self._tr("setup.open_folder"))
         open_managed_sandbox_logs_button.setObjectName(
             "setup_open_managed_sandbox_logs_button"
         )
@@ -2658,63 +2675,87 @@ class MainWindow(QMainWindow):
             self._on_open_managed_sandbox_logs_folder
         )
         _set_utility_button_style(open_managed_sandbox_logs_button)
-        migrate_managed_folders_button = QPushButton("Migrate configured folders")
+        migrate_managed_folders_button = QPushButton(self._tr("setup.migrate_managed"))
         migrate_managed_folders_button.setObjectName("setup_migrate_managed_folders_button")
-        migrate_managed_folders_button.setToolTip(
-            "Move the configured Sandbox Mods and archive folders into the "
-            "Cinderleaf-managed paths under the game folder."
-        )
+        migrate_managed_folders_button.setToolTip(self._tr("setup.migrate_managed_tooltip"))
         migrate_managed_folders_button.clicked.connect(
             self._on_migrate_cinderleaf_managed_folders
         )
         _set_secondary_button_style(migrate_managed_folders_button)
         self._migrate_managed_folders_button = migrate_managed_folders_button
-        check_nexus_button = QPushButton("Check Nexus connection")
+        check_nexus_button = QPushButton(self._tr("setup.check_nexus"))
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
         _set_utility_button_style(check_nexus_button)
         self._check_nexus_button = check_nexus_button
-        check_app_update_button = QPushButton("Check for app updates")
+        check_app_update_button = QPushButton(self._tr("setup.check_updates"))
         check_app_update_button.setObjectName("setup_check_app_update_button")
         check_app_update_button.clicked.connect(self._on_check_app_update)
         _set_utility_button_style(check_app_update_button)
         self._check_app_update_button = check_app_update_button
-        open_app_release_page_button = QPushButton("Open release page")
+        open_app_release_page_button = QPushButton(self._tr("setup.open_release_page"))
         open_app_release_page_button.setObjectName("setup_open_app_release_page_button")
         open_app_release_page_button.clicked.connect(self._on_open_app_release_page)
         _set_utility_button_style(open_app_release_page_button)
-        save_button = QPushButton("Save setup")
+        save_button = QPushButton(self._tr("setup.save"))
         save_button.setObjectName("setup_save_config_button")
         save_button.clicked.connect(self._on_save_config)
         _set_primary_button_style(save_button)
-        detect_environment_button = QPushButton("Detect game folders")
+        detect_environment_button = QPushButton(self._tr("setup.detect"))
         detect_environment_button.setObjectName("setup_detect_environment_button")
         detect_environment_button.clicked.connect(self._on_detect_environment)
         _set_utility_button_style(detect_environment_button)
-        export_backup_button = QPushButton("Export backup")
+        export_backup_button = QPushButton(self._tr("setup.export_backup"))
         export_backup_button.setObjectName("setup_export_backup_button")
         export_backup_button.clicked.connect(self._on_export_backup_bundle)
         _set_utility_button_style(export_backup_button)
         self._export_backup_button = export_backup_button
-        inspect_backup_button = QPushButton("Inspect backup")
+        inspect_backup_button = QPushButton(self._tr("setup.inspect_backup"))
         inspect_backup_button.setObjectName("setup_inspect_backup_button")
         inspect_backup_button.clicked.connect(self._on_inspect_backup_bundle)
         _set_utility_button_style(inspect_backup_button)
         self._inspect_backup_button = inspect_backup_button
-        execute_restore_import_button = QPushButton("Execute restore")
+        execute_restore_import_button = QPushButton(self._tr("setup.execute_restore"))
         execute_restore_import_button.setObjectName("setup_execute_restore_import_button")
         execute_restore_import_button.clicked.connect(self._on_execute_restore_import)
         execute_restore_import_button.setEnabled(False)
         execute_restore_import_button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
         _set_secondary_button_style(execute_restore_import_button)
         self._execute_restore_import_button = execute_restore_import_button
+        self._setup_translatable_buttons = {
+            browse_game_button: "setup.choose_game",
+            browse_mods_button: "setup.choose_real_mods",
+            open_mods_button: "setup.open_real_mods",
+            browse_sandbox_button: "setup.choose_sandbox_mods",
+            open_sandbox_button: "setup.open_sandbox_mods",
+            browse_sandbox_archive_button: "setup.choose_sandbox_archive",
+            open_sandbox_archive_button: "setup.open_sandbox_archive",
+            browse_real_archive_button: "setup.choose_real_archive",
+            open_real_archive_button: "setup.open_real_archive",
+            open_managed_sandbox_mods_button: "setup.open_folder",
+            open_managed_sandbox_archive_button: "setup.open_folder",
+            open_managed_real_archive_button: "setup.open_folder",
+            open_managed_real_logs_button: "setup.open_folder",
+            open_managed_sandbox_logs_button: "setup.open_folder",
+            migrate_managed_folders_button: "setup.migrate_managed",
+            check_nexus_button: "setup.check_nexus",
+            check_app_update_button: "setup.check_updates",
+            open_app_release_page_button: "setup.open_release_page",
+            save_button: "setup.save",
+            detect_environment_button: "setup.detect",
+            export_backup_button: "setup.export_backup",
+            inspect_backup_button: "setup.inspect_backup",
+            execute_restore_import_button: "setup.execute_restore",
+        }
 
         setup_surface = SetupConfigurationSurface(
+            localizer=self._localizer,
             game_path_input=self._game_path_input,
             mods_path_input=self._mods_path_input,
             sandbox_mods_path_input=self._sandbox_mods_path_input,
             sandbox_archive_path_input=self._sandbox_archive_path_input,
             real_archive_path_input=self._real_archive_path_input,
             nexus_api_key_input=self._nexus_api_key_input,
+            language_preference_combo=self._language_preference_combo,
             steam_auto_start_checkbox=self._steam_auto_start_checkbox,
             browse_game_button=browse_game_button,
             browse_mods_button=browse_mods_button,
@@ -3581,21 +3622,26 @@ class MainWindow(QMainWindow):
 
         setup_page = self._build_page_shell(
             object_name="setup_workspace_page",
-            eyebrow="Folders and tools",
-            title="Setup",
-            subtitle="Set your folders. Tools stay on the right.",
+            eyebrow=self._tr("setup.page.eyebrow"),
+            title=self._tr("setup.page.title"),
+            subtitle=self._tr("setup.page.subtitle"),
             body_widget=setup_scroll,
         )
         self._setup_scroll = setup_scroll
         self._setup_page = setup_page
 
-        context_tabs.addTab(mods_page, "Library")
-        context_tabs.addTab(setup_page, "Setup")
-        context_tabs.addTab(self._build_packages_workspace_page(), "Packages")
-        context_tabs.addTab(self._build_install_workspace_page(), "Install")
-        context_tabs.addTab(self._build_discovery_workspace_page(), "Discover")
-        context_tabs.addTab(self._build_compare_workspace_page(), "Compare")
-        context_tabs.addTab(self._build_history_workspace_page(), "History")
+        page_specs = (
+            ("library", mods_page, self._tr("workspace.library")),
+            ("setup", setup_page, self._tr("workspace.setup")),
+            ("packages", self._build_packages_workspace_page(), self._tr("workspace.packages")),
+            ("install", self._build_install_workspace_page(), self._tr("workspace.install")),
+            ("discover", self._build_discovery_workspace_page(), self._tr("workspace.discover")),
+            ("compare", self._build_compare_workspace_page(), self._tr("workspace.compare")),
+            ("history", self._build_history_workspace_page(), self._tr("workspace.history")),
+        )
+        for nav_key, page, label in page_specs:
+            page.setProperty("workspaceNavKey", nav_key)
+            context_tabs.addTab(page, label)
         return context_tabs
 
     def _build_top_context_surface(self) -> TopContextSurface:
@@ -3683,7 +3729,7 @@ class MainWindow(QMainWindow):
         _set_feedback_label_state(
             self._setup_app_update_status_label,
             "empty",
-            "Check for app updates to compare this install with the latest Cinderleaf release.",
+            self._tr("setup.app_update_status"),
         )
 
     def _build_layout(self) -> None:
@@ -3730,6 +3776,136 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _tr(self, key: str, **kwargs: object) -> str:
+        return self._localizer.text(key, **kwargs)
+
+    def _populate_language_preference_options(self) -> None:
+        self._language_preference_combo.blockSignals(True)
+        self._language_preference_combo.clear()
+        for preference, label in self._localizer.language_options():
+            self._language_preference_combo.addItem(label, preference)
+        self._language_preference_combo.blockSignals(False)
+
+    def _set_language_preference(self, preference: str) -> None:
+        current_index = self._language_preference_combo.findData(preference)
+        if current_index < 0:
+            current_index = self._language_preference_combo.findData(DEFAULT_LANGUAGE_PREFERENCE)
+        if current_index >= 0:
+            self._language_preference_combo.blockSignals(True)
+            self._language_preference_combo.setCurrentIndex(current_index)
+            self._language_preference_combo.blockSignals(False)
+
+    def _current_language_preference(self) -> str:
+        current_preference = self._language_preference_combo.currentData()
+        if isinstance(current_preference, str) and current_preference.strip():
+            return current_preference
+        return DEFAULT_LANGUAGE_PREFERENCE
+
+    def _current_language_preference_label(self) -> str:
+        return self._language_preference_combo.currentText().strip() or self._tr(
+            "setup.language.option.system"
+        )
+
+    def _setup_core_path_descriptors(self) -> tuple[tuple[str, QLineEdit], ...]:
+        return (
+            (self._tr("setup.core.game_short"), self._game_path_input),
+            (self._tr("setup.core.real_mods_short"), self._mods_path_input),
+            (self._tr("setup.core.sandbox_mods_short"), self._sandbox_mods_path_input),
+        )
+
+    def _set_workspace_page_header_text(
+        self,
+        page: QWidget,
+        *,
+        eyebrow: str,
+        title: str,
+        subtitle: str,
+    ) -> None:
+        eyebrow_label = page.findChild(QLabel, "workspace_page_eyebrow")
+        title_label = page.findChild(QLabel, "workspace_page_title")
+        subtitle_label = page.findChild(QLabel, "workspace_page_subtitle")
+        if eyebrow_label is not None:
+            eyebrow_label.setText(eyebrow)
+        if title_label is not None:
+            title_label.setText(title)
+        if subtitle_label is not None:
+            subtitle_label.setText(subtitle)
+
+    def _refresh_workspace_nav_text(self) -> None:
+        workspace_labels = {
+            "library": self._tr("workspace.library"),
+            "setup": self._tr("workspace.setup"),
+            "packages": self._tr("workspace.packages"),
+            "install": self._tr("workspace.install"),
+            "discover": self._tr("workspace.discover"),
+            "compare": self._tr("workspace.compare"),
+            "history": self._tr("workspace.history"),
+        }
+        for index in range(self._context_tabs.count()):
+            page = self._context_tabs.widget(index)
+            if page is None:
+                continue
+            nav_key = str(page.property("workspaceNavKey") or "")
+            label = workspace_labels.get(nav_key)
+            if label is None:
+                continue
+            self._context_tabs.setTabText(index, label)
+            button = self._workspace_nav_buttons.get(page)
+            if button is not None:
+                button.setText(label)
+
+    def _apply_shell_setup_localizer(
+        self,
+        preference: str,
+        *,
+        announce: bool,
+    ) -> None:
+        self._localizer = UiLocalizer.from_preference(preference)
+        self._populate_language_preference_options()
+        self._set_language_preference(preference)
+        self._workspace_nav_brand_version_label.setText(
+            self._tr("shell.version", version=self._app_version_text)
+        )
+        if not self._workspace_nav_release_status_label.isVisible():
+            self._workspace_nav_release_status_label.setText(
+                self._tr("shell.release_check_available")
+            )
+        self._workspace_nav_section_label.setText(self._tr("shell.workspaces"))
+        self._refresh_workspace_nav_text()
+        self._set_workspace_page_header_text(
+            self._setup_page,
+            eyebrow=self._tr("setup.page.eyebrow"),
+            title=self._tr("setup.page.title"),
+            subtitle=self._tr("setup.page.subtitle"),
+        )
+        self._nexus_api_key_input.setPlaceholderText(self._tr("setup.nexus_api_key"))
+        self._steam_auto_start_checkbox.setText(self._tr("setup.steam_auto_start"))
+        self._steam_auto_start_checkbox.setToolTip(
+            self._tr("setup.steam_auto_start_tooltip")
+        )
+        self._setup_scroll.retranslate(self._localizer)
+        for button, translation_key in self._setup_translatable_buttons.items():
+            button.setText(self._tr(translation_key))
+        self._migrate_managed_folders_button.setToolTip(
+            self._tr("setup.migrate_managed_tooltip")
+        )
+        self._refresh_setup_readiness_state()
+        self._refresh_cinderleaf_managed_paths_surface()
+        if self._last_app_update_status is None:
+            _set_feedback_label_state(
+                self._setup_app_update_status_label,
+                "empty",
+                self._tr("setup.app_update_status"),
+            )
+        if announce:
+            self._set_status(self._tr("setup.language.applied"))
+
+    def _on_language_preference_changed(self, *_: object) -> None:
+        self._apply_shell_setup_localizer(
+            self._current_language_preference(),
+            announce=True,
+        )
+
     def _load_startup_state(self) -> None:
         state = self._shell_service.load_startup_config()
         self._config = state.config
@@ -3772,8 +3948,13 @@ class MainWindow(QMainWindow):
                 self._nexus_api_key_input.setText(state.config.nexus_api_key)
             self._set_current_scan_target(state.config.scan_target)
             self._set_current_install_target(state.config.install_target)
+            self._set_language_preference(state.config.language_preference)
             self._steam_auto_start_checkbox.setChecked(state.config.steam_auto_start_enabled)
-            self._set_status(f"Loaded saved config from {self._shell_service.state_file}")
+            self._set_status(
+                self._tr("setup.loaded_status", path=self._shell_service.state_file)
+            )
+        else:
+            self._set_language_preference(DEFAULT_LANGUAGE_PREFERENCE)
 
         if state.message:
             self._set_status(state.message)
@@ -3800,6 +3981,7 @@ class MainWindow(QMainWindow):
             "nexus_api_key_text": self._nexus_api_key_input.text(),
             "scan_target": self._current_scan_target(),
             "install_target": self._current_install_target(),
+            "language_preference": self._current_language_preference(),
             "steam_auto_start_enabled": self._steam_auto_start_checkbox.isChecked(),
             "existing_config": self._config,
         }
@@ -4356,9 +4538,9 @@ class MainWindow(QMainWindow):
     def _refresh_cinderleaf_managed_paths_surface(self) -> None:
         raw_game_path = self._game_path_input.text().strip()
         if not raw_game_path:
-            placeholder = "<set the game folder first>"
+            placeholder = self._tr("setup.managed.placeholder")
             self._managed_folders_summary_label.setText(
-                "Set the game folder to see the Cinderleaf-managed paths. Existing paths keep working until you choose migration."
+                self._tr("setup.managed_summary.no_game")
             )
             for label in (
                 self._managed_sandbox_mods_path_label,
@@ -4386,9 +4568,9 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError:
-            placeholder = "<game folder is not ready>"
+            placeholder = self._tr("setup.managed.placeholder.invalid")
             self._managed_folders_summary_label.setText(
-                "The game folder must point to an accessible Stardew Valley install before managed folders can be derived."
+                self._tr("setup.managed_summary.invalid_game")
             )
             for label in (
                 self._managed_sandbox_mods_path_label,
@@ -4410,9 +4592,7 @@ class MainWindow(QMainWindow):
                 button.setEnabled(False)
             return
 
-        self._managed_folders_summary_label.setText(
-            "Derived from the game folder. Migrate only when you want Cinderleaf-managed paths."
-        )
+        self._managed_folders_summary_label.setText(self._tr("setup.managed_summary"))
         self._managed_sandbox_mods_path_label.setText(str(managed_paths.sandbox_mods_path))
         self._managed_sandbox_mods_path_label.setToolTip(str(managed_paths.sandbox_mods_path))
         self._managed_sandbox_archive_path_label.setText(
@@ -4632,8 +4812,9 @@ class MainWindow(QMainWindow):
         self._refresh_sandbox_dev_launch_state()
         self._refresh_inventory_sandbox_sync_action_state()
         self._refresh_cinderleaf_managed_paths_surface()
-        self._set_setup_output_text(self._build_setup_config_summary_text())
-        self._set_status(f"Saved config to {self._shell_service.state_file}")
+        summary_text = self._build_setup_config_summary_text()
+        self._set_setup_output_text(summary_text)
+        self._set_status(self._tr("setup.saved_status", path=self._shell_service.state_file))
 
     def _on_detect_environment(self) -> None:
         try:
@@ -8598,21 +8779,13 @@ class MainWindow(QMainWindow):
     def _refresh_setup_readiness_state(self, *_: object) -> None:
         configured_labels = tuple(
             label
-            for label, field in (
-                ("Game folder", self._game_path_input),
-                ("Real Mods folder", self._mods_path_input),
-                ("Sandbox Mods folder", self._sandbox_mods_path_input),
-            )
+            for label, field in self._setup_core_path_descriptors()
             if field.text().strip()
         )
         configured_count = len(configured_labels)
         missing_labels = tuple(
             label
-            for label, field in (
-                ("Game folder", self._game_path_input),
-                ("Real Mods folder", self._mods_path_input),
-                ("Sandbox Mods folder", self._sandbox_mods_path_input),
-            )
+            for label, field in self._setup_core_path_descriptors()
             if not field.text().strip()
         )
 
@@ -8620,7 +8793,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._setup_readiness_label,
                 "ready",
-                "Ready to go. Save setup if you want to keep these paths, then inspect a package in Packages.",
+                self._tr("setup.readiness.ready"),
             )
             self._refresh_first_run_status_hint(configured_count, missing_labels)
             return
@@ -8629,7 +8802,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._setup_readiness_label,
                 "empty",
-                "Quick start: set Game folder, Real Mods folder, and Sandbox Mods folder.",
+                self._tr("setup.readiness.empty"),
             )
             self._refresh_first_run_status_hint(configured_count, missing_labels)
             return
@@ -8637,7 +8810,11 @@ class MainWindow(QMainWindow):
         _set_feedback_label_state(
             self._setup_readiness_label,
             "muted",
-            f"{configured_count}/3 core paths set. Add {', '.join(missing_labels)} to get started in Packages, Compare, and Mods.",
+            self._tr(
+                "setup.readiness.partial",
+                count=configured_count,
+                missing=", ".join(missing_labels),
+            ),
         )
         self._refresh_first_run_status_hint(configured_count, missing_labels)
 
@@ -8655,26 +8832,28 @@ class MainWindow(QMainWindow):
             "Quick start is empty.",
             "Setup is almost ready.",
             "Ready to go.",
+            self._tr("setup.first_run.empty"),
+            self._tr("setup.first_run.partial_prefix"),
+            self._tr("setup.first_run.ready"),
         )
-        if current_status and not current_status.startswith(managed_prefixes):
+        if current_status and not any(
+            current_status.startswith(prefix) for prefix in managed_prefixes
+        ):
             return
 
         if configured_count == 3:
-            self._set_status(
-                "Ready to go. You can inspect a package now, and save setup when you want to keep these paths."
-            )
+            self._set_status(self._tr("setup.first_run.ready"))
             return
 
         if configured_count == 0:
-            self._set_status(
-                "Quick start is empty. Set Game folder, Real Mods folder, and Sandbox Mods folder to get started."
-            )
+            self._set_status(self._tr("setup.first_run.empty"))
             return
 
         self._set_status(
-            "Setup is almost ready. Add "
-            + ", ".join(missing_labels)
-            + " to get started, then save setup when you want to keep these paths."
+            self._tr(
+                "setup.first_run.partial",
+                missing=", ".join(missing_labels),
+            )
         )
 
     def _refresh_mods_workspace_state(self) -> None:
@@ -9173,27 +9352,36 @@ class MainWindow(QMainWindow):
 
     def _build_setup_config_summary_text(self) -> str:
         lines = [
-            "Config saved.",
-            f"State file: {self._shell_service.state_file}",
+            self._tr("setup.summary.saved"),
+            self._tr("setup.summary.state_file", path=self._shell_service.state_file),
         ]
         configured_paths = (
-            ("Game directory", self._game_path_input.text().strip()),
-            ("Real Mods path", self._mods_path_input.text().strip()),
-            ("Sandbox Mods path", self._sandbox_mods_path_input.text().strip()),
-            ("Sandbox archive path", self._sandbox_archive_path_input.text().strip()),
-            ("Real archive path", self._real_archive_path_input.text().strip()),
-            ("Watched downloads path 1", self._watched_downloads_path_input.text().strip()),
+            ("setup.summary.game", self._game_path_input.text().strip()),
+            ("setup.summary.real_mods", self._mods_path_input.text().strip()),
+            ("setup.summary.sandbox_mods", self._sandbox_mods_path_input.text().strip()),
+            ("setup.summary.sandbox_archive", self._sandbox_archive_path_input.text().strip()),
+            ("setup.summary.real_archive", self._real_archive_path_input.text().strip()),
+            ("setup.summary.watched_1", self._watched_downloads_path_input.text().strip()),
             (
-                "Watched downloads path 2",
+                "setup.summary.watched_2",
                 self._secondary_watched_downloads_path_input.text().strip(),
             ),
         )
-        for label, path_text in configured_paths:
+        for label_key, path_text in configured_paths:
             if path_text:
-                lines.append(f"{label}: {path_text}")
+                lines.append(self._tr(label_key, path=path_text))
         lines.append(
-            "Steam auto-start before launch: "
-            + ("Enabled" if self._steam_auto_start_checkbox.isChecked() else "Disabled")
+            self._tr(
+                "setup.summary.language",
+                language=self._current_language_preference_label(),
+            )
+        )
+        lines.append(
+            self._tr(
+                "setup.summary.steam_enabled"
+                if self._steam_auto_start_checkbox.isChecked()
+                else "setup.summary.steam_disabled"
+            )
         )
         return "\n".join(lines)
 

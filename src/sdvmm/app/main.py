@@ -11,8 +11,10 @@ from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
+from sdvmm.app.i18n import UiLocalizer
 from sdvmm.app.paths import default_app_state_file
 from sdvmm.app.shell_service import AppShellService
+from sdvmm.services.app_state_store import AppStateStoreError, load_app_config
 from sdvmm.ui.main_window import MainWindow
 
 APP_PACKAGE_NAME = "stardew-mod-manager"
@@ -129,6 +131,15 @@ def _configure_windows_app_identity() -> None:
 def main() -> int:
     _configure_windows_app_identity()
     _configure_frozen_qt_plugin_paths()
+    state_file = default_app_state_file()
+    startup_language_preference = None
+    try:
+        startup_config = load_app_config(state_file)
+    except AppStateStoreError:
+        startup_config = None
+    if startup_config is not None:
+        startup_language_preference = startup_config.language_preference
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_DISPLAY_NAME)
     app.setApplicationDisplayName(APP_DISPLAY_NAME)
@@ -137,8 +148,11 @@ def main() -> int:
     if app_icon is not None:
         app.setWindowIcon(app_icon)
 
-    shell_service = AppShellService(state_file=default_app_state_file())
-    window = MainWindow(shell_service=shell_service)
+    shell_service = AppShellService(state_file=state_file)
+    window = MainWindow(
+        shell_service=shell_service,
+        localizer=UiLocalizer.from_preference(startup_language_preference),
+    )
     if app_icon is not None:
         window.setWindowIcon(app_icon)
     window.show()

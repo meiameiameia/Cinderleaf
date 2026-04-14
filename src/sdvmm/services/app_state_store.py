@@ -83,6 +83,9 @@ def load_app_config(state_file: Path) -> AppConfig | None:
     nexus_api_key = _optional_non_empty_string(app_config, "nexus_api_key")
     scan_target = _optional_non_empty_string(app_config, "scan_target") or "configured_real_mods"
     install_target = _optional_non_empty_string(app_config, "install_target") or "sandbox_mods"
+    language_preference = (
+        _optional_non_empty_string(app_config, "language_preference") or "system"
+    )
     steam_auto_start_enabled = _optional_bool(app_config, "steam_auto_start_enabled")
 
     return AppConfig(
@@ -99,6 +102,7 @@ def load_app_config(state_file: Path) -> AppConfig | None:
         nexus_api_key=nexus_api_key,
         scan_target=scan_target,
         install_target=install_target,
+        language_preference=language_preference,
         steam_auto_start_enabled=(
             True if steam_auto_start_enabled is None else steam_auto_start_enabled
         ),
@@ -130,6 +134,7 @@ def save_app_config(state_file: Path, config: AppConfig) -> None:
             "nexus_api_key": config.nexus_api_key,
             "scan_target": config.scan_target,
             "install_target": config.install_target,
+            "language_preference": config.language_preference,
             "steam_auto_start_enabled": config.steam_auto_start_enabled,
         },
     }

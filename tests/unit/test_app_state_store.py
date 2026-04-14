@@ -63,6 +63,7 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
         nexus_api_key="test-nexus-key",
         scan_target="sandbox_mods",
         install_target="configured_real_mods",
+        language_preference="pt-BR",
     )
 
     save_app_config(state_file=state_file, config=config)
@@ -77,6 +78,7 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
     assert payload["app_config"]["real_archive_path"] == str(config.real_archive_path)
     assert payload["app_config"]["nexus_api_key"] == "test-nexus-key"
     assert payload["app_config"]["install_target"] == "configured_real_mods"
+    assert payload["app_config"]["language_preference"] == "pt-BR"
 
 
 def test_default_app_state_file_uses_platform_default_windows_appdata(
@@ -187,6 +189,7 @@ def test_platform_default_stardew_save_directory_uses_windows_appdata(
                     nexus_api_key="test-nexus-key",
                     scan_target="sandbox_mods",
                     install_target="configured_real_mods",
+                    language_preference="pt-BR",
                 ),
             ),
         ),

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from sdvmm.app.i18n import UiLocalizer
 from sdvmm.app.main import _resolve_app_icon
 from sdvmm.app.shell_service import AppShellError
 from sdvmm.app.shell_service import AppShellService
@@ -235,6 +236,119 @@ def _fake_background_operation_with_real_lifecycle(
 def test_main_window_instantiates_in_qt_context(main_window: MainWindow) -> None:
     assert main_window is not None
     assert main_window.windowTitle() != ""
+
+
+def test_main_window_portuguese_localizer_keeps_stable_nav_ids_and_localized_shell_text(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    setup_button = window.findChild(QPushButton, "workspace_nav_button_setup")
+    packages_button = window.findChild(QPushButton, "workspace_nav_button_packages")
+    brand_version = window.findChild(QLabel, "workspace_nav_brand_version")
+    section_label = window.findChild(QLabel, "workspace_nav_section_label")
+
+    assert setup_button is not None
+    assert packages_button is not None
+    assert brand_version is not None
+    assert section_label is not None
+    assert setup_button.text() == "Configuração"
+    assert packages_button.text() == "Pacotes"
+    assert brand_version.text() == "Versão 1.4.0"
+    assert section_label.text() == "Áreas"
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_main_window_portuguese_localizer_translates_setup_language_controls(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    setup_button = window.findChild(QPushButton, "workspace_nav_button_setup")
+    assert setup_button is not None
+    setup_button.click()
+    qapp.processEvents()
+
+    setup_group = window.findChild(QGroupBox, "setup_surface_group")
+    advanced_group = window.findChild(QGroupBox, "setup_advanced_group")
+    language_row = window.findChild(QWidget, "setup_language_preference_row")
+    language_combo = window.findChild(QComboBox, "setup_language_preference_combo")
+
+    assert setup_group is not None
+    assert advanced_group is not None
+    assert language_row is not None
+    assert language_combo is not None
+    assert setup_group.title() == "Pastas"
+    assert advanced_group.title() == "Extras"
+    assert language_combo.itemText(0) == "Padrão do sistema"
+    assert language_combo.itemText(1) == "Inglês"
+    assert language_combo.itemText(2) == "Português (Brasil)"
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_setup_language_preference_change_retranslates_visible_shell_without_restart(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(shell_service=service)
+    _show_test_window(window, qapp)
+
+    setup_button = window.findChild(QPushButton, "workspace_nav_button_setup")
+    save_button = window.findChild(QPushButton, "setup_save_config_button")
+    language_combo = window.findChild(QComboBox, "setup_language_preference_combo")
+    brand_version = window.findChild(QLabel, "workspace_nav_brand_version")
+    readiness_label = window.findChild(QLabel, "setup_readiness_label")
+
+    assert setup_button is not None
+    assert save_button is not None
+    assert language_combo is not None
+    assert brand_version is not None
+    assert readiness_label is not None
+    assert setup_button.text() == "Setup"
+    assert save_button.text() == "Save setup"
+
+    setup_button.click()
+    qapp.processEvents()
+
+    portuguese_index = language_combo.findData("pt-BR")
+    assert portuguese_index >= 0
+    language_combo.setCurrentIndex(portuguese_index)
+    qapp.processEvents()
+
+    setup_title = window._setup_page.findChild(QLabel, "workspace_page_title")
+    setup_group = window.findChild(QGroupBox, "setup_surface_group")
+
+    assert setup_title is not None
+    assert setup_group is not None
+    assert setup_button.text() == "Configuração"
+    assert save_button.text() == "Salvar configuração"
+    assert brand_version.text() == "Versão 1.4.0"
+    assert setup_title.text() == "Configuração"
+    assert setup_group.title() == "Pastas"
+    assert readiness_label.text() == (
+        "Começo rápido: defina a pasta do jogo, a pasta Mods real e a pasta Mods sandbox."
+    )
+    assert "Idioma do app atualizado" in window._status_strip_label.text()
+
+    window.close()
+    qapp.processEvents()
 
 
 def test_runtime_icon_asset_resolves_for_dev_runtime() -> None:

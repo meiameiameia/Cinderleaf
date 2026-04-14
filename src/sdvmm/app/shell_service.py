@@ -1532,6 +1532,7 @@ class AppShellService:
         nexus_api_key_text: str = "",
         scan_target: ScanTargetKind,
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
+        language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
         existing_config: AppConfig | None,
     ) -> AppConfig:
@@ -1546,6 +1547,7 @@ class AppShellService:
             nexus_api_key_text=nexus_api_key_text,
             scan_target=scan_target,
             install_target=install_target,
+            language_preference=language_preference,
             steam_auto_start_enabled=steam_auto_start_enabled,
             existing_config=existing_config,
         )
@@ -1587,6 +1589,7 @@ class AppShellService:
         nexus_api_key_text: str = "",
         scan_target: ScanTargetKind,
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
+        language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
         existing_config: AppConfig | None,
     ) -> AppConfig:
@@ -1650,6 +1653,7 @@ class AppShellService:
             nexus_api_key=nexus_api_key,
             scan_target=scan_target,
             install_target=install_target,
+            language_preference=language_preference,
             steam_auto_start_enabled=steam_auto_start_enabled,
         )
         return config
@@ -1667,6 +1671,7 @@ class AppShellService:
         nexus_api_key_text: str = "",
         scan_target: ScanTargetKind,
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
+        language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
         existing_config: AppConfig | None,
     ) -> SessionConfigPersistenceResult:
@@ -1702,6 +1707,7 @@ class AppShellService:
                 nexus_api_key_text=nexus_api_key_text,
                 scan_target=scan_target,
                 install_target=install_target,
+                language_preference=language_preference,
                 steam_auto_start_enabled=steam_auto_start_enabled,
                 existing_config=existing_config,
             )
@@ -1946,6 +1952,7 @@ class AppShellService:
         nexus_api_key_text: str = "",
         scan_target: ScanTargetKind,
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
+        language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
         existing_config: AppConfig | None,
     ) -> CinderleafManagedMigrationResult:
@@ -2160,12 +2167,13 @@ class AppShellService:
                         existing_config.real_archive_path if existing_config is not None else None,
                     )
                 ),
-                nexus_api_key_text=nexus_api_key_text,
-                scan_target=scan_target,
-                install_target=install_target,
-                steam_auto_start_enabled=steam_auto_start_enabled,
-                existing_config=existing_config,
-            )
+            nexus_api_key_text=nexus_api_key_text,
+            scan_target=scan_target,
+            install_target=install_target,
+            language_preference=language_preference,
+            steam_auto_start_enabled=steam_auto_start_enabled,
+            existing_config=existing_config,
+        )
         except Exception:
             for target_path in reversed(created_targets):
                 if target_path.exists():
