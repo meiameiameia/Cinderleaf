@@ -12,11 +12,14 @@ from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
+from sdvmm.app.i18n import UiLocalizer
+
 
 class TopContextSurface(QGroupBox):
     def __init__(
         self,
         *,
+        localizer: UiLocalizer,
         environment_status_label: QLabel,
         smapi_update_status_label: QLabel,
         smapi_log_status_label: QLabel,
@@ -29,6 +32,7 @@ class TopContextSurface(QGroupBox):
         collapse_toggle_button: QPushButton,
     ) -> None:
         super().__init__("")
+        self._localizer = localizer
         self.setObjectName("top_context_surface_group")
         self.setFlat(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -63,9 +67,9 @@ class TopContextSurface(QGroupBox):
         header_text_layout.setContentsMargins(0, 0, 0, 0)
         header_text_layout.setSpacing(1)
 
-        brand_eyebrow = QLabel("Session context")
+        brand_eyebrow = QLabel(localizer.text("top_context.eyebrow"))
         brand_eyebrow.setObjectName("top_context_brand_eyebrow")
-        brand_title = QLabel("Live scan and write context")
+        brand_title = QLabel(localizer.text("top_context.title"))
         brand_title.setObjectName("top_context_brand_title")
         brand_title.setWordWrap(True)
         header_text_layout.addWidget(brand_eyebrow)
@@ -92,7 +96,7 @@ class TopContextSurface(QGroupBox):
         brand_layout.setSpacing(3)
 
         brand_subtitle = QLabel(
-            "Check scan source and install target before compare, install, restore, or write."
+            localizer.text("top_context.subtitle")
         )
         brand_subtitle.setObjectName("top_context_brand_subtitle")
         brand_subtitle.setWordWrap(True)
@@ -104,14 +108,33 @@ class TopContextSurface(QGroupBox):
         active_context_container_layout = QVBoxLayout(active_context_group)
         active_context_container_layout.setContentsMargins(0, 1, 0, 0)
         active_context_container_layout.setSpacing(3)
-        active_context_container_layout.addWidget(_section_label("Active context"))
+        active_context_section_label = _section_label(localizer.text("top_context.active_context"))
+        active_context_section_label.setProperty(
+            "translationKey",
+            "top_context.active_context",
+        )
+        active_context_container_layout.addWidget(active_context_section_label)
         active_context_layout = QGridLayout()
         active_context_layout.setContentsMargins(0, 0, 0, 0)
         active_context_layout.setHorizontalSpacing(6)
         active_context_layout.setVerticalSpacing(3)
-        active_context_layout.addWidget(_context_caption("Scan source"), 0, 0)
+        active_context_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.scan_source"),
+                translation_key="top_context.scan_source",
+            ),
+            0,
+            0,
+        )
         active_context_layout.addWidget(scan_context_label, 0, 1)
-        active_context_layout.addWidget(_context_caption("Install target"), 1, 0)
+        active_context_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.install_target"),
+                translation_key="top_context.install_target",
+            ),
+            1,
+            0,
+        )
         active_context_layout.addWidget(install_context_label, 1, 1)
         active_context_layout.setColumnMinimumWidth(0, 84)
         active_context_layout.setColumnStretch(1, 1)
@@ -128,7 +151,9 @@ class TopContextSurface(QGroupBox):
         operations_container_layout = QVBoxLayout(operations_group)
         operations_container_layout.setContentsMargins(10, 8, 10, 8)
         operations_container_layout.setSpacing(4)
-        operations_container_layout.addWidget(_section_label("Operational"))
+        operations_section_label = _section_label(localizer.text("top_context.operational"))
+        operations_section_label.setProperty("translationKey", "top_context.operational")
+        operations_container_layout.addWidget(operations_section_label)
 
         environment_group = QWidget()
         environment_group.setObjectName("top_context_environment_panel")
@@ -137,16 +162,36 @@ class TopContextSurface(QGroupBox):
         environment_container_layout = QVBoxLayout(environment_group)
         environment_container_layout.setContentsMargins(0, 0, 0, 0)
         environment_container_layout.setSpacing(3)
-        environment_container_layout.addWidget(_section_label("Environment"))
+        environment_section_label = _section_label(localizer.text("top_context.environment"))
+        environment_section_label.setProperty("translationKey", "top_context.environment")
+        environment_container_layout.addWidget(environment_section_label)
         environment_layout = QGridLayout()
         environment_layout.setContentsMargins(0, 0, 0, 0)
         environment_layout.setHorizontalSpacing(6)
         environment_layout.setVerticalSpacing(4)
-        environment_layout.addWidget(_context_caption("Game"), 0, 0)
+        environment_layout.addWidget(
+            _context_caption(localizer.text("top_context.game"), translation_key="top_context.game"),
+            0,
+            0,
+        )
         environment_layout.addWidget(environment_status_label, 0, 1)
-        environment_layout.addWidget(_context_caption("SMAPI update"), 1, 0)
+        environment_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.smapi_update"),
+                translation_key="top_context.smapi_update",
+            ),
+            1,
+            0,
+        )
         environment_layout.addWidget(smapi_update_status_label, 1, 1)
-        environment_layout.addWidget(_context_caption("SMAPI log"), 2, 0)
+        environment_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.smapi_log"),
+                translation_key="top_context.smapi_log",
+            ),
+            2,
+            0,
+        )
         environment_layout.addWidget(smapi_log_status_label, 2, 1)
         environment_layout.setColumnMinimumWidth(0, 76)
         environment_layout.setColumnStretch(1, 1)
@@ -159,18 +204,45 @@ class TopContextSurface(QGroupBox):
         runtime_container_layout = QVBoxLayout(runtime_group)
         runtime_container_layout.setContentsMargins(0, 0, 0, 0)
         runtime_container_layout.setSpacing(3)
-        runtime_container_layout.addWidget(_section_label("Runtime"))
+        runtime_section_label = _section_label(localizer.text("top_context.runtime"))
+        runtime_section_label.setProperty("translationKey", "top_context.runtime")
+        runtime_container_layout.addWidget(runtime_section_label)
         runtime_layout = QGridLayout()
         runtime_layout.setContentsMargins(0, 0, 0, 0)
         runtime_layout.setHorizontalSpacing(6)
         runtime_layout.setVerticalSpacing(4)
-        runtime_layout.addWidget(_context_caption("Nexus"), 0, 0)
+        runtime_layout.addWidget(
+            _context_caption(localizer.text("top_context.nexus"), translation_key="top_context.nexus"),
+            0,
+            0,
+        )
         runtime_layout.addWidget(nexus_status_label, 0, 1)
-        runtime_layout.addWidget(_context_caption("Watcher"), 1, 0)
+        runtime_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.watcher"),
+                translation_key="top_context.watcher",
+            ),
+            1,
+            0,
+        )
         runtime_layout.addWidget(watch_status_label, 1, 1)
-        runtime_layout.addWidget(_context_caption("Operation"), 2, 0)
+        runtime_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.operation"),
+                translation_key="top_context.operation",
+            ),
+            2,
+            0,
+        )
         runtime_layout.addWidget(operation_state_label, 2, 1)
-        runtime_layout.addWidget(_context_caption("Sandbox run"), 3, 0)
+        runtime_layout.addWidget(
+            _context_caption(
+                localizer.text("top_context.sandbox_run"),
+                translation_key="top_context.sandbox_run",
+            ),
+            3,
+            0,
+        )
         runtime_layout.addWidget(sandbox_launch_status_label, 3, 1)
         runtime_layout.setColumnMinimumWidth(0, 82)
         runtime_layout.setColumnStretch(1, 1)
@@ -195,15 +267,30 @@ class TopContextSurface(QGroupBox):
         self.environment_group = environment_group
         self.runtime_group = runtime_group
         self.active_context_group = active_context_group
+        self.brand_eyebrow = brand_eyebrow
+        self.brand_title = brand_title
+        self.brand_subtitle = brand_subtitle
 
     def set_details_expanded(self, expanded: bool) -> None:
         self.body_panel.setVisible(expanded)
 
+    def retranslate(self, localizer: UiLocalizer) -> None:
+        self._localizer = localizer
+        self.brand_eyebrow.setText(localizer.text("top_context.eyebrow"))
+        self.brand_title.setText(localizer.text("top_context.title"))
+        self.brand_subtitle.setText(localizer.text("top_context.subtitle"))
+        for label in self.findChildren(QLabel):
+            translation_key = label.property("translationKey")
+            if isinstance(translation_key, str) and translation_key:
+                label.setText(localizer.text(translation_key))
 
-def _context_caption(text: str) -> QLabel:
+
+def _context_caption(text: str, *, translation_key: str | None = None) -> QLabel:
     label = QLabel(text)
     label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     label.setProperty("contextRole", "caption")
+    if translation_key is not None:
+        label.setProperty("translationKey", translation_key)
     label.setWordWrap(True)
     _set_auxiliary_label_style(label)
     return label

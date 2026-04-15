@@ -84,7 +84,12 @@ from sdvmm.app.inventory_presenter import (
     build_smapi_update_status_text,
     build_update_report_text,
 )
-from sdvmm.app.i18n import DEFAULT_LANGUAGE_PREFERENCE, UiLocalizer
+from sdvmm.app.i18n import (
+    DEFAULT_LANGUAGE_PREFERENCE,
+    UiLocalizer,
+    get_active_ui_localizer,
+    set_active_ui_localizer,
+)
 from sdvmm.app.table_filters import row_matches_filter
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
@@ -221,24 +226,61 @@ _ROLE_MOD_TOGGLE_REASON = int(Qt.ItemDataRole.UserRole) + 13
 _ROLE_MOD_MEMBER_FOLDER_PATHS = int(Qt.ItemDataRole.UserRole) + 14
 _ROLE_MOD_IS_GROUPED = int(Qt.ItemDataRole.UserRole) + 15
 
-_NO_PLAN_REVIEW_SUMMARY_TEXT = "No plan yet. Click Plan install to inspect changes."
-_NO_PLAN_REVIEW_EXPLANATION_TEXT = "No install detail yet."
-_NO_PLAN_FACTS_TEXT = (
-    "Entries: -\n"
-    "Replace existing: -\n"
-    "Archive writes: -\n"
-    "Approval required: -\n"
-    "Blocked entries: -"
-)
-_NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT = (
-    "Inspect backup reads the bundle and prepares a restore/import review for this machine."
-)
-_NO_ACTIVE_BACKUP_BUNDLE_TEXT = (
-    "Current backup bundle: none selected. Inspect or plan a bundle to reuse it across restore steps."
-)
-_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP = (
-    "Inspect a backup bundle first."
-)
+def _no_plan_review_summary_text() -> str:
+    return get_active_ui_localizer().text("install.no_plan_summary")
+
+
+def _no_plan_review_explanation_text() -> str:
+    return get_active_ui_localizer().text("install.no_plan_detail")
+
+
+def _no_plan_facts_text() -> str:
+    if get_active_ui_localizer().effective_language == "pt-BR":
+        return (
+            "Entradas: -\n"
+            "Substituir existente: -\n"
+            "Gravações em arquivo: -\n"
+            "Confirmação obrigatória: -\n"
+            "Entradas bloqueadas: -"
+        )
+    return (
+        "Entries: -\n"
+        "Replace existing: -\n"
+        "Archive writes: -\n"
+        "Approval required: -\n"
+        "Blocked entries: -"
+    )
+def _no_restore_import_planning_summary_text() -> str:
+    return get_active_ui_localizer().text("setup.backup.inspect_summary")
+
+
+def _no_active_backup_bundle_text() -> str:
+    return get_active_ui_localizer().text("setup.backup.none_selected")
+
+
+def _no_restore_import_execution_tooltip() -> str:
+    return (
+        "Inspecione primeiro um pacote de backup."
+        if get_active_ui_localizer().effective_language == "pt-BR"
+        else "Inspect a backup bundle first."
+    )
+
+
+def _backup_bundle_context_label_text(label_text: str | None) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
+    normalized = (label_text or "").strip().casefold()
+    if not normalized or normalized == "none yet":
+        return "nenhum ainda" if pt_br else "none yet"
+    if normalized == "selected":
+        return "selecionado" if pt_br else "selected"
+    if normalized == "inspected":
+        return "inspecionado" if pt_br else "inspected"
+    if normalized == "planned":
+        return "planejado" if pt_br else "planned"
+    if normalized == "executed":
+        return "executado" if pt_br else "executed"
+    return label_text or ""
 _COMPARE_FILTER_ACTIONABLE = "actionable_drift"
 _COMPARE_FILTER_ONLY_IN_REAL = "only_in_real"
 _COMPARE_FILTER_ONLY_IN_SANDBOX = "only_in_sandbox"
@@ -491,23 +533,25 @@ def _inventory_row_type_label(
     current_target: str,
     depended_on_unique_ids: set[str],
 ) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     primary_mod = row_entry.primary_mod
     folder_name = primary_mod.folder_path.name
     primary_unique_id = canonicalize_unique_id(primary_mod.unique_id)
 
     if not row_entry.is_enabled:
         if folder_name.startswith("."):
-            return "Disabled mod"
+            return "Mod desativado" if pt_br else "Disabled mod"
         if current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
-            return "Not in profile"
+            return "Fora do perfil" if pt_br else "Not in profile"
     if row_entry.grouped:
-        return "Grouped mod"
+        return "Mod agrupado" if pt_br else "Grouped mod"
     if primary_mod.unique_id.startswith("SMAPI."):
-        return "Built-in"
+        return "Integrado" if pt_br else "Built-in"
     if _inventory_is_content_pack(primary_mod):
-        return "Content pack"
+        return "Pacote de conteúdo" if pt_br else "Content pack"
     if primary_unique_id and primary_unique_id in depended_on_unique_ids:
-        return "Dependency"
+        return "Dependência" if pt_br else "Dependency"
     return "Mod"
 
 
@@ -516,24 +560,56 @@ def _inventory_row_type_tooltip(
     row_entry: _InventoryRowEntry,
     type_label: str,
 ) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     lines = [f"Type: {type_label}"]
-    if type_label == "Grouped mod":
-        lines.append("This row represents multiple linked installed folders.")
-    elif type_label == "Content pack":
-        lines.append("This row looks like a content-pack style mod component.")
-    elif type_label == "Dependency":
-        lines.append("Other installed mods currently depend on this row.")
-    elif type_label == "Built-in":
-        lines.append("This row is bundled with SMAPI instead of a normal downloaded mod.")
-    elif type_label == "Not in profile":
-        lines.append("This mod exists in Default but is not part of the active profile.")
-    elif type_label == "Disabled mod":
-        lines.append("This row is currently disabled in the scanned Mods path.")
+    if pt_br:
+        lines = [f"Tipo: {type_label}"]
+    if type_label in {"Grouped mod", "Mod agrupado"}:
+        lines.append(
+            "Esta linha representa várias pastas instaladas ligadas."
+            if pt_br
+            else "This row represents multiple linked installed folders."
+        )
+    elif type_label in {"Content pack", "Pacote de conteúdo"}:
+        lines.append(
+            "Esta linha parece ser um componente de pacote de conteúdo."
+            if pt_br
+            else "This row looks like a content-pack style mod component."
+        )
+    elif type_label in {"Dependency", "Dependência"}:
+        lines.append(
+            "Outros mods instalados dependem desta linha no momento."
+            if pt_br
+            else "Other installed mods currently depend on this row."
+        )
+    elif type_label in {"Built-in", "Integrado"}:
+        lines.append(
+            "Esta linha vem junto com o SMAPI, não é um mod baixado separadamente."
+            if pt_br
+            else "This row is bundled with SMAPI instead of a normal downloaded mod."
+        )
+    elif type_label in {"Not in profile", "Fora do perfil"}:
+        lines.append(
+            "Este mod existe no perfil Padrão, mas não faz parte do perfil ativo."
+            if pt_br
+            else "This mod exists in Default but is not part of the active profile."
+        )
+    elif type_label in {"Disabled mod", "Mod desativado"}:
+        lines.append(
+            "Esta linha está desativada no caminho Mods atualmente lido."
+            if pt_br
+            else "This row is currently disabled in the scanned Mods path."
+        )
 
     if len(row_entry.member_folder_paths) == 1:
-        lines.append(f"Installed folder: {row_entry.member_folder_paths[0]}")
+        lines.append(
+            f"Pasta instalada: {row_entry.member_folder_paths[0]}"
+            if pt_br
+            else f"Installed folder: {row_entry.member_folder_paths[0]}"
+        )
     else:
-        lines.append("Installed folders:")
+        lines.append("Pastas instaladas:" if pt_br else "Installed folders:")
         lines.extend(f"- {path}" for path in row_entry.member_folder_paths)
     return "\n".join(lines)
 
@@ -559,93 +635,115 @@ def _update_status_requires_api_key(status: ModUpdateStatus) -> bool:
 
 
 def _update_status_display_label(status: ModUpdateStatus) -> str:
+    localizer = get_active_ui_localizer()
     if _is_smapi_built_in_unique_id(status.unique_id):
-        return "Built-in"
+        return "Integrado" if localizer.effective_language == "pt-BR" else "Built-in"
     if status.state == "update_available":
-        return "Update available"
+        return localizer.text("library.update.available")
     if status.state == "up_to_date":
-        return "Up to date"
+        return localizer.text("library.update.up_to_date")
     if status.state == "no_remote_link":
         if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
-            return "Local/private"
+            return "Local/privado" if localizer.effective_language == "pt-BR" else "Local/private"
         if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
-            return "Source key issue"
+            return "Problema na chave da origem" if localizer.effective_language == "pt-BR" else "Source key issue"
         if status.update_source_diagnostic == NO_PROVIDER_MAPPING:
-            return "Unsupported source"
-        return "Missing source"
+            return "Origem sem suporte" if localizer.effective_language == "pt-BR" else "Unsupported source"
+        return "Origem ausente" if localizer.effective_language == "pt-BR" else "Missing source"
     if status.state == "metadata_unavailable":
         if _update_status_requires_api_key(status):
-            return "Needs API key"
+            return "Precisa da chave de API" if localizer.effective_language == "pt-BR" else "Needs API key"
         if status.update_source_diagnostic == METADATA_SOURCE_ISSUE:
-            return "Source issue"
+            return "Problema na origem" if localizer.effective_language == "pt-BR" else "Source issue"
         if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
-            return "Source key issue"
-        return "Lookup failed"
+            return "Problema na chave da origem" if localizer.effective_language == "pt-BR" else "Source key issue"
+        return "Falha na busca" if localizer.effective_language == "pt-BR" else "Lookup failed"
+    if localizer.effective_language == "pt-BR":
+        return status.state.replace("_", " ").replace("available", "disponível").title()
     return status.state.replace("_", " ").title()
 
 
 def _blocked_reason_for_update_status(status: ModUpdateStatus) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     if _is_smapi_built_in_unique_id(status.unique_id):
-        return "This row is bundled with SMAPI and does not need a separate source-repair workflow."
+        return (
+            "Esta linha é integrada ao SMAPI e não precisa de um fluxo separado para corrigir a origem."
+            if pt_br
+            else "This row is bundled with SMAPI and does not need a separate source-repair workflow."
+        )
     sanitized_message = _sanitize_update_status_message(status.message)
     if status.state == "up_to_date":
-        return "Up to date; no update action required."
+        return localizer.text("library.update.up_to_date_detail")
     if status.state == "no_remote_link":
         if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
             return (
-                "This row is marked local/private and is intentionally excluded from "
+                "Esta linha está marcada como local/privada e fica excluída de propósito do rastreamento remoto de atualizações."
+                if pt_br
+                else "This row is marked local/private and is intentionally excluded from "
                 "remote update tracking."
             )
         if status.update_source_diagnostic == MISSING_UPDATE_KEY:
-            return "No update source is declared or saved for this mod yet."
+            return "Ainda não existe uma origem de atualização declarada ou salva para este mod." if pt_br else "No update source is declared or saved for this mod yet."
         if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
-            return "The declared update key format is not supported yet."
+            return "O formato da chave de atualização declarada ainda não é compatível." if pt_br else "The declared update key format is not supported yet."
         if status.update_source_diagnostic == NO_PROVIDER_MAPPING:
-            return "The declared update source provider is not mapped yet."
-        return sanitized_message or "No remote link is available for this mod."
+            return "O provedor de atualização declarado ainda não está mapeado." if pt_br else "The declared update source provider is not mapped yet."
+        return sanitized_message or ("Nenhum link remoto está disponível para este mod." if pt_br else "No remote link is available for this mod.")
     if status.state == "metadata_unavailable":
         if _update_status_requires_api_key(status):
             return (
-                "A configured Nexus API key is required before Cinderleaf can check "
+                "É necessária uma chave de API do Nexus configurada antes que o Cinderleaf possa verificar versões para esta origem."
+                if pt_br
+                else "A configured Nexus API key is required before Cinderleaf can check "
                 "versions for this source."
             )
         if status.update_source_diagnostic == METADATA_SOURCE_ISSUE:
-            return "The saved or declared source metadata is not usable yet."
-        return sanitized_message or "Metadata unavailable for this mod."
-    return sanitized_message or f"State '{status.state}' is not actionable."
+            return "Os metadados salvos ou declarados da origem ainda não estão utilizáveis." if pt_br else "The saved or declared source metadata is not usable yet."
+        return sanitized_message or ("Metadados indisponíveis para este mod." if pt_br else "Metadata unavailable for this mod.")
+    return sanitized_message or (f"O estado '{status.state}' não é acionável." if pt_br else f"State '{status.state}' is not actionable.")
 
 
 def _diagnostics_text_for_update_status(status: ModUpdateStatus | None) -> str | None:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if status is None:
         return None
     if _is_smapi_built_in_unique_id(status.unique_id):
-        return "Source fix: this SMAPI built-in is bundled with SMAPI and does not need a separate remote source."
+        return "Correção de origem: este item integrado do SMAPI já vem com o SMAPI e não precisa de uma origem remota separada." if pt_br else "Source fix: this SMAPI built-in is bundled with SMAPI and does not need a separate remote source."
     if status.update_source_diagnostic == LOCAL_PRIVATE_MOD:
-        return "Source fix: this row is intentionally marked local/private."
+        return "Correção de origem: esta linha está marcada de propósito como local/privada." if pt_br else "Source fix: this row is intentionally marked local/private."
     if status.update_source_diagnostic == MISSING_UPDATE_KEY:
-        return "Source fix: no update source is declared or saved for this mod yet."
+        return "Correção de origem: ainda não existe origem de atualização declarada ou salva para este mod." if pt_br else "Source fix: no update source is declared or saved for this mod yet."
     if status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT:
         return (
-            "Source fix: the declared update key format is not supported yet. "
+            "Correção de origem: o formato da chave de atualização declarada ainda não é compatível. Adicione uma origem manual se souber a página correta."
+            if pt_br
+            else "Source fix: the declared update key format is not supported yet. "
             "Add a manual source association if you know the correct page."
         )
     if status.update_source_diagnostic == NO_PROVIDER_MAPPING:
         return (
-            "Source fix: the declared provider is not mapped yet. "
+            "Correção de origem: o provedor declarado ainda não está mapeado. Adicione uma origem manual."
+            if pt_br
+            else "Source fix: the declared provider is not mapped yet. "
             "Add a manual source association instead."
         )
     if _update_status_requires_api_key(status):
         return (
-            "Source fix: Nexus source is known, but a Nexus API key is required "
+            "Correção de origem: a origem Nexus é conhecida, mas é necessária uma chave de API do Nexus antes de verificar versões."
+            if pt_br
+            else "Source fix: Nexus source is known, but a Nexus API key is required "
             "before version checks can run."
         )
     if status.update_source_diagnostic == REMOTE_METADATA_LOOKUP_FAILED:
         return (
-            "Source fix: remote metadata lookup failed. Check the source key, "
+            "Correção de origem: a busca de metadados remotos falhou. Verifique a chave da origem, a disponibilidade do provedor ou as credenciais."
+            if pt_br
+            else "Source fix: remote metadata lookup failed. Check the source key, "
             "provider availability, or credentials."
         )
     if status.update_source_diagnostic == METADATA_SOURCE_ISSUE:
-        return "Source fix: the saved or declared source metadata is not usable yet."
+        return "Correção de origem: os metadados salvos ou declarados da origem ainda não estão utilizáveis." if pt_br else "Source fix: the saved or declared source metadata is not usable yet."
     return None
 
 
@@ -871,6 +969,7 @@ def _inventory_update_presentation(
     status: ModUpdateStatus,
     effective_intent_state: str | None,
 ) -> _InventoryUpdatePresentation:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     actionable, blocked_reason = _update_status_actionability(status)
     status_label = _update_status_display_label(status)
     status_tooltip = blocked_reason
@@ -882,13 +981,17 @@ def _inventory_update_presentation(
             manual_provider=None,
         )
         blocked_reason = status_tooltip
-        status_label = "No tracking"
+        status_label = "Sem rastreamento" if pt_br else "No tracking"
     if actionable:
         return _InventoryUpdatePresentation(
             actionable=True,
             blocked_reason=blocked_reason,
             status_label=status_label,
-            status_tooltip="Actionable: update is available for this mod.",
+            status_tooltip=(
+                "Acionável: há atualização disponível para este mod."
+                if pt_br
+                else "Actionable: update is available for this mod."
+            ),
             style_kind="actionable",
         )
     if status.state == "up_to_date":
@@ -1182,6 +1285,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._shell_service = shell_service
         self._localizer = localizer or UiLocalizer.from_preference("en")
+        set_active_ui_localizer(self._localizer)
         self._config: AppConfig | None = None
         self._pending_install_plan: SandboxInstallPlan | None = None
         self._last_install_completion_message: str | None = None
@@ -1279,56 +1383,83 @@ class MainWindow(QMainWindow):
         self._discovery_query_input = QLineEdit()
         self._discovery_query_input.setObjectName("discovery_query_input")
         self._discovery_query_input.setPlaceholderText(
-            "Search by mod name, UniqueID, or author"
+            self._tr("discovery.query_placeholder")
+        )
+        self._discovery_query_input.setProperty(
+            "placeholderTranslationKey",
+            "discovery.query_placeholder",
         )
         self._mods_filter_input = QLineEdit()
-        self._mods_filter_input.setPlaceholderText("Filter installed mods")
+        self._mods_filter_input.setPlaceholderText(self._tr("library.filter_placeholder"))
+        self._mods_filter_input.setProperty(
+            "placeholderTranslationKey",
+            "library.filter_placeholder",
+        )
         self._mods_filter_input.setClearButtonEnabled(True)
         self._mods_filter_input.setMinimumWidth(180)
         self._mods_update_actionability_filter_combo = QComboBox()
         self._mods_update_actionability_filter_combo.setObjectName(
             "inventory_update_actionability_filter_combo"
         )
-        self._mods_update_actionability_filter_combo.addItem("all", "all")
-        self._mods_update_actionability_filter_combo.addItem("actionable", "actionable")
-        self._mods_update_actionability_filter_combo.addItem("blocked", "blocked")
+        self._mods_update_actionability_filter_combo.addItem(self._tr("filter.all"), "all")
         self._mods_update_actionability_filter_combo.addItem(
-            "needs source repair",
+            self._tr("library.filter.actionable"),
+            "actionable",
+        )
+        self._mods_update_actionability_filter_combo.addItem(
+            self._tr("library.filter.blocked"),
+            "blocked",
+        )
+        self._mods_update_actionability_filter_combo.addItem(
+            self._tr("library.filter.needs_source_repair"),
             "needs_source_repair",
         )
         self._discovery_filter_input = QLineEdit()
         self._discovery_filter_input.setObjectName("discovery_filter_input")
-        self._discovery_filter_input.setPlaceholderText("Filter discovery results")
+        self._discovery_filter_input.setPlaceholderText(self._tr("discovery.filter_placeholder"))
+        self._discovery_filter_input.setProperty(
+            "placeholderTranslationKey",
+            "discovery.filter_placeholder",
+        )
         self._discovery_filter_input.setClearButtonEnabled(True)
         self._discovery_filter_input.setMinimumWidth(180)
         self._intake_filter_input = QLineEdit()
-        self._intake_filter_input.setPlaceholderText("Filter detected packages")
+        self._intake_filter_input.setPlaceholderText(self._tr("packages.filter_placeholder"))
+        self._intake_filter_input.setProperty(
+            "placeholderTranslationKey",
+            "packages.filter_placeholder",
+        )
         self._intake_filter_input.setClearButtonEnabled(True)
         self._intake_filter_input.setMinimumWidth(180)
         self._archive_filter_input = QLineEdit()
         self._archive_filter_input.setObjectName("archive_filter_input")
-        self._archive_filter_input.setPlaceholderText("Filter archived entries")
+        self._archive_filter_input.setPlaceholderText(self._tr("archive.filter_placeholder"))
+        self._archive_filter_input.setProperty(
+            "placeholderTranslationKey",
+            "archive.filter_placeholder",
+        )
         self._archive_filter_input.setClearButtonEnabled(True)
         self._archive_filter_input.setMinimumWidth(180)
-        self._mods_filter_stats_label = QLabel("0/0 shown")
-        self._discovery_filter_stats_label = QLabel("0/0 shown")
-        self._intake_filter_stats_label = QLabel("0/0 shown")
-        self._archive_filter_stats_label = QLabel("0/0 shown")
+        self._mods_filter_stats_label = QLabel(self._tr("filter.stats_empty"))
+        self._discovery_filter_stats_label = QLabel(self._tr("filter.stats_empty"))
+        self._intake_filter_stats_label = QLabel(self._tr("filter.stats_empty"))
+        self._archive_filter_stats_label = QLabel(self._tr("filter.stats_empty"))
         self._inventory_update_guidance_label = QLabel(
-            "Select a mod to see actions and guidance."
+            self._tr("library.selection_guidance")
         )
         self._inventory_update_guidance_label.setObjectName(
             "inventory_update_guidance_label"
         )
         self._inventory_update_guidance_label.setWordWrap(True)
-        self._prepare_selected_updates_button = QPushButton("Open pages")
+        self._prepare_selected_updates_button = QPushButton(self._tr("library.open_pages"))
         self._prepare_selected_updates_button.setObjectName(
             "inventory_prepare_selected_updates_button"
         )
+        self._prepare_selected_updates_button.setProperty("translationKey", "library.open_pages")
         self._prepare_selected_updates_button.setVisible(False)
         _set_secondary_button_style(self._prepare_selected_updates_button)
         self._mods_inventory_state_label = QLabel(
-            "No library loaded yet. Scan the selected Library source to populate the table."
+            self._tr("library.state.empty")
         )
         self._mods_inventory_state_label.setObjectName("mods_inventory_state_label")
         self._mods_inventory_state_label.setWordWrap(True)
@@ -1378,7 +1509,7 @@ class MainWindow(QMainWindow):
             label.setWordWrap(True)
             _set_auxiliary_label_style(label)
         self._discovery_results_state_label = QLabel(
-            "Search by mod name, UniqueID, or author to build a source list."
+            self._tr("discovery.results_state")
         )
         self._discovery_results_state_label.setObjectName("discovery_results_state_label")
         self._discovery_results_state_label.setWordWrap(True)
@@ -1390,20 +1521,29 @@ class MainWindow(QMainWindow):
         self._inventory_blocked_detail_label.setWordWrap(True)
         self._inventory_blocked_detail_label.setVisible(False)
         _set_auxiliary_label_style(self._inventory_blocked_detail_label)
-        self._inventory_source_intent_actions_label = QLabel("Saved source")
+        self._inventory_source_intent_actions_label = QLabel(self._tr("library.saved_source"))
+        self._inventory_source_intent_actions_label.setProperty(
+            "translationKey",
+            "library.saved_source",
+        )
         _set_auxiliary_label_style(self._inventory_source_intent_actions_label)
-        self._mark_local_private_button = QPushButton("Mark local/private")
+        self._mark_local_private_button = QPushButton(self._tr("library.mark_local_private"))
         self._mark_local_private_button.setObjectName("inventory_mark_local_private_button")
-        self._disable_tracking_button = QPushButton("Disable tracking")
+        self._mark_local_private_button.setProperty("translationKey", "library.mark_local_private")
+        self._disable_tracking_button = QPushButton(self._tr("library.disable_tracking"))
         self._disable_tracking_button.setObjectName("inventory_disable_tracking_button")
-        self._manual_source_intent_button = QPushButton("Manual source...")
+        self._disable_tracking_button.setProperty("translationKey", "library.disable_tracking")
+        self._manual_source_intent_button = QPushButton(self._tr("library.manual_source"))
         self._manual_source_intent_button.setObjectName(
             "inventory_manual_source_association_button"
         )
-        self._test_source_button = QPushButton("Check saved source")
+        self._manual_source_intent_button.setProperty("translationKey", "library.manual_source")
+        self._test_source_button = QPushButton(self._tr("library.check_saved_source"))
         self._test_source_button.setObjectName("inventory_test_source_button")
-        self._clear_source_intent_button = QPushButton("Clear saved intent")
+        self._test_source_button.setProperty("translationKey", "library.check_saved_source")
+        self._clear_source_intent_button = QPushButton(self._tr("library.clear_saved_intent"))
         self._clear_source_intent_button.setObjectName("inventory_clear_source_intent_button")
+        self._clear_source_intent_button.setProperty("translationKey", "library.clear_saved_intent")
         for button in (
             self._mark_local_private_button,
             self._disable_tracking_button,
@@ -1415,118 +1555,149 @@ class MainWindow(QMainWindow):
         self._inventory_source_intent_actions_widget = (
             self._build_inventory_source_intent_actions_widget()
         )
-        self._inventory_sandbox_sync_actions_label = QLabel("Sandbox")
+        self._inventory_sandbox_sync_actions_label = QLabel(self._tr("library.sandbox"))
+        self._inventory_sandbox_sync_actions_label.setProperty("translationKey", "library.sandbox")
         _set_section_label_style(self._inventory_sandbox_sync_actions_label)
-        self._sync_selected_to_sandbox_button = QPushButton("Copy to sandbox")
+        self._sync_selected_to_sandbox_button = QPushButton(self._tr("library.copy_to_sandbox"))
         self._sync_selected_to_sandbox_button.setObjectName(
             "inventory_sync_selected_to_sandbox_button"
         )
+        self._sync_selected_to_sandbox_button.setProperty("translationKey", "library.copy_to_sandbox")
         _set_secondary_button_style(self._sync_selected_to_sandbox_button)
-        self._promote_selected_to_real_button = QPushButton("Promote to real")
+        self._promote_selected_to_real_button = QPushButton(self._tr("library.promote_to_real"))
         self._promote_selected_to_real_button.setObjectName(
             "inventory_promote_selected_to_real_button"
         )
+        self._promote_selected_to_real_button.setProperty("translationKey", "library.promote_to_real")
         _set_secondary_button_style(self._promote_selected_to_real_button)
         self._inventory_sandbox_sync_actions_widget = (
             self._build_inventory_sandbox_sync_actions_widget()
         )
-        self._inventory_real_profile_actions_label = QLabel("Profiles")
+        self._inventory_real_profile_actions_label = QLabel(self._tr("library.profiles"))
+        self._inventory_real_profile_actions_label.setProperty("translationKey", "library.profiles")
         _set_section_label_style(self._inventory_real_profile_actions_label)
         self._real_profile_combo = QComboBox()
         self._real_profile_combo.setObjectName("inventory_real_profile_combo")
-        self._create_real_profile_button = QPushButton("Create new profile...")
+        self._create_real_profile_button = QPushButton(self._tr("library.create_profile"))
         self._create_real_profile_button.setObjectName("inventory_create_real_profile_button")
+        self._create_real_profile_button.setProperty("translationKey", "library.create_profile")
         _set_secondary_button_style(self._create_real_profile_button)
-        self._delete_real_profile_button = QPushButton("Delete selected")
+        self._delete_real_profile_button = QPushButton(self._tr("library.delete_selected"))
         self._delete_real_profile_button.setObjectName("inventory_delete_real_profile_button")
+        self._delete_real_profile_button.setProperty("translationKey", "library.delete_selected")
         _set_utility_button_style(self._delete_real_profile_button)
         self._inventory_real_profile_actions_widget = (
             self._build_inventory_real_profile_actions_widget()
         )
-        self._inventory_sandbox_profile_actions_label = QLabel("Sandbox profiles")
+        self._inventory_sandbox_profile_actions_label = QLabel(self._tr("library.sandbox_profiles"))
+        self._inventory_sandbox_profile_actions_label.setProperty(
+            "translationKey",
+            "library.sandbox_profiles",
+        )
         _set_section_label_style(self._inventory_sandbox_profile_actions_label)
         self._sandbox_profile_combo = QComboBox()
         self._sandbox_profile_combo.setObjectName("inventory_sandbox_profile_combo")
-        self._create_sandbox_profile_button = QPushButton("Create new profile...")
+        self._create_sandbox_profile_button = QPushButton(self._tr("library.create_profile"))
         self._create_sandbox_profile_button.setObjectName("inventory_create_sandbox_profile_button")
+        self._create_sandbox_profile_button.setProperty("translationKey", "library.create_profile")
         _set_secondary_button_style(self._create_sandbox_profile_button)
-        self._delete_sandbox_profile_button = QPushButton("Delete selected")
+        self._delete_sandbox_profile_button = QPushButton(self._tr("library.delete_selected"))
         self._delete_sandbox_profile_button.setObjectName("inventory_delete_sandbox_profile_button")
+        self._delete_sandbox_profile_button.setProperty("translationKey", "library.delete_selected")
         _set_utility_button_style(self._delete_sandbox_profile_button)
         self._inventory_sandbox_profile_actions_widget = (
             self._build_inventory_sandbox_profile_actions_widget()
         )
-        self._compare_real_vs_sandbox_button = QPushButton("Compare real and sandbox")
+        self._compare_real_vs_sandbox_button = QPushButton(self._tr("compare.compare_real_sandbox"))
         self._compare_real_vs_sandbox_button.setObjectName("compare_run_button")
+        self._compare_real_vs_sandbox_button.setProperty(
+            "translationKey",
+            "compare.compare_real_sandbox",
+        )
         _set_primary_button_style(self._compare_real_vs_sandbox_button)
         self._compare_summary_label = QLabel(
-            "Read-only compare to see what differs between the configured real Mods path and sandbox Mods path."
+            self._tr("compare.summary")
         )
         self._compare_summary_label.setObjectName("compare_summary_label")
+        self._compare_summary_label.setProperty("translationKey", "compare.summary")
         self._compare_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._compare_summary_label)
         self._compare_summary_label.setToolTip(
-            "Run compare after changing either Mods path or archive exclusion path."
+            self._tr("compare.summary_tooltip")
+        )
+        self._compare_summary_label.setProperty(
+            "tooltipTranslationKey",
+            "compare.summary_tooltip",
         )
         self._compare_category_filter_combo = QComboBox()
         self._compare_category_filter_combo.setObjectName("compare_category_filter_combo")
         self._compare_category_filter_combo.addItem(
-            "Actionable drift",
+            self._tr("compare.actionable_drift"),
             _COMPARE_FILTER_ACTIONABLE,
         )
         self._compare_category_filter_combo.addItem(
-            "Only in real",
+            self._tr("compare.only_in_real"),
             _COMPARE_FILTER_ONLY_IN_REAL,
         )
         self._compare_category_filter_combo.addItem(
-            "Only in sandbox",
+            self._tr("compare.only_in_sandbox"),
             _COMPARE_FILTER_ONLY_IN_SANDBOX,
         )
         self._compare_category_filter_combo.addItem(
-            "Version mismatch",
+            self._tr("compare.version_mismatch"),
             _COMPARE_FILTER_VERSION_MISMATCH,
         )
         self._compare_category_filter_combo.addItem(
-            "Ambiguous match",
+            self._tr("compare.ambiguous_match"),
             _COMPARE_FILTER_AMBIGUOUS,
         )
         self._compare_category_filter_combo.addItem(
-            "Same version",
+            self._tr("compare.same_version"),
             _COMPARE_FILTER_SAME_VERSION,
         )
         self._compare_category_filter_combo.addItem(
-            "All categories",
+            self._tr("compare.all_categories"),
             _COMPARE_FILTER_ALL,
         )
         self._compare_category_filter_combo.setCurrentIndex(0)
         self._compare_category_filter_combo.setToolTip(
-            "Actionable drift is the default view. Same-version rows stay hidden until you ask for them."
+            self._tr("compare.filter_tooltip")
+        )
+        self._compare_category_filter_combo.setProperty(
+            "tooltipTranslationKey",
+            "compare.filter_tooltip",
         )
         _configure_combo_box_readability(
             self._compare_category_filter_combo,
             minimum_contents_length=18,
             sample_text="Version mismatch",
         )
-        self._compare_copy_identity_button = QPushButton("Copy mod name / UniqueID")
+        self._compare_copy_identity_button = QPushButton(self._tr("compare.copy_identity"))
         self._compare_copy_identity_button.setObjectName("compare_copy_identity_button")
+        self._compare_copy_identity_button.setProperty("translationKey", "compare.copy_identity")
         self._compare_copy_identity_button.setEnabled(False)
         self._compare_copy_identity_button.setToolTip(
             "Select a compare row first."
         )
         _set_utility_button_style(self._compare_copy_identity_button)
         self._compare_category_help_label = QLabel(
-            "Only in real / sandbox means the mod exists on one side only. "
-            "Version mismatch means the same UniqueID exists in both places with different versions. "
-            "Ambiguous match means duplicate folders share one UniqueID, so compare cannot identify one clean match."
+            self._tr("compare.category_help")
         )
         self._compare_category_help_label.setObjectName("compare_category_help_label")
+        self._compare_category_help_label.setProperty("translationKey", "compare.category_help")
         self._compare_category_help_label.setWordWrap(True)
         _set_auxiliary_label_style(self._compare_category_help_label)
         self._compare_category_help_label.setVisible(False)
         self._compare_results_table = QTableWidget(0, 5)
         self._compare_results_table.setObjectName("compare_results_table")
         self._compare_results_table.setHorizontalHeaderLabels(
-            ["Mod", "Compare", "Real ver.", "Sandbox ver.", "Notes"]
+            [
+                self._tr("table.mod"),
+                self._tr("table.compare"),
+                self._tr("table.real_version"),
+                self._tr("table.sandbox_version"),
+                self._tr("table.notes"),
+            ]
         )
         self._compare_results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._compare_results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1549,20 +1720,23 @@ class MainWindow(QMainWindow):
             minimum_section_size=64,
             initial_widths=(230, 140, 96, 110, 240),
         )
-        self._open_remote_page_button = QPushButton("Open page")
+        self._open_remote_page_button = QPushButton(self._tr("library.open_page"))
         self._open_remote_page_button.setObjectName("inventory_open_remote_page_button")
+        self._open_remote_page_button.setProperty("translationKey", "library.open_page")
         self._open_remote_page_button.setEnabled(False)
         self._open_remote_page_button.setToolTip(
             "Select an actionable mod row to open its page."
         )
-        self._find_source_hint_button = QPushButton("Find source")
+        self._find_source_hint_button = QPushButton(self._tr("library.find_source"))
         self._find_source_hint_button.setObjectName("inventory_find_source_hint_button")
+        self._find_source_hint_button.setProperty("translationKey", "library.find_source")
         self._find_source_hint_button.setEnabled(False)
         self._find_source_hint_button.setToolTip(
             "Select a blocked mod row to search Discover for SMAPI compatibility hints."
         )
-        self._use_suggested_source_button = QPushButton("Suggest source")
+        self._use_suggested_source_button = QPushButton(self._tr("library.suggest_source"))
         self._use_suggested_source_button.setObjectName("inventory_use_suggested_source_button")
+        self._use_suggested_source_button.setProperty("translationKey", "library.suggest_source")
         self._use_suggested_source_button.setEnabled(False)
         self._use_suggested_source_button.setToolTip(
             "Select a blocked mod row to search Discover, auto-save a safe source when possible, or prefill Manual source from the best available page hint."
@@ -1593,10 +1767,15 @@ class MainWindow(QMainWindow):
         self._steam_auto_start_checkbox.setObjectName("setup_steam_auto_start_checkbox")
         self._steam_auto_start_checkbox.setChecked(True)
         self._steam_auto_start_checkbox.setToolTip(self._tr("setup.steam_auto_start_tooltip"))
-        self._overwrite_checkbox = QCheckBox("Enable archive-aware replace")
+        self._overwrite_checkbox = QCheckBox(self._tr("install.overwrite_checkbox"))
         self._overwrite_checkbox.setObjectName("plan_install_overwrite_checkbox")
+        self._overwrite_checkbox.setProperty("translationKey", "install.overwrite_checkbox")
         self._overwrite_checkbox.setToolTip(
-            "Archive the existing target before replacing it during planning."
+            self._tr("install.overwrite_tooltip")
+        )
+        self._overwrite_checkbox.setProperty(
+            "tooltipTranslationKey",
+            "install.overwrite_tooltip",
         )
         self._install_target_combo = QComboBox()
         self._install_target_combo.setObjectName("plan_install_target_combo")
@@ -1614,16 +1793,20 @@ class MainWindow(QMainWindow):
             sample_text="Sandbox Mods destination (safe/test)",
         )
         self._scan_target_combo = QComboBox()
-        self._scan_target_combo.addItem("Real Mods path (scan only)", SCAN_TARGET_CONFIGURED_REAL_MODS)
-        self._scan_target_combo.addItem("Sandbox Mods path (scan only)", SCAN_TARGET_SANDBOX_MODS)
+        self._scan_target_combo.addItem(self._tr("library.scan_target.real"), SCAN_TARGET_CONFIGURED_REAL_MODS)
+        self._scan_target_combo.addItem(self._tr("library.scan_target.sandbox"), SCAN_TARGET_SANDBOX_MODS)
         self._intake_result_combo = QComboBox()
         self._packages_compare_target_combo = QComboBox()
         self._packages_compare_target_combo.setObjectName("packages_compare_target_combo")
-        self._packages_compare_target_combo.addItem("Real Mods", SCAN_TARGET_CONFIGURED_REAL_MODS)
-        self._packages_compare_target_combo.addItem("Sandbox Mods", SCAN_TARGET_SANDBOX_MODS)
-        self._packages_compare_target_label = QLabel("Compare against")
+        self._packages_compare_target_combo.addItem(self._tr("packages.real_mods"), SCAN_TARGET_CONFIGURED_REAL_MODS)
+        self._packages_compare_target_combo.addItem(self._tr("packages.sandbox_mods"), SCAN_TARGET_SANDBOX_MODS)
+        self._packages_compare_target_label = QLabel(self._tr("packages.compare_against"))
+        self._packages_compare_target_label.setProperty(
+            "translationKey",
+            "packages.compare_against",
+        )
         self._packages_compare_target_summary_label = QLabel(
-            "Package status compares against Real Mods until you choose Sandbox Mods."
+            self._tr("packages.compare_target_summary")
         )
         self._packages_compare_target_summary_label.setObjectName(
             "packages_compare_target_summary_label"
@@ -1652,43 +1835,53 @@ class MainWindow(QMainWindow):
         self._package_queue_filter_input = QLineEdit()
         self._package_queue_filter_input.setObjectName("packages_queue_filter_input")
         self._package_queue_filter_input.setPlaceholderText(
-            "Filter queue by name or status (e.g. not installed)"
+            self._tr("packages.queue_filter_placeholder")
+        )
+        self._package_queue_filter_input.setProperty(
+            "placeholderTranslationKey",
+            "packages.queue_filter_placeholder",
         )
         self._package_queue_filter_input.textChanged.connect(self._refresh_package_queue)
         self._package_queue_source_filter_combo = QComboBox()
         self._package_queue_source_filter_combo.setObjectName(
             "packages_queue_source_filter_combo"
         )
-        self._package_queue_source_filter_combo.addItem("All watcher paths", "all")
-        self._package_queue_source_filter_combo.addItem("Watched path 1", "watched_path_1")
-        self._package_queue_source_filter_combo.addItem("Watched path 2", "watched_path_2")
+        self._package_queue_source_filter_combo.addItem(self._tr("packages.all_watcher_paths"), "all")
+        self._package_queue_source_filter_combo.addItem(self._tr("packages.watched_path_1_short"), "watched_path_1")
+        self._package_queue_source_filter_combo.addItem(self._tr("packages.watched_path_2_short"), "watched_path_2")
         self._package_queue_source_filter_combo.currentIndexChanged.connect(
             self._refresh_package_queue
         )
-        self._package_queue_select_all_button = QPushButton("Select all")
+        self._package_queue_select_all_button = QPushButton(self._tr("packages.select_all"))
         self._package_queue_select_all_button.setObjectName("packages_queue_select_all_button")
+        self._package_queue_select_all_button.setProperty("translationKey", "packages.select_all")
         self._package_queue_select_all_button.clicked.connect(
             self._on_select_all_visible_package_queue_items
         )
-        self._package_queue_deselect_all_button = QPushButton("Deselect all")
+        self._package_queue_deselect_all_button = QPushButton(self._tr("packages.deselect_all"))
         self._package_queue_deselect_all_button.setObjectName(
             "packages_queue_deselect_all_button"
         )
+        self._package_queue_deselect_all_button.setProperty("translationKey", "packages.deselect_all")
         self._package_queue_deselect_all_button.clicked.connect(
             self._on_deselect_all_visible_package_queue_items
         )
-        self._plan_selected_intake_button = QPushButton("Open Install")
+        self._plan_selected_intake_button = QPushButton(self._tr("packages.open_install"))
         self._plan_selected_intake_button.setObjectName("packages_open_install_button")
+        self._plan_selected_intake_button.setProperty("translationKey", "packages.open_install")
         _set_primary_button_style(self._plan_selected_intake_button)
         self._plan_selected_intake_button.setEnabled(False)
-        self._browse_package_button = QPushButton("Add package")
+        self._browse_package_button = QPushButton(self._tr("packages.add_package"))
         self._browse_package_button.setObjectName("packages_add_package_button")
+        self._browse_package_button.setProperty("translationKey", "packages.add_package")
         _set_secondary_button_style(self._browse_package_button)
-        self._stage_update_intake_button = QPushButton("Open as update")
+        self._stage_update_intake_button = QPushButton(self._tr("packages.open_as_update"))
         self._stage_update_intake_button.setObjectName("packages_intake_stage_update_button")
+        self._stage_update_intake_button.setProperty("translationKey", "packages.open_as_update")
         self._stage_update_intake_button.setVisible(False)
-        self._install_archive_label = QLabel("Archive path for selected install destination")
+        self._install_archive_label = QLabel(self._tr("packages.install_archive_path"))
         self._install_archive_label.setObjectName("plan_install_archive_label")
+        self._install_archive_label.setProperty("translationKey", "packages.install_archive_path")
         self._staged_package_label = QLineEdit()
         self._staged_package_label.setObjectName("plan_install_staged_package_value")
         self._staged_package_label.setReadOnly(True)
@@ -1701,33 +1894,35 @@ class MainWindow(QMainWindow):
         )
         self._install_history_filter_combo = QComboBox()
         self._install_history_filter_combo.setObjectName("recovery_selector_filter_combo")
-        self._install_history_filter_combo.addItem("all", "all")
-        self._install_history_filter_combo.addItem("ready", "ready")
-        self._install_history_filter_combo.addItem("blocked", "blocked")
-        self._install_history_filter_combo.addItem("legacy", "legacy")
+        self._install_history_filter_combo.addItem(self._tr("history.filter.all"), "all")
+        self._install_history_filter_combo.addItem(self._tr("history.filter.ready"), "ready")
+        self._install_history_filter_combo.addItem(self._tr("history.filter.blocked"), "blocked")
+        self._install_history_filter_combo.addItem(self._tr("history.filter.legacy"), "legacy")
         self._recovery_selection_summary_label = QLabel(
-            "Choose a recorded install to review recovery safety before writing changes."
+            self._tr("history.selection_summary")
         )
         self._recovery_selection_summary_label.setObjectName(
             "recovery_selection_summary_label"
         )
         self._recovery_selection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._recovery_selection_summary_label)
-        self._inspect_recovery_button = QPushButton("Review recovery")
+        self._inspect_recovery_button = QPushButton(self._tr("history.review_recovery"))
         self._inspect_recovery_button.setObjectName("recovery_inspection_button")
-        self._run_recovery_button = QPushButton("Apply recovery")
+        self._inspect_recovery_button.setProperty("translationKey", "history.review_recovery")
+        self._run_recovery_button = QPushButton(self._tr("history.apply_recovery"))
         self._run_recovery_button.setObjectName("recovery_execute_button")
-        self._plan_review_summary_label = QLabel(_NO_PLAN_REVIEW_SUMMARY_TEXT)
+        self._run_recovery_button.setProperty("translationKey", "history.apply_recovery")
+        self._plan_review_summary_label = QLabel(_no_plan_review_summary_text())
         self._plan_review_summary_label.setObjectName("plan_install_review_summary_label")
         self._plan_review_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._plan_review_summary_label)
-        self._plan_review_explanation_label = QLabel(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
+        self._plan_review_explanation_label = QLabel(_no_plan_review_explanation_text())
         self._plan_review_explanation_label.setObjectName(
             "plan_install_review_explanation_label"
         )
         self._plan_review_explanation_label.setWordWrap(True)
         _set_auxiliary_label_style(self._plan_review_explanation_label)
-        self._plan_facts_label = QLabel(_NO_PLAN_FACTS_TEXT)
+        self._plan_facts_label = QLabel(_no_plan_facts_text())
         self._plan_facts_label.setObjectName("plan_install_facts_label")
         self._plan_facts_label.setWordWrap(True)
         _set_auxiliary_label_style(self._plan_facts_label)
@@ -1760,7 +1955,14 @@ class MainWindow(QMainWindow):
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
-            ["Name", "UniqueID", "Installed ver.", "Remote ver.", "Update status", "Type"]
+            [
+                self._tr("table.name"),
+                self._tr("table.unique_id"),
+                self._tr("table.installed_version"),
+                self._tr("table.remote_version"),
+                self._tr("table.update_status"),
+                self._tr("table.type"),
+            ]
         )
         self._mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1782,7 +1984,16 @@ class MainWindow(QMainWindow):
         self._discovery_table = QTableWidget(0, 8)
         self._discovery_table.setObjectName("discovery_results_table")
         self._discovery_table.setHorizontalHeaderLabels(
-            ["Name", "UniqueID", "Author", "Source", "Compatibility", "App context", "Provider relation", "Page"]
+            [
+                self._tr("table.name"),
+                self._tr("table.unique_id"),
+                self._tr("table.author"),
+                self._tr("table.source"),
+                self._tr("table.compatibility"),
+                self._tr("table.app_context"),
+                self._tr("table.provider_relation"),
+                self._tr("table.page"),
+            ]
         )
         self._discovery_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._discovery_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1805,13 +2016,13 @@ class MainWindow(QMainWindow):
         self._archive_table.setObjectName("archive_results_table")
         self._archive_table.setHorizontalHeaderLabels(
             [
-                "Archive source",
-                "Archived folder",
-                "Restore target",
-                "Mod name",
-                "UniqueID",
-                "Version",
-                "Retention",
+                self._tr("table.archive_source"),
+                self._tr("table.archived_folder"),
+                self._tr("table.restore_target"),
+                self._tr("table.mod_name"),
+                self._tr("table.unique_id"),
+                self._tr("table.version"),
+                self._tr("table.retention"),
             ]
         )
         self._archive_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1906,80 +2117,69 @@ class MainWindow(QMainWindow):
         )
         self._package_inspection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._package_inspection_summary_label)
-        self._zip_selection_summary_label = QLabel(
-            "No packages queued yet."
-        )
+        self._zip_selection_summary_label = QLabel(self._tr("packages.no_packages_queued"))
         self._zip_selection_summary_label.setObjectName(
             "packages_intake_zip_selection_summary_label"
         )
         self._zip_selection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_selection_summary_label)
-        self._zip_staging_rule_label = QLabel(
-            "Inspect packages, then open Install."
-        )
+        self._zip_staging_rule_label = QLabel(self._tr("packages.staging_rule"))
         self._zip_staging_rule_label.setObjectName(
             "packages_intake_staging_rule_label"
         )
         self._zip_staging_rule_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_staging_rule_label)
-        self._packages_workspace_state_label = QLabel(
-            "Watch downloads, queue packages, then open Install."
-        )
+        self._packages_workspace_state_label = QLabel(self._tr("packages.workspace_state"))
         self._packages_workspace_state_label.setObjectName(
             "packages_workspace_state_label"
         )
         self._packages_workspace_state_label.setWordWrap(True)
         _set_auxiliary_label_style(self._packages_workspace_state_label)
-        self._plan_install_state_label = QLabel(
-            "No package staged yet. Choose one in Packages to open Install."
-        )
+        self._plan_install_state_label = QLabel(self._tr("install.no_package_staged"))
         self._plan_install_state_label.setObjectName("plan_install_state_label")
         self._plan_install_state_label.setWordWrap(True)
         _set_auxiliary_label_style(self._plan_install_state_label)
-        self._backup_bundle_inspection_summary_label = QLabel(
-            "Inspect a backup bundle to review what it contains before restoring anything."
-        )
+        self._backup_bundle_inspection_summary_label = QLabel(self._tr("setup.inspect_backup_summary"))
         self._backup_bundle_inspection_summary_label.setObjectName(
             "setup_backup_bundle_inspection_summary_label"
         )
         self._backup_bundle_inspection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._backup_bundle_inspection_summary_label)
         self._restore_import_planning_summary_label = QLabel(
-            _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT
+            _no_restore_import_planning_summary_text()
         )
         self._restore_import_planning_summary_label.setObjectName(
             "setup_restore_import_planning_summary_label"
         )
         self._restore_import_planning_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._restore_import_planning_summary_label)
-        self._active_backup_bundle_label = QLabel(_NO_ACTIVE_BACKUP_BUNDLE_TEXT)
+        self._active_backup_bundle_label = QLabel(_no_active_backup_bundle_text())
         self._active_backup_bundle_label.setObjectName("setup_active_backup_bundle_label")
         self._active_backup_bundle_label.setWordWrap(True)
         _set_auxiliary_label_style(self._active_backup_bundle_label)
-        self._archive_state_hint_label = QLabel(
-            "Archived entries will appear here after archive, recovery, or restore-safe actions."
-        )
+        self._archive_state_hint_label = QLabel(self._tr("archive.state_hint"))
         self._archive_state_hint_label.setObjectName("archive_state_hint_label")
         self._archive_state_hint_label.setWordWrap(True)
         _set_auxiliary_label_style(self._archive_state_hint_label)
 
-        self._status_strip_group = GlobalStatusStrip()
+        self._status_strip_group = GlobalStatusStrip(localizer=self._localizer)
         self._status_strip_label = self._status_strip_group.current_status_label
         self._top_context_expanded = True
-        self._top_context_toggle_button = QPushButton("Hide details")
+        self._top_context_toggle_button = QPushButton(self._tr("top_context.hide_details"))
         self._top_context_toggle_button.setObjectName("top_context_toggle_button")
+        self._top_context_toggle_button.setProperty("translationKey", "top_context.hide_details")
         self._top_context_toggle_button.clicked.connect(self._toggle_top_context_surface)
         _set_utility_button_style(self._top_context_toggle_button)
-        self._scan_context_label = QLabel("Not set")
+        self._scan_context_label = QLabel(self._tr("status.not_set"))
         self._scan_context_label.setObjectName("top_context_scan_source_value")
-        self._install_context_label = QLabel("Not set")
+        self._install_context_label = QLabel(self._tr("status.not_set"))
         self._install_context_label.setObjectName("top_context_install_destination_value")
-        self._environment_status_label = QLabel("Not checked")
+        self._environment_status_label = QLabel(self._tr("status.not_checked"))
         self._environment_status_label.setObjectName("top_context_environment_status_value")
-        self._smapi_update_status_label = QLabel("Not checked")
-        self._smapi_log_status_label = QLabel("Not checked")
+        self._smapi_update_status_label = QLabel(self._tr("status.not_checked"))
+        self._smapi_log_status_label = QLabel(self._tr("status.not_checked"))
         self._smapi_troubleshooting_summary_label = QLabel(
-            "No SMAPI log parsed yet. Launch with SMAPI, then check the latest log."
+            self._tr("library.smapi_log_empty")
         )
         self._smapi_troubleshooting_summary_label.setObjectName(
             "mods_smapi_troubleshooting_summary_label"
@@ -1994,9 +2194,13 @@ class MainWindow(QMainWindow):
             minimum_contents_length=22,
             sample_text="Pathoschild.ContentPatcher",
         )
-        self._open_smapi_dependency_in_discover_button = QPushButton("Open in Discover")
+        self._open_smapi_dependency_in_discover_button = QPushButton(self._tr("library.open_in_discover"))
         self._open_smapi_dependency_in_discover_button.setObjectName(
             "mods_smapi_dependency_discover_button"
+        )
+        self._open_smapi_dependency_in_discover_button.setProperty(
+            "translationKey",
+            "library.open_in_discover",
         )
         self._open_smapi_dependency_in_discover_button.clicked.connect(
             self._on_open_smapi_dependency_in_discover
@@ -2021,11 +2225,11 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._nexus_status_label = QLabel("Not configured")
+        self._nexus_status_label = QLabel(self._tr("status.not_configured"))
         self._nexus_status_label.setObjectName("top_context_runtime_nexus_value")
-        self._watch_status_label = QLabel("Stopped")
-        self._operation_state_label = QLabel("Idle")
-        self._sandbox_launch_status_label = QLabel("Needs sandbox setup")
+        self._watch_status_label = QLabel(self._tr("status.stopped"))
+        self._operation_state_label = QLabel(self._tr("status.idle"))
+        self._sandbox_launch_status_label = QLabel(self._tr("status.needs_sandbox_setup"))
         self._sandbox_launch_status_label.setObjectName(
             "top_context_runtime_sandbox_launch_value"
         )
@@ -2440,9 +2644,9 @@ class MainWindow(QMainWindow):
 
         page_layout.addWidget(
             self._build_page_header(
-                eyebrow="Installed mods",
-                title="Library",
-                subtitle="Scan mods, check updates, and launch the game.",
+                eyebrow=self._tr("library.page.eyebrow"),
+                title=self._tr("workspace.library"),
+                subtitle=self._tr("library.page.subtitle"),
             )
         )
 
@@ -2459,17 +2663,22 @@ class MainWindow(QMainWindow):
         workspace_splitter.setHandleWidth(6)
         workspace_splitter.setOpaqueResize(True)
 
-        table_panel = QGroupBox("Library")
+        table_panel = QGroupBox(self._tr("library.table"))
         table_panel.setObjectName("mods_inventory_table_group")
+        table_panel.setProperty("translationKey", "library.table")
         table_layout = QVBoxLayout(table_panel)
         table_layout.setContentsMargins(11, 9, 11, 11)
         table_layout.setSpacing(6)
 
         inventory_filter_row = QHBoxLayout()
         inventory_filter_row.setSpacing(8)
-        inventory_filter_row.addWidget(QLabel("Filter"))
+        inventory_filter_label = QLabel(self._tr("library.filter"))
+        inventory_filter_label.setProperty("translationKey", "library.filter")
+        inventory_filter_row.addWidget(inventory_filter_label)
         inventory_filter_row.addWidget(self._mods_filter_input, 1)
-        inventory_filter_row.addWidget(QLabel("Updates"))
+        inventory_updates_label = QLabel(self._tr("library.updates"))
+        inventory_updates_label.setProperty("translationKey", "library.updates")
+        inventory_filter_row.addWidget(inventory_updates_label)
         inventory_filter_row.addWidget(self._mods_update_actionability_filter_combo)
         inventory_filter_row.addWidget(self._mods_filter_stats_label)
         table_layout.addLayout(inventory_filter_row)
@@ -2507,9 +2716,10 @@ class MainWindow(QMainWindow):
         inspector_content_layout.setSpacing(8)
 
         inspector_intro = QLabel(
-            "Use the selected row for update guidance, source intent, and profile actions."
+            self._tr("library.inspector_intro")
         )
         inspector_intro.setObjectName("mods_selection_context_intro_label")
+        inspector_intro.setProperty("translationKey", "library.inspector_intro")
         inspector_intro.setWordWrap(True)
         _set_auxiliary_label_style(inspector_intro)
         inspector_intro.setSizePolicy(
@@ -2528,8 +2738,9 @@ class MainWindow(QMainWindow):
         selection_summary_layout.addWidget(self._inventory_blocked_detail_label)
         selection_summary_layout.addWidget(self._prepare_selected_updates_button, 0)
 
-        selected_actions_card = QGroupBox("Actions")
+        selected_actions_card = QGroupBox(self._tr("library.actions"))
         selected_actions_card.setObjectName("mods_selected_actions_group")
+        selected_actions_card.setProperty("translationKey", "library.actions")
         selected_actions_card.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Maximum,
@@ -2538,9 +2749,10 @@ class MainWindow(QMainWindow):
         selected_actions_layout.setContentsMargins(9, 8, 9, 9)
         selected_actions_layout.setSpacing(5)
         selected_actions_hint = QLabel(
-            "Archive the selected mod or restore an archived copy."
+            self._tr("library.actions_hint")
         )
         selected_actions_hint.setWordWrap(True)
+        selected_actions_hint.setProperty("translationKey", "library.actions_hint")
         _set_auxiliary_label_style(selected_actions_hint)
         selected_actions_hint.setVisible(False)
         selected_actions_layout.addWidget(selected_actions_hint)
@@ -2558,8 +2770,9 @@ class MainWindow(QMainWindow):
         inspector_content_layout.addWidget(self._inventory_sandbox_sync_actions_widget)
         inspector_content_layout.addWidget(self._inventory_source_intent_actions_widget)
         inspector_content_layout.addWidget(flow_hint_label)
-        smapi_troubleshooting_group = QGroupBox("SMAPI log")
+        smapi_troubleshooting_group = QGroupBox(self._tr("library.smapi_log_group"))
         smapi_troubleshooting_group.setObjectName("mods_smapi_troubleshooting_group")
+        smapi_troubleshooting_group.setProperty("translationKey", "library.smapi_log_group")
         smapi_troubleshooting_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Maximum,
@@ -2718,7 +2931,7 @@ class MainWindow(QMainWindow):
         execute_restore_import_button.setObjectName("setup_execute_restore_import_button")
         execute_restore_import_button.clicked.connect(self._on_execute_restore_import)
         execute_restore_import_button.setEnabled(False)
-        execute_restore_import_button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
+        execute_restore_import_button.setToolTip(_no_restore_import_execution_tooltip())
         _set_secondary_button_style(execute_restore_import_button)
         self._execute_restore_import_button = execute_restore_import_button
         self._setup_translatable_buttons = {
@@ -2835,16 +3048,19 @@ class MainWindow(QMainWindow):
         source_row = QHBoxLayout()
         source_row.setContentsMargins(0, 0, 0, 0)
         source_row.setSpacing(8)
-        scan_source_label = QLabel("Source")
+        scan_source_label = QLabel(self._tr("library.scan_source"))
+        scan_source_label.setProperty("translationKey", "library.scan_source")
         _set_auxiliary_label_style(scan_source_label)
         source_row.addWidget(scan_source_label)
         source_row.addWidget(self._scan_target_combo, 1)
-        self._scan_button = QPushButton("Scan mods")
+        self._scan_button = QPushButton(self._tr("library.scan_mods"))
         self._scan_button.clicked.connect(self._on_scan)
+        self._scan_button.setProperty("translationKey", "library.scan_mods")
         _set_primary_button_style(self._scan_button)
         source_row.addWidget(self._scan_button)
-        self._check_updates_button = QPushButton("Check updates")
+        self._check_updates_button = QPushButton(self._tr("library.check_updates"))
         self._check_updates_button.clicked.connect(self._on_check_updates)
+        self._check_updates_button.setProperty("translationKey", "library.check_updates")
         _set_secondary_button_style(self._check_updates_button)
         source_row.addWidget(self._check_updates_button)
         self._open_remote_page_button.clicked.connect(self._on_open_remote_page)
@@ -2857,30 +3073,35 @@ class MainWindow(QMainWindow):
         _set_utility_button_style(self._use_suggested_source_button)
         source_row.addWidget(self._use_suggested_source_button)
         inventory_action_band_layout.addLayout(source_row)
-        self._remove_mod_button = QPushButton("Archive selected mod")
+        self._remove_mod_button = QPushButton(self._tr("library.archive_selected_mod"))
         self._remove_mod_button.clicked.connect(self._on_remove_selected_mod)
+        self._remove_mod_button.setProperty("translationKey", "library.archive_selected_mod")
         _set_utility_button_style(self._remove_mod_button)
-        self._rollback_mod_button = QPushButton("Restore archived mod")
+        self._rollback_mod_button = QPushButton(self._tr("library.restore_archived_mod"))
         self._rollback_mod_button.clicked.connect(self._on_rollback_selected_mod)
+        self._rollback_mod_button.setProperty("translationKey", "library.restore_archived_mod")
         _set_utility_button_style(self._rollback_mod_button)
-        self._launch_vanilla_button = QPushButton("Launch Stardew Valley")
+        self._launch_vanilla_button = QPushButton(self._tr("library.launch_stardew"))
         self._launch_vanilla_button.clicked.connect(self._on_launch_vanilla)
+        self._launch_vanilla_button.setProperty("translationKey", "library.launch_stardew")
         _set_secondary_button_style(self._launch_vanilla_button)
         self._launch_vanilla_button.setFixedHeight(26)
         self._launch_vanilla_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._launch_smapi_button = QPushButton("Launch with SMAPI")
+        self._launch_smapi_button = QPushButton(self._tr("library.launch_smapi"))
         self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
+        self._launch_smapi_button.setProperty("translationKey", "library.launch_smapi")
         _set_primary_button_style(self._launch_smapi_button)
         self._launch_smapi_button.setFixedHeight(27)
         self._launch_smapi_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._launch_sandbox_dev_button = QPushButton("Launch sandbox test")
+        self._launch_sandbox_dev_button = QPushButton(self._tr("library.launch_sandbox"))
         self._launch_sandbox_dev_button.setObjectName("launch_sandbox_dev_button")
+        self._launch_sandbox_dev_button.setProperty("translationKey", "library.launch_sandbox")
         self._launch_sandbox_dev_button.clicked.connect(self._on_launch_sandbox_dev)
         _set_secondary_button_style(self._launch_sandbox_dev_button)
         self._launch_sandbox_dev_button.setFixedHeight(26)
@@ -2900,7 +3121,7 @@ class MainWindow(QMainWindow):
         inventory_controls_panel_layout.addWidget(launch_actions_widget)
         inventory_tab_layout.addWidget(inventory_controls_panel)
         inventory_tab_layout.addStretch(1)
-        inventory_controls_tabs.addTab(inventory_tab, "Library")
+        inventory_controls_tabs.addTab(inventory_tab, self._tr("workspace.library"))
 
         game_smapi_tab = QWidget()
         game_smapi_tab.setObjectName("mods_smapi_controls_tab")
@@ -2912,32 +3133,36 @@ class MainWindow(QMainWindow):
         game_smapi_panel_layout = QVBoxLayout(game_smapi_panel)
         game_smapi_panel_layout.setContentsMargins(10, 10, 10, 10)
         game_smapi_panel_layout.setSpacing(8)
-        self._check_smapi_update_button = QPushButton("Check SMAPI version")
+        self._check_smapi_update_button = QPushButton(self._tr("library.check_smapi_version"))
         self._check_smapi_update_button.clicked.connect(self._on_check_smapi_update)
+        self._check_smapi_update_button.setProperty("translationKey", "library.check_smapi_version")
         _set_utility_button_style(self._check_smapi_update_button)
         self._check_smapi_update_button.setFixedHeight(24)
         self._check_smapi_update_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._check_smapi_log_button = QPushButton("Check latest SMAPI log")
+        self._check_smapi_log_button = QPushButton(self._tr("library.check_smapi_log"))
         self._check_smapi_log_button.clicked.connect(self._on_check_smapi_log)
+        self._check_smapi_log_button.setProperty("translationKey", "library.check_smapi_log")
         _set_utility_button_style(self._check_smapi_log_button)
         self._check_smapi_log_button.setFixedHeight(24)
         self._check_smapi_log_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._load_smapi_log_button = QPushButton("Open SMAPI log")
+        self._load_smapi_log_button = QPushButton(self._tr("library.open_smapi_log"))
         self._load_smapi_log_button.clicked.connect(self._on_load_smapi_log)
+        self._load_smapi_log_button.setProperty("translationKey", "library.open_smapi_log")
         _set_utility_button_style(self._load_smapi_log_button)
         self._load_smapi_log_button.setFixedHeight(24)
         self._load_smapi_log_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self._open_smapi_page_button = QPushButton("Open SMAPI website")
+        self._open_smapi_page_button = QPushButton(self._tr("library.open_smapi_website"))
         self._open_smapi_page_button.clicked.connect(self._on_open_smapi_page)
+        self._open_smapi_page_button.setProperty("translationKey", "library.open_smapi_website")
         _set_utility_button_style(self._open_smapi_page_button)
         self._open_smapi_page_button.setFixedHeight(24)
         self._open_smapi_page_button.setSizePolicy(
@@ -2965,10 +3190,11 @@ class MainWindow(QMainWindow):
         inventory_controls_tabs.addTab(game_smapi_tab, "SMAPI")
 
         flow_hint_label = QLabel(
-            "Scanning and checking are read-only. Copy, promote, install, recover, and restore are explicit write actions."
+            self._tr("library.flow_hint")
         )
         flow_hint_label.setWordWrap(True)
         flow_hint_label.setObjectName("compact_hint_label")
+        flow_hint_label.setProperty("translationKey", "library.flow_hint")
         _set_auxiliary_label_style(flow_hint_label)
         flow_hint_label.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -2989,8 +3215,9 @@ class MainWindow(QMainWindow):
         packages_top_grid_layout.setContentsMargins(0, 0, 0, 0)
         packages_top_grid_layout.setHorizontalSpacing(8)
         packages_top_grid_layout.setVerticalSpacing(8)
-        inspect_group = QGroupBox("Added package")
+        inspect_group = QGroupBox(self._tr("packages.added_package"))
         inspect_group.setObjectName("packages_import_group")
+        inspect_group.setProperty("translationKey", "packages.added_package")
         inspect_group.setFlat(True)
         inspect_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         inspect_group.setVisible(False)
@@ -3001,13 +3228,16 @@ class MainWindow(QMainWindow):
         inspect_layout.setHorizontalSpacing(8)
         inspect_layout.setVerticalSpacing(4)
         inspect_layout.setColumnStretch(1, 1)
-        inspect_layout.addWidget(QLabel("Downloaded zip file(s)"), 0, 0)
+        downloaded_zip_label = QLabel(self._tr("packages.downloaded_zip_files"))
+        downloaded_zip_label.setProperty("translationKey", "packages.downloaded_zip_files")
+        inspect_layout.addWidget(downloaded_zip_label, 0, 0)
         inspect_layout.addWidget(self._zip_path_input, 0, 1)
         inspect_layout.addWidget(self._zip_selection_summary_label, 1, 0, 1, 2)
         inspect_layout.addWidget(self._zip_staging_rule_label, 2, 0, 1, 2)
 
-        watcher_group = QGroupBox("Watched folders")
+        watcher_group = QGroupBox(self._tr("packages.watched_folders"))
         watcher_group.setObjectName("packages_watcher_group")
+        watcher_group.setProperty("translationKey", "packages.watched_folders")
         watcher_group.setFlat(True)
         watcher_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         watcher_layout = QGridLayout(watcher_group)
@@ -3016,11 +3246,13 @@ class MainWindow(QMainWindow):
         watcher_layout.setVerticalSpacing(3)
         watcher_layout.setColumnStretch(1, 1)
         watch_actions = QHBoxLayout()
-        browse_downloads_button = QPushButton("Choose folder")
+        browse_downloads_button = QPushButton(self._tr("packages.choose_folder"))
         browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
+        browse_downloads_button.setProperty("translationKey", "packages.choose_folder")
         _set_utility_button_style(browse_downloads_button)
-        open_downloads_button = QPushButton("Open")
+        open_downloads_button = QPushButton(self._tr("packages.open"))
         open_downloads_button.setObjectName("setup_open_watched_downloads_button")
+        open_downloads_button.setProperty("translationKey", "packages.open")
         open_downloads_button.clicked.connect(self._on_open_watched_downloads_folder)
         _set_utility_button_style(open_downloads_button)
         primary_path_actions_widget = QWidget()
@@ -3031,15 +3263,17 @@ class MainWindow(QMainWindow):
         primary_path_actions_layout.addWidget(browse_downloads_button)
         primary_path_actions_layout.addWidget(open_downloads_button)
         primary_path_actions_layout.addStretch(1)
-        browse_secondary_downloads_button = QPushButton("Choose folder 2")
+        browse_secondary_downloads_button = QPushButton(self._tr("packages.choose_folder_2"))
         browse_secondary_downloads_button.clicked.connect(
             self._on_browse_secondary_watched_downloads
         )
+        browse_secondary_downloads_button.setProperty("translationKey", "packages.choose_folder_2")
         _set_utility_button_style(browse_secondary_downloads_button)
-        open_secondary_downloads_button = QPushButton("Open")
+        open_secondary_downloads_button = QPushButton(self._tr("packages.open"))
         open_secondary_downloads_button.setObjectName(
             "setup_open_secondary_watched_downloads_button"
         )
+        open_secondary_downloads_button.setProperty("translationKey", "packages.open")
         open_secondary_downloads_button.clicked.connect(
             self._on_open_secondary_watched_downloads_folder
         )
@@ -3054,18 +3288,19 @@ class MainWindow(QMainWindow):
         secondary_path_actions_layout.addWidget(browse_secondary_downloads_button)
         secondary_path_actions_layout.addWidget(open_secondary_downloads_button)
         secondary_path_actions_layout.addStretch(1)
-        watcher_scope_label = QLabel(
-            "Both watcher folders feed one package queue."
-        )
+        watcher_scope_label = QLabel(self._tr("packages.scope"))
         watcher_scope_label.setWordWrap(True)
+        watcher_scope_label.setProperty("translationKey", "packages.scope")
         _set_auxiliary_label_style(watcher_scope_label)
         watcher_scope_label.setObjectName("packages_watcher_scope_label")
-        start_watch_button = QPushButton("Start intake watch")
+        start_watch_button = QPushButton(self._tr("packages.start_watch"))
         start_watch_button.clicked.connect(self._on_start_watch)
+        start_watch_button.setProperty("translationKey", "packages.start_watch")
         _set_secondary_button_style(start_watch_button)
         watch_actions.addWidget(start_watch_button)
-        stop_watch_button = QPushButton("Stop intake watch")
+        stop_watch_button = QPushButton(self._tr("packages.stop_watch"))
         stop_watch_button.clicked.connect(self._on_stop_watch)
+        stop_watch_button.setProperty("translationKey", "packages.stop_watch")
         _set_secondary_button_style(stop_watch_button)
         watch_actions.addWidget(stop_watch_button)
         watch_actions.addStretch(1)
@@ -3075,10 +3310,14 @@ class MainWindow(QMainWindow):
         )
         watcher_runtime_actions_widget.setLayout(watch_actions)
         watcher_layout.addWidget(watcher_runtime_actions_widget, 0, 1, 1, 4)
-        watcher_layout.addWidget(QLabel("Watched downloads path 1"), 1, 0)
+        watched_downloads_label = QLabel(self._tr("packages.watched_path_1"))
+        watched_downloads_label.setProperty("translationKey", "packages.watched_path_1")
+        watcher_layout.addWidget(watched_downloads_label, 1, 0)
         watcher_layout.addWidget(self._watched_downloads_path_input, 1, 1, 1, 4)
         watcher_layout.addWidget(primary_path_actions_widget, 2, 1, 1, 4)
-        watcher_layout.addWidget(QLabel("Watched downloads path 2 (optional)"), 3, 0)
+        secondary_downloads_label = QLabel(self._tr("packages.watched_path_2"))
+        secondary_downloads_label.setProperty("translationKey", "packages.watched_path_2")
+        watcher_layout.addWidget(secondary_downloads_label, 3, 0)
         watcher_layout.addWidget(self._secondary_watched_downloads_path_input, 3, 1, 1, 4)
         watcher_layout.addWidget(secondary_path_actions_widget, 4, 1, 1, 4)
         watcher_layout.addWidget(watcher_scope_label, 5, 1, 1, 4)
@@ -3088,8 +3327,9 @@ class MainWindow(QMainWindow):
             inspect_group,
         )
         packages_top_grid_layout.addWidget(inspect_group, 1, 1)
-        inspection_result_group = QGroupBox("Inspection detail")
+        inspection_result_group = QGroupBox(self._tr("packages.inspection_detail"))
         inspection_result_group.setFlat(True)
+        inspection_result_group.setProperty("translationKey", "packages.inspection_detail")
         inspection_result_group.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
         )
@@ -3098,8 +3338,9 @@ class MainWindow(QMainWindow):
         inspection_result_layout.setHorizontalSpacing(8)
         inspection_result_layout.setVerticalSpacing(4)
         inspection_result_layout.addWidget(self._package_inspection_summary_label, 0, 0, 1, 2)
-        inspection_selector_label = QLabel("Inspected package")
+        inspection_selector_label = QLabel(self._tr("packages.inspected_package"))
         inspection_selector_label.setObjectName("packages_intake_inspection_selector_label")
+        inspection_selector_label.setProperty("translationKey", "packages.inspected_package")
         inspection_result_layout.addWidget(inspection_selector_label, 1, 0)
         inspection_result_layout.addWidget(self._package_inspection_selector, 1, 1)
         inspection_result_layout.addWidget(self._package_inspection_result_box, 2, 0, 1, 2)
@@ -3108,8 +3349,9 @@ class MainWindow(QMainWindow):
         self._package_inspection_selector_label = inspection_selector_label
         inspect_layout.addWidget(inspection_result_group, 3, 0, 1, 3)
 
-        packages_output_group = QGroupBox("Queue details")
+        packages_output_group = QGroupBox(self._tr("packages.queue_details"))
         packages_output_group.setObjectName("packages_output_group")
+        packages_output_group.setProperty("translationKey", "packages.queue_details")
         packages_output_group.setFlat(True)
         packages_output_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -3125,8 +3367,9 @@ class MainWindow(QMainWindow):
         packages_top_grid_layout.setColumnStretch(0, 3)
         packages_top_grid_layout.setColumnStretch(1, 2)
 
-        detected_group = QGroupBox("Install target")
+        detected_group = QGroupBox(self._tr("packages.install_target"))
         detected_group.setObjectName("packages_review_target_group")
+        detected_group.setProperty("translationKey", "packages.install_target")
         detected_group.setFlat(True)
         detected_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         detected_layout = QGridLayout(detected_group)
@@ -3163,10 +3406,14 @@ class MainWindow(QMainWindow):
         intake_controls_layout.setHorizontalSpacing(8)
         intake_controls_layout.setVerticalSpacing(4)
         intake_controls_layout.setColumnStretch(1, 1)
-        intake_controls_layout.addWidget(QLabel("Filter"), 0, 0)
+        intake_filter_label = QLabel(self._tr("packages.filter"))
+        intake_filter_label.setProperty("translationKey", "packages.filter")
+        intake_controls_layout.addWidget(intake_filter_label, 0, 0)
         intake_controls_layout.addWidget(self._intake_filter_input, 0, 1)
         intake_controls_layout.addWidget(self._intake_filter_stats_label, 0, 2)
-        intake_controls_layout.addWidget(QLabel("Package batch"), 1, 0)
+        package_batch_label = QLabel(self._tr("packages.package_batch"))
+        package_batch_label.setProperty("translationKey", "packages.package_batch")
+        intake_controls_layout.addWidget(package_batch_label, 1, 0)
         intake_controls_layout.addWidget(self._intake_result_combo, 1, 1, 1, 2)
 
         queue_controls_widget = QWidget()
@@ -3179,8 +3426,9 @@ class MainWindow(QMainWindow):
         queue_controls_layout.addWidget(self._packages_compare_target_label, 0, 0)
         queue_controls_layout.addWidget(self._packages_compare_target_combo, 0, 1)
         self._packages_compare_target_summary_label.setVisible(False)
-        queue_filter_label = QLabel("Queue filter")
+        queue_filter_label = QLabel(self._tr("packages.queue_filter"))
         queue_filter_label.setObjectName("packages_queue_filter_label")
+        queue_filter_label.setProperty("translationKey", "packages.queue_filter")
         queue_controls_layout.addWidget(queue_filter_label, 1, 0)
         queue_controls_layout.addWidget(self._package_queue_filter_input, 1, 1)
         queue_controls_layout.addWidget(self._package_queue_source_filter_combo, 1, 2)
@@ -3200,17 +3448,17 @@ class MainWindow(QMainWindow):
         queue_header_layout = QHBoxLayout(queue_header_widget)
         queue_header_layout.setContentsMargins(0, 0, 0, 0)
         queue_header_layout.setSpacing(8)
-        queue_label = QLabel("Watched package queue")
+        queue_label = QLabel(self._tr("packages.watched_package_queue"))
         queue_label.setObjectName("packages_intake_queue_label")
+        queue_label.setProperty("translationKey", "packages.watched_package_queue")
         queue_header_layout.addWidget(queue_label)
         queue_header_layout.addStretch(1)
         queue_header_layout.addWidget(queue_bulk_actions)
         detected_layout.addWidget(queue_header_widget, 3, 0, 1, 4)
         detected_layout.addWidget(self._package_queue_list, 4, 0, 1, 4)
-        review_flow_label = QLabel(
-            "Select packages, then open Install."
-        )
+        review_flow_label = QLabel(self._tr("packages.review_flow"))
         review_flow_label.setObjectName("packages_intake_review_flow_label")
+        review_flow_label.setProperty("translationKey", "packages.review_flow")
         review_flow_label.setWordWrap(True)
         _set_auxiliary_label_style(review_flow_label)
         detected_layout.addWidget(review_flow_label, 5, 0, 1, 4)
@@ -3219,9 +3467,9 @@ class MainWindow(QMainWindow):
         intake_layout.addWidget(packages_top_grid, 1)
         intake_page = self._build_page_shell(
             object_name="packages_workspace_page",
-            eyebrow="Queue downloaded packages",
-            title="Packages",
-            subtitle="Watch downloads, queue packages, and send them to Install.",
+            eyebrow=self._tr("packages.page.eyebrow"),
+            title=self._tr("workspace.packages"),
+            subtitle=self._tr("packages.page.subtitle"),
             body_widget=intake_tab,
             scroll_body=True,
         )
@@ -3239,7 +3487,11 @@ class MainWindow(QMainWindow):
         compare_actions_layout.setContentsMargins(0, 0, 0, 0)
         compare_actions_layout.setSpacing(10)
         compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
-        compare_actions_layout.addWidget(_context_caption("Show"))
+        compare_show_label = _context_caption(
+            self._tr("compare.show"),
+            translation_key="compare.show",
+        )
+        compare_actions_layout.addWidget(compare_show_label)
         compare_actions_layout.addWidget(self._compare_category_filter_combo)
         compare_actions_layout.addWidget(self._compare_copy_identity_button)
         compare_actions_layout.addStretch(1)
@@ -3247,15 +3499,17 @@ class MainWindow(QMainWindow):
         compare_layout.addWidget(self._compare_summary_label)
         compare_layout.addWidget(self._compare_category_help_label)
         self._compare_results_table.setVisible(False)
-        compare_results_group = QGroupBox("Compare results")
+        compare_results_group = QGroupBox(self._tr("compare.results"))
         compare_results_group.setObjectName("compare_results_group")
+        compare_results_group.setProperty("translationKey", "compare.results")
         compare_results_layout = QVBoxLayout(compare_results_group)
         compare_results_layout.setContentsMargins(12, 10, 12, 12)
         compare_results_layout.setSpacing(6)
         compare_results_layout.addWidget(self._compare_results_table)
         compare_layout.addWidget(compare_results_group, 1)
-        compare_output_group = QGroupBox("Compare detail")
+        compare_output_group = QGroupBox(self._tr("compare.detail"))
         compare_output_group.setObjectName("compare_output_group")
+        compare_output_group.setProperty("translationKey", "compare.detail")
         compare_output_group.setFlat(True)
         compare_output_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -3288,14 +3542,17 @@ class MainWindow(QMainWindow):
         return compare_page
 
     def _build_discovery_workspace_page(self) -> QWidget:
-        self._search_mods_button = QPushButton("Find mods")
+        self._search_mods_button = QPushButton(self._tr("discovery.find_mods"))
         self._search_mods_button.setObjectName("discovery_search_button")
+        self._search_mods_button.setProperty("translationKey", "discovery.find_mods")
         self._search_mods_button.clicked.connect(self._on_search_discovery)
         _set_primary_button_style(self._search_mods_button)
-        open_discovered_button = QPushButton("Open mod page")
+        open_discovered_button = QPushButton(self._tr("discovery.open_mod_page"))
+        open_discovered_button.setProperty("translationKey", "discovery.open_mod_page")
         open_discovered_button.clicked.connect(self._on_open_discovered_page)
         _set_utility_button_style(open_discovered_button)
         discovery_tab = DiscoveryTabSurface(
+            localizer=self._localizer,
             discovery_query_input=self._discovery_query_input,
             discovery_filter_input=self._discovery_filter_input,
             discovery_filter_stats_label=self._discovery_filter_stats_label,
@@ -3310,14 +3567,16 @@ class MainWindow(QMainWindow):
         discovery_page_layout.setContentsMargins(0, 0, 0, 0)
         discovery_page_layout.setSpacing(6)
         discovery_intro_label = QLabel(
-            "Search for mod pages for installs or updates. Opening a page never installs anything by itself."
+            self._tr("discovery.page.intro")
         )
         discovery_intro_label.setObjectName("discovery_intro_label")
         discovery_intro_label.setWordWrap(True)
+        discovery_intro_label.setProperty("translationKey", "discovery.page.intro")
         _set_auxiliary_label_style(discovery_intro_label)
         discovery_page_layout.addWidget(discovery_tab, 1)
-        discovery_output_group = QGroupBox("Discover detail")
+        discovery_output_group = QGroupBox(self._tr("discovery.detail"))
         discovery_output_group.setObjectName("discovery_output_group")
+        discovery_output_group.setProperty("translationKey", "discovery.detail")
         discovery_output_group.setFlat(True)
         discovery_output_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -3332,40 +3591,51 @@ class MainWindow(QMainWindow):
         discovery_output_group.setVisible(False)
         discovery_page = self._build_page_shell(
             object_name="discovery_workspace_page",
-            eyebrow="Source new installs or updates",
-            title="Discover mods",
-            subtitle="Search by name, UniqueID, or author. Opening a page stays read-only.",
+            eyebrow=self._tr("discovery.page.eyebrow"),
+            title=self._tr("workspace.discover"),
+            subtitle=self._tr("discovery.page.subtitle"),
             body_widget=discovery_page_body,
             scroll_body=True,
         )
+        self._discovery_surface = discovery_tab
         self._discovery_page = discovery_page
         return discovery_page
 
     def _build_archive_history_panel(self) -> QWidget:
-        self._refresh_archives_button = QPushButton("Refresh archive list")
+        self._refresh_archives_button = QPushButton(self._tr("history.refresh_archive_list"))
         self._refresh_archives_button.setObjectName("archive_refresh_button")
+        self._refresh_archives_button.setProperty("translationKey", "history.refresh_archive_list")
         self._refresh_archives_button.clicked.connect(self._on_refresh_archives)
         _set_primary_button_style(self._refresh_archives_button)
-        self._cleanup_archives_button = QPushButton("Cleanup older archives")
+        self._cleanup_archives_button = QPushButton(self._tr("history.cleanup_older_archives"))
         self._cleanup_archives_button.setObjectName("archive_cleanup_button")
+        self._cleanup_archives_button.setProperty("translationKey", "history.cleanup_older_archives")
         self._cleanup_archives_button.clicked.connect(self._on_cleanup_archives)
         self._cleanup_archives_button.setToolTip(
-            f"Keep latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} archived copies per mod and "
+            (
+                f"Manter as {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} cópias arquivadas mais recentes por mod "
+                "e excluir permanentemente as mais antigas após confirmação."
+            )
+            if self._localizer.effective_language == "pt-BR"
+            else f"Keep latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} archived copies per mod and "
             "permanently delete older copies after confirmation."
         )
         _set_danger_button_style(self._cleanup_archives_button)
         self._cleanup_archives_button.setEnabled(False)
-        self._restore_archived_button = QPushButton("Restore archived copy")
+        self._restore_archived_button = QPushButton(self._tr("history.restore_archived_copy"))
         self._restore_archived_button.setObjectName("archive_restore_button")
+        self._restore_archived_button.setProperty("translationKey", "history.restore_archived_copy")
         self._restore_archived_button.clicked.connect(self._on_restore_selected_archive)
         _set_secondary_button_style(self._restore_archived_button)
         self._restore_archived_button.setEnabled(False)
-        self._delete_archived_button = QPushButton("Delete archived copy")
+        self._delete_archived_button = QPushButton(self._tr("history.delete_archived_copy"))
         self._delete_archived_button.setObjectName("archive_delete_button")
+        self._delete_archived_button.setProperty("translationKey", "history.delete_archived_copy")
         self._delete_archived_button.clicked.connect(self._on_delete_selected_archive)
         _set_danger_button_style(self._delete_archived_button)
         self._delete_archived_button.setEnabled(False)
         archive_tab = ArchiveTabSurface(
+            localizer=self._localizer,
             archive_filter_input=self._archive_filter_input,
             archive_filter_stats_label=self._archive_filter_stats_label,
             archive_state_hint_label=self._archive_state_hint_label,
@@ -3382,8 +3652,9 @@ class MainWindow(QMainWindow):
         archive_page_layout.setContentsMargins(0, 0, 0, 0)
         archive_page_layout.setSpacing(6)
         archive_page_layout.addWidget(archive_tab)
-        archive_output_group = QGroupBox("Archive detail")
+        archive_output_group = QGroupBox(self._tr("history.archive_detail"))
         archive_output_group.setObjectName("archive_output_group")
+        archive_output_group.setProperty("translationKey", "history.archive_detail")
         archive_output_group.setFlat(True)
         archive_output_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -3397,21 +3668,25 @@ class MainWindow(QMainWindow):
         self._archive_results_group = archive_tab.results_group
         self._archive_empty_state_label = archive_tab.empty_state_label
         self._archive_output_group = archive_output_group
+        self._archive_surface = archive_tab
         archive_output_group.setVisible(False)
         archive_page_layout.addStretch(1)
         self._archive_page = archive_panel
         return archive_panel
 
     def _build_install_workspace_page(self) -> QWidget:
-        plan_install_button = QPushButton("Plan install")
+        plan_install_button = QPushButton(self._tr("install.plan_install"))
         plan_install_button.setObjectName("plan_install_plan_button")
+        plan_install_button.setProperty("translationKey", "install.plan_install")
         plan_install_button.clicked.connect(self._on_plan_install)
         self._plan_install_button = plan_install_button
-        run_install_button = QPushButton("Apply install")
+        run_install_button = QPushButton(self._tr("install.apply_install"))
         run_install_button.setObjectName("plan_install_run_button")
+        run_install_button.setProperty("translationKey", "install.apply_install")
         run_install_button.clicked.connect(self._on_run_install)
         self._run_install_button = run_install_button
         plan_tab = PlanInstallTabSurface(
+            localizer=self._localizer,
             install_target_combo=self._install_target_combo,
             overwrite_checkbox=self._overwrite_checkbox,
             install_archive_label=self._install_archive_label,
@@ -3429,8 +3704,9 @@ class MainWindow(QMainWindow):
             if execute_index >= 0:
                 plan_tab_layout.takeAt(execute_index)
 
-            safety_group = QGroupBox("Safety")
+            safety_group = QGroupBox(self._tr("install.safety"))
             safety_group.setObjectName("plan_install_safety_panel_group")
+            safety_group.setProperty("translationKey", "install.safety")
             safety_group.setFlat(True)
             safety_group.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
@@ -3438,15 +3714,17 @@ class MainWindow(QMainWindow):
             safety_layout = QVBoxLayout(safety_group)
             safety_layout.setContentsMargins(7, 5, 7, 5)
             safety_layout.setSpacing(4)
-            safety_label = QLabel("Install safety context unavailable.")
+            safety_label = QLabel(self._tr("install.safety_unavailable"))
             safety_label.setObjectName("plan_install_safety_panel_text")
+            safety_label.setProperty("translationKey", "install.safety_unavailable")
             safety_label.setWordWrap(True)
             safety_layout.addWidget(safety_label)
             self._install_safety_panel_group = safety_group
             self._install_safety_panel_label = safety_label
 
-            staged_package_group = QGroupBox("Package")
+            staged_package_group = QGroupBox(self._tr("install.package"))
             staged_package_group.setObjectName("plan_install_staged_package_group")
+            staged_package_group.setProperty("translationKey", "install.package")
             staged_package_group.setFlat(True)
             staged_package_group.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
@@ -3456,8 +3734,9 @@ class MainWindow(QMainWindow):
             staged_package_layout.setSpacing(4)
             staged_package_layout.addWidget(self._staged_package_label)
 
-            plan_review_summary_group = QGroupBox("Summary")
+            plan_review_summary_group = QGroupBox(self._tr("install.summary"))
             plan_review_summary_group.setObjectName("plan_install_review_summary_group")
+            plan_review_summary_group.setProperty("translationKey", "install.summary")
             plan_review_summary_group.setFlat(True)
             plan_review_summary_group.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
@@ -3498,11 +3777,12 @@ class MainWindow(QMainWindow):
 
         review_page = self._build_page_shell(
             object_name="review_workspace_page",
-            eyebrow="Review in Install",
-            title="Install",
-            subtitle="Check the package, destination, and summary before writing.",
+            eyebrow=self._tr("install.page.eyebrow"),
+            title=self._tr("workspace.install"),
+            subtitle=self._tr("install.page.subtitle"),
             body_widget=plan_tab,
         )
+        self._plan_install_surface = plan_tab
         self._plan_install_tab = review_page
         self._review_output_group = plan_tab.review_output_group
         self._review_output_group.setVisible(False)
@@ -3524,9 +3804,13 @@ class MainWindow(QMainWindow):
         recovery_controls.setHorizontalSpacing(8)
         recovery_controls.setVerticalSpacing(4)
         recovery_controls.setColumnStretch(1, 1)
-        recovery_controls.addWidget(QLabel("Recorded install"), 0, 0)
+        recorded_install_label = QLabel(self._tr("history.recorded_install"))
+        recorded_install_label.setProperty("translationKey", "history.recorded_install")
+        recovery_controls.addWidget(recorded_install_label, 0, 0)
         recovery_controls.addWidget(self._install_history_combo, 0, 1)
-        recovery_controls.addWidget(QLabel("Filter"), 0, 2)
+        recovery_filter_label = QLabel(self._tr("history.filter"))
+        recovery_filter_label.setProperty("translationKey", "history.filter")
+        recovery_controls.addWidget(recovery_filter_label, 0, 2)
         recovery_controls.addWidget(self._install_history_filter_combo, 0, 3)
         self._install_history_combo.currentIndexChanged.connect(
             self._on_selected_install_operation_changed
@@ -3543,8 +3827,9 @@ class MainWindow(QMainWindow):
         recovery_controls.addWidget(self._run_recovery_button, 1, 3)
         recovery_group_layout.addLayout(recovery_controls)
         recovery_group_layout.addWidget(self._recovery_selection_summary_label)
-        recovery_output_group = QGroupBox("Recovery detail")
+        recovery_output_group = QGroupBox(self._tr("history.recovery_detail"))
         recovery_output_group.setObjectName("recovery_output_group")
+        recovery_output_group.setProperty("translationKey", "history.recovery_detail")
         recovery_output_group.setFlat(True)
         recovery_output_group.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -3580,17 +3865,17 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        history_tabs.addTab(self._build_archive_history_panel(), "Archived copies")
-        history_tabs.addTab(self._build_recovery_history_panel(), "Install history")
+        history_tabs.addTab(self._build_archive_history_panel(), self._tr("history.archived_copies"))
+        history_tabs.addTab(self._build_recovery_history_panel(), self._tr("history.install_history"))
         history_layout.addWidget(history_tabs, 1)
 
         self._history_workspace_tabs = history_tabs
 
         history_page = self._build_page_shell(
             object_name="history_workspace_page",
-            eyebrow="Restore and rollback",
-            title="History",
-            subtitle="Browse archived copies or review install history before restoring anything.",
+            eyebrow=self._tr("history.page.eyebrow"),
+            title=self._tr("workspace.history"),
+            subtitle=self._tr("history.page.subtitle"),
             body_widget=history_body,
             scroll_body=True,
         )
@@ -3646,6 +3931,7 @@ class MainWindow(QMainWindow):
 
     def _build_top_context_surface(self) -> TopContextSurface:
         context_group = TopContextSurface(
+            localizer=self._localizer,
             environment_status_label=self._environment_status_label,
             smapi_update_status_label=self._smapi_update_status_label,
             smapi_log_status_label=self._smapi_log_status_label,
@@ -3667,12 +3953,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_context_group"):
             self._context_group.set_details_expanded(expanded)
         self._top_context_toggle_button.setText(
-            "Hide details" if expanded else "Show details"
+            self._tr("top_context.hide_details")
+            if expanded
+            else self._tr("top_context.show_details")
         )
         self._top_context_toggle_button.setToolTip(
-            "Collapse the top context surface."
+            self._tr("top_context.hide_details_tooltip")
             if expanded
-            else "Expand the top context surface."
+            else self._tr("top_context.show_details_tooltip")
         )
         self._refresh_responsive_panel_bounds()
 
@@ -3779,6 +4067,23 @@ class MainWindow(QMainWindow):
     def _tr(self, key: str, **kwargs: object) -> str:
         return self._localizer.text(key, **kwargs)
 
+    def _apply_translation_properties(self, root: QWidget) -> None:
+        widgets: list[QWidget] = [root]
+        widgets.extend(root.findChildren(QWidget))
+        for widget in widgets:
+            translation_key = widget.property("translationKey")
+            if isinstance(translation_key, str) and translation_key:
+                if isinstance(widget, QGroupBox):
+                    widget.setTitle(self._tr(translation_key))
+                elif isinstance(widget, (QLabel, QPushButton, QCheckBox)):
+                    widget.setText(self._tr(translation_key))
+            placeholder_key = widget.property("placeholderTranslationKey")
+            if isinstance(placeholder_key, str) and placeholder_key and isinstance(widget, QLineEdit):
+                widget.setPlaceholderText(self._tr(placeholder_key))
+            tooltip_key = widget.property("tooltipTranslationKey")
+            if isinstance(tooltip_key, str) and tooltip_key:
+                widget.setToolTip(self._tr(tooltip_key))
+
     def _populate_language_preference_options(self) -> None:
         self._language_preference_combo.blockSignals(True)
         self._language_preference_combo.clear()
@@ -3812,6 +4117,23 @@ class MainWindow(QMainWindow):
             (self._tr("setup.core.real_mods_short"), self._mods_path_input),
             (self._tr("setup.core.sandbox_mods_short"), self._sandbox_mods_path_input),
         )
+
+    def _repopulate_combo_items(
+        self,
+        combo: QComboBox,
+        items: tuple[tuple[str, object], ...],
+    ) -> None:
+        current_data = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for label, data in items:
+            combo.addItem(label, data)
+        restored_index = combo.findData(current_data)
+        if restored_index < 0 and items:
+            restored_index = 0
+        if restored_index >= 0:
+            combo.setCurrentIndex(restored_index)
+        combo.blockSignals(False)
 
     def _set_workspace_page_header_text(
         self,
@@ -3861,6 +4183,7 @@ class MainWindow(QMainWindow):
         announce: bool,
     ) -> None:
         self._localizer = UiLocalizer.from_preference(preference)
+        set_active_ui_localizer(self._localizer)
         self._populate_language_preference_options()
         self._set_language_preference(preference)
         self._workspace_nav_brand_version_label.setText(
@@ -3872,11 +4195,156 @@ class MainWindow(QMainWindow):
             )
         self._workspace_nav_section_label.setText(self._tr("shell.workspaces"))
         self._refresh_workspace_nav_text()
+        self._apply_translation_properties(self)
+        self._status_strip_group.retranslate(self._localizer)
+        self._context_group.retranslate(self._localizer)
+        self._discovery_surface.retranslate(self._localizer)
+        self._archive_surface.retranslate(self._localizer)
+        self._plan_install_surface.retranslate(self._localizer)
+        self._repopulate_combo_items(
+            self._mods_update_actionability_filter_combo,
+            (
+                (self._tr("filter.all"), "all"),
+                (self._tr("library.filter.actionable"), "actionable"),
+                (self._tr("library.filter.blocked"), "blocked"),
+                (self._tr("library.filter.needs_source_repair"), "needs_source_repair"),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._compare_category_filter_combo,
+            (
+                (self._tr("compare.actionable_drift"), _COMPARE_FILTER_ACTIONABLE),
+                (self._tr("compare.only_in_real"), _COMPARE_FILTER_ONLY_IN_REAL),
+                (self._tr("compare.only_in_sandbox"), _COMPARE_FILTER_ONLY_IN_SANDBOX),
+                (self._tr("compare.version_mismatch"), _COMPARE_FILTER_VERSION_MISMATCH),
+                (self._tr("compare.ambiguous_match"), _COMPARE_FILTER_AMBIGUOUS),
+                (self._tr("compare.same_version"), _COMPARE_FILTER_SAME_VERSION),
+                (self._tr("compare.all_categories"), _COMPARE_FILTER_ALL),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._scan_target_combo,
+            (
+                (self._tr("library.scan_target.real"), SCAN_TARGET_CONFIGURED_REAL_MODS),
+                (self._tr("library.scan_target.sandbox"), SCAN_TARGET_SANDBOX_MODS),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._install_target_combo,
+            (
+                (self._tr("install.target.sandbox"), INSTALL_TARGET_SANDBOX_MODS),
+                (self._tr("install.target.real"), INSTALL_TARGET_CONFIGURED_REAL_MODS),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._packages_compare_target_combo,
+            (
+                (self._tr("packages.real_mods"), SCAN_TARGET_CONFIGURED_REAL_MODS),
+                (self._tr("packages.sandbox_mods"), SCAN_TARGET_SANDBOX_MODS),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._package_queue_source_filter_combo,
+            (
+                (self._tr("packages.all_watcher_paths"), "all"),
+                (self._tr("packages.watched_path_1_short"), "watched_path_1"),
+                (self._tr("packages.watched_path_2_short"), "watched_path_2"),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._install_history_filter_combo,
+            (
+                (self._tr("history.filter.all"), "all"),
+                (self._tr("history.filter.ready"), "ready"),
+                (self._tr("history.filter.blocked"), "blocked"),
+                (self._tr("history.filter.legacy"), "legacy"),
+            ),
+        )
         self._set_workspace_page_header_text(
             self._setup_page,
             eyebrow=self._tr("setup.page.eyebrow"),
             title=self._tr("setup.page.title"),
             subtitle=self._tr("setup.page.subtitle"),
+        )
+        self._set_workspace_page_header_text(
+            self._mods_page,
+            eyebrow=self._tr("library.page.eyebrow"),
+            title=self._tr("workspace.library"),
+            subtitle=self._tr("library.page.subtitle"),
+        )
+        self._set_workspace_page_header_text(
+            self._packages_page,
+            eyebrow=self._tr("packages.page.eyebrow"),
+            title=self._tr("workspace.packages"),
+            subtitle=self._tr("packages.page.subtitle"),
+        )
+        self._set_workspace_page_header_text(
+            self._plan_install_tab,
+            eyebrow=self._tr("install.page.eyebrow"),
+            title=self._tr("workspace.install"),
+            subtitle=self._tr("install.page.subtitle"),
+        )
+        self._set_workspace_page_header_text(
+            self._discovery_page,
+            eyebrow=self._tr("discovery.page.eyebrow"),
+            title=self._tr("workspace.discover"),
+            subtitle=self._tr("discovery.page.subtitle"),
+        )
+        self._set_workspace_page_header_text(
+            self._compare_page,
+            eyebrow=self._tr("compare.page.eyebrow"),
+            title=self._tr("compare.page.title"),
+            subtitle=self._tr("compare.page.subtitle"),
+        )
+        self._set_workspace_page_header_text(
+            self._history_page,
+            eyebrow=self._tr("history.page.eyebrow"),
+            title=self._tr("workspace.history"),
+            subtitle=self._tr("history.page.subtitle"),
+        )
+        self._history_workspace_tabs.setTabText(0, self._tr("history.archived_copies"))
+        self._history_workspace_tabs.setTabText(1, self._tr("history.install_history"))
+        self._mods_table.setHorizontalHeaderLabels(
+            [
+                self._tr("table.name"),
+                self._tr("table.unique_id"),
+                self._tr("table.installed_version"),
+                self._tr("table.remote_version"),
+                self._tr("table.update_status"),
+                self._tr("table.type"),
+            ]
+        )
+        self._compare_results_table.setHorizontalHeaderLabels(
+            [
+                self._tr("table.mod"),
+                self._tr("table.compare"),
+                self._tr("table.real_version"),
+                self._tr("table.sandbox_version"),
+                self._tr("table.notes"),
+            ]
+        )
+        self._discovery_table.setHorizontalHeaderLabels(
+            [
+                self._tr("table.name"),
+                self._tr("table.unique_id"),
+                self._tr("table.author"),
+                self._tr("table.source"),
+                self._tr("table.compatibility"),
+                self._tr("table.app_context"),
+                self._tr("table.provider_relation"),
+                self._tr("table.page"),
+            ]
+        )
+        self._archive_table.setHorizontalHeaderLabels(
+            [
+                self._tr("table.archive_source"),
+                self._tr("table.archived_folder"),
+                self._tr("table.restore_target"),
+                self._tr("table.mod_name"),
+                self._tr("table.unique_id"),
+                self._tr("table.version"),
+                self._tr("table.retention"),
+            ]
         )
         self._nexus_api_key_input.setPlaceholderText(self._tr("setup.nexus_api_key"))
         self._steam_auto_start_checkbox.setText(self._tr("setup.steam_auto_start"))
@@ -3889,6 +4357,126 @@ class MainWindow(QMainWindow):
         self._migrate_managed_folders_button.setToolTip(
             self._tr("setup.migrate_managed_tooltip")
         )
+        self._reload_real_mod_profiles(selected_profile_id=self._selected_real_profile_id())
+        self._reload_sandbox_mod_profiles(selected_profile_id=self._selected_sandbox_profile_id())
+        self._refresh_scan_context_preview()
+        self._refresh_install_destination_preview()
+        self._refresh_packages_compare_target_summary()
+        self._refresh_intake_selector()
+        self._refresh_package_queue()
+        self._refresh_active_backup_bundle_context()
+        current_scan_result = self._cached_scan_result_for_target(self._current_scan_target())
+        if current_scan_result is not None:
+            self._show_scan_result(current_scan_result)
+        else:
+            self._refresh_inventory_update_report_view()
+        if self._current_update_report is not None:
+            self._set_inventory_output_text(build_update_report_text(self._current_update_report))
+        elif self._current_inventory is not None:
+            self._set_inventory_output_text(build_findings_text(self._current_inventory))
+        if self._current_discovery_result is not None:
+            self._refresh_discovery_correlations()
+            self._render_discovery_results(self._current_discovery_result, self._discovery_correlations)
+            self._set_discovery_output_text(
+                build_discovery_search_text(self._current_discovery_result, self._discovery_correlations)
+            )
+        if self._current_mods_compare_result is not None:
+            self._render_mods_compare_result(self._current_mods_compare_result)
+            self._set_compare_output_text(build_mods_compare_text(self._current_mods_compare_result))
+        if self._archived_entries:
+            self._render_archive_entries(self._archived_entries)
+            self._set_archive_output_text(build_archive_listing_text(self._archived_entries))
+            self._on_archive_selection_changed()
+        if self._package_inspection_batch_result is not None:
+            self._show_package_inspection_results(self._package_inspection_batch_result)
+            self._set_intake_output_text(
+                _build_package_inspection_batch_text(self._package_inspection_batch_result)
+            )
+        self._refresh_install_operation_selector()
+        if self._current_recovery_inspection is not None:
+            self._set_recovery_output_text(
+                _build_install_recovery_inspection_text(self._current_recovery_inspection)
+            )
+        if self._last_environment_status is not None:
+            self._apply_environment_status(self._last_environment_status)
+        else:
+            self._environment_status_label.setText(self._tr("setup.environment_not_checked"))
+        if self._last_smapi_update_status is not None:
+            self._smapi_update_status_label.setText(
+                _smapi_update_summary_label(self._last_smapi_update_status)
+            )
+        elif self._last_environment_status is None:
+            self._smapi_update_status_label.setText(self._tr("setup.environment_not_checked"))
+        if self._last_smapi_log_report is not None:
+            context_label = _smapi_log_context_short_label(self._last_smapi_log_report)
+            self._smapi_log_status_label.setText(
+                _smapi_log_summary_label(self._last_smapi_log_report, context_label=context_label)
+            )
+        elif self._last_environment_status is None:
+            self._smapi_log_status_label.setText(self._tr("setup.environment_not_checked"))
+        if self._watch_timer.isActive():
+            self._update_watch_runtime_status_label(len(self._known_watched_zip_paths))
+        else:
+            self._watch_status_label.setText(self._tr("status.stopped"))
+            self._watch_status_label.setToolTip(self._watch_sources_tooltip())
+        current_operation_text = self._operation_state_label.text().strip()
+        if self._active_operation_name is None:
+            if current_operation_text.startswith("Last: ") and current_operation_text.endswith(" finished"):
+                operation_name = current_operation_text[len("Last: ") : -len(" finished")]
+                self._operation_state_label.setText(
+                    self._tr("status.operation_finished", name=operation_name)
+                )
+            elif current_operation_text.startswith("Last: ") and current_operation_text.endswith(" failed"):
+                operation_name = current_operation_text[len("Last: ") : -len(" failed")]
+                self._operation_state_label.setText(
+                    self._tr("status.operation_failed", name=operation_name)
+                )
+            elif current_operation_text.startswith("Última: ") and current_operation_text.endswith(" concluída"):
+                operation_name = current_operation_text[len("Última: ") : -len(" concluída")]
+                self._operation_state_label.setText(
+                    self._tr("status.operation_finished", name=operation_name)
+                )
+            elif current_operation_text.startswith("Última: ") and current_operation_text.endswith(" falhou"):
+                operation_name = current_operation_text[len("Última: ") : -len(" falhou")]
+                self._operation_state_label.setText(
+                    self._tr("status.operation_failed", name=operation_name)
+                )
+            else:
+                self._operation_state_label.setText(self._tr("status.idle"))
+        self._refresh_nexus_status(validated=False)
+        self._refresh_sandbox_dev_launch_state()
+        self._refresh_smapi_troubleshooting_surface()
+        self._refresh_selected_mod_update_guidance()
+        self._refresh_workflow_surface_states()
+        self._refresh_discovery_workspace_state()
+        self._refresh_compare_workspace_state()
+        self._refresh_archive_workspace_state()
+        self._refresh_recovery_selection_summary()
+        if self._pending_install_plan is not None:
+            review = self._shell_service.review_install_execution(self._pending_install_plan)
+            self._set_plan_review_summary_text(
+                _build_plan_review_summary_text(self._pending_install_plan, review)
+            )
+            self._set_plan_review_explanation_text(
+                _build_plan_review_explanation_text(self._pending_install_plan, review)
+            )
+            self._set_plan_facts_text(_build_plan_facts_text(self._pending_install_plan, review))
+            self._set_plan_install_output_text(build_sandbox_install_plan_text(self._pending_install_plan))
+        else:
+            self._set_plan_review_summary_text(_no_plan_review_summary_text())
+            self._set_plan_review_explanation_text(_no_plan_review_explanation_text())
+        if self._last_app_update_status is not None:
+            self._apply_app_update_status(self._last_app_update_status)
+            status_text = self._status_strip_label.text().strip().casefold()
+            if (
+                "cinderleaf is up to date" in status_text
+                or "cinderleaf está atualizado" in status_text
+                or "latest 1." in status_text
+                or "mais recente 1." in status_text
+                or "update available" in status_text
+                or "atualização disponível" in status_text
+            ):
+                self._set_status(_app_update_summary_label(self._last_app_update_status))
         self._refresh_setup_readiness_state()
         self._refresh_cinderleaf_managed_paths_surface()
         if self._last_app_update_status is None:
@@ -5021,7 +5609,11 @@ class MainWindow(QMainWindow):
 
         self._start_restore_import_planning_for_bundle(
             bundle_path,
-            started_status="Planning restore/import from the current backup bundle...",
+            started_status=(
+                "Planejando restauração/importação a partir do pacote de backup atual..."
+                if self._localizer.effective_language == "pt-BR"
+                else "Planning restore/import from the current backup bundle..."
+            ),
             on_success=self._on_restore_import_planning_completed,
         )
 
@@ -5050,15 +5642,21 @@ class MainWindow(QMainWindow):
     ) -> None:
         combined_text = (
             f"{inspection_text}\n\n"
-            "Automatic restore/import planning could not run for the current configured "
-            f"environment.\n{message}"
+            + (
+                "O planejamento automático de restauração/importação não pôde ser executado para o ambiente configurado atual.\n"
+                if self._localizer.effective_language == "pt-BR"
+                else "Automatic restore/import planning could not run for the current configured environment.\n"
+            )
+            + f"{message}"
         )
         self._set_active_backup_bundle_context(
             inspection_result.bundle_path,
             label_text="inspected",
         )
         self._restore_import_planning_summary_label.setText(
-            "Automatic restore/import planning could not run."
+            "O planejamento automático de restauração/importação não pôde ser executado."
+            if self._localizer.effective_language == "pt-BR"
+            else "Automatic restore/import planning could not run."
         )
         self._restore_import_planning_summary_label.setToolTip(message)
         self._set_setup_output_and_details_text(combined_text)
@@ -5437,30 +6035,51 @@ class MainWindow(QMainWindow):
             "",
         )
         self._set_status(
-            f"Compare complete: {len(result.entries)} row(s) across real and sandbox Mods."
+            (
+                f"Comparação concluída: {len(result.entries)} linha(s) entre Mods reais e sandbox."
+                if self._localizer.effective_language == "pt-BR"
+                else f"Compare complete: {len(result.entries)} row(s) across real and sandbox Mods."
+            )
         )
 
     def _on_compare_selection_changed(self) -> None:
         entry = self._selected_compare_entry()
         has_selection = entry is not None
         self._compare_copy_identity_button.setEnabled(has_selection)
+        pt_br = self._localizer.effective_language == "pt-BR"
         if entry is None:
-            self._compare_copy_identity_button.setToolTip("Select a compare row first.")
+            self._compare_copy_identity_button.setToolTip(
+                "Selecione primeiro uma linha da comparação."
+                if pt_br
+                else "Select a compare row first."
+            )
             self._refresh_compare_summary_feedback()
             return
         self._compare_copy_identity_button.setToolTip(
-            f"Copy {entry.name} ({entry.unique_id}) to the clipboard."
+            (
+                f"Copiar {entry.name} ({entry.unique_id}) para a área de transferência."
+                if pt_br
+                else f"Copy {entry.name} ({entry.unique_id}) to the clipboard."
+            )
         )
         self._refresh_compare_summary_feedback()
 
     def _on_copy_compare_row_identity(self) -> None:
         entry = self._selected_compare_entry()
         if entry is None:
-            self._set_status("Select a compare row to copy its mod name and UniqueID.")
+            self._set_status(
+                "Selecione uma linha da comparação para copiar o nome do mod e o UniqueID."
+                if self._localizer.effective_language == "pt-BR"
+                else "Select a compare row to copy its mod name and UniqueID."
+            )
             return
 
         QApplication.clipboard().setText(f"{entry.name} | {entry.unique_id}")
-        self._set_status(f"Copied compare row identity: {entry.name} ({entry.unique_id}).")
+        self._set_status(
+            f"Identidade da linha da comparação copiada: {entry.name} ({entry.unique_id})."
+            if self._localizer.effective_language == "pt-BR"
+            else f"Copied compare row identity: {entry.name} ({entry.unique_id})."
+        )
 
     def _on_inspect_zip(self) -> None:
         selected_paths = self._selected_zip_package_paths
@@ -5567,19 +6186,29 @@ class MainWindow(QMainWindow):
             self._set_plan_install_output_text(build_sandbox_install_result_text(execution_result))
             if is_real_destination:
                 self._last_install_completion_message = (
-                    f"Installation successful. Real Mods install complete: "
+                    f"Instalação concluída. Instalação dos Mods reais concluída: "
+                    f"{len(execution_result.installed_targets)} alvo(s)."
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Installation successful. Real Mods install complete: "
                     f"{len(execution_result.installed_targets)} target(s)."
                 )
                 self._set_status(
-                    f"Real Mods install complete: {len(execution_result.installed_targets)} target(s)"
+                    f"Instalação dos Mods reais concluída: {len(execution_result.installed_targets)} alvo(s)"
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Real Mods install complete: {len(execution_result.installed_targets)} target(s)"
                 )
             else:
                 self._last_install_completion_message = (
-                    f"Installation successful. Sandbox install complete: "
+                    f"Instalação concluída. Instalação sandbox concluída: "
+                    f"{len(execution_result.installed_targets)} alvo(s)."
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Installation successful. Sandbox install complete: "
                     f"{len(execution_result.installed_targets)} target(s)."
                 )
                 self._set_status(
-                    f"Sandbox install complete: {len(execution_result.installed_targets)} target(s)"
+                    f"Instalação sandbox concluída: {len(execution_result.installed_targets)} alvo(s)"
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Sandbox install complete: {len(execution_result.installed_targets)} target(s)"
                 )
             self._refresh_workflow_surface_states()
 
@@ -5625,8 +6254,9 @@ class MainWindow(QMainWindow):
             self._install_operation_display_indexes = tuple()
             self._current_recovery_inspection = None
             self._install_history_combo.clear()
-            self._install_history_combo.addItem("<install history unavailable>")
-            self._install_history_combo.setToolTip("<install history unavailable>")
+            unavailable_text = self._tr("history.install_history_unavailable")
+            self._install_history_combo.addItem(unavailable_text)
+            self._install_history_combo.setToolTip(unavailable_text)
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
@@ -5644,8 +6274,9 @@ class MainWindow(QMainWindow):
         self._current_recovery_inspection = None
         self._install_history_combo.clear()
         if not history.operations:
-            self._install_history_combo.addItem("<no recorded installs>")
-            self._install_history_combo.setToolTip("<no recorded installs>")
+            empty_text = self._tr("history.no_recorded_installs")
+            self._install_history_combo.addItem(empty_text)
+            self._install_history_combo.setToolTip(empty_text)
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
@@ -5659,8 +6290,9 @@ class MainWindow(QMainWindow):
             if self._matches_install_history_filter(history.operations[index], filter_code)
         ]
         if not visible_indexes:
-            self._install_history_combo.addItem("<no recorded installs match filter>")
-            self._install_history_combo.setToolTip("<no recorded installs match filter>")
+            empty_filter_text = self._tr("history.no_recorded_installs_match_filter")
+            self._install_history_combo.addItem(empty_filter_text)
+            self._install_history_combo.setToolTip(empty_filter_text)
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
@@ -5756,15 +6388,22 @@ class MainWindow(QMainWindow):
         return True
 
     def _on_inspect_selected_install_recovery(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         operation = self._selected_install_operation()
         if operation is None:
-            message = "Select a recorded install operation first."
+            message = (
+                "Selecione primeiro uma operação de instalação registrada."
+                if pt_br
+                else "Select a recorded install operation first."
+            )
             self._current_recovery_inspection = None
             self._show_recovery_inspection_text(message, status_message=message)
             return
         if operation.operation_id is None:
             message = (
-                "Selected install record is legacy and cannot be inspected through the "
+                "O registro de instalação selecionado é legado e não pode ser inspecionado pelo caminho de recuperação baseado em ID."
+                if pt_br
+                else "Selected install record is legacy and cannot be inspected through the "
                 "ID-based recovery path."
             )
             self._current_recovery_inspection = None
@@ -5793,14 +6432,21 @@ class MainWindow(QMainWindow):
         self._set_status(status_message)
 
     def _on_run_selected_install_recovery(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         operation = self._selected_install_operation()
         if operation is None:
-            message = "Select a recorded install operation first."
+            message = (
+                "Selecione primeiro uma operação de instalação registrada."
+                if pt_br
+                else "Select a recorded install operation first."
+            )
             self._show_recovery_inspection_text(message, status_message=message)
             return
         if operation.operation_id is None:
             message = (
-                "Selected install record is legacy and cannot be inspected through the "
+                "O registro de instalação selecionado é legado e não pode ser inspecionado pelo caminho de recuperação baseado em ID."
+                if pt_br
+                else "Selected install record is legacy and cannot be inspected through the "
                 "ID-based recovery path."
             )
             self._show_recovery_inspection_text(message, status_message=message)
@@ -5811,7 +6457,11 @@ class MainWindow(QMainWindow):
             inspection is None
             or inspection.operation.operation_id != operation.operation_id
         ):
-            message = "Inspect recovery readiness first."
+            message = (
+                "Inspecione primeiro a prontidão da recuperação."
+                if pt_br
+                else "Inspect recovery readiness first."
+            )
             self._show_recovery_inspection_text(message, status_message=message)
             return
 
@@ -5825,11 +6475,15 @@ class MainWindow(QMainWindow):
 
         yes = QMessageBox.question(
             self,
-            "Confirm recovery execution",
+            "Confirmar execução da recuperação" if pt_br else "Confirm recovery execution",
             _build_install_recovery_confirmation_message(review),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Recovery execution cancelled.")
+            self._set_status(
+                "Execução da recuperação cancelada."
+                if pt_br
+                else "Recovery execution cancelled."
+            )
             return
 
         try:
@@ -5858,7 +6512,11 @@ class MainWindow(QMainWindow):
         )
         self._set_recovery_output_text(_build_install_recovery_execution_result_text(result))
         self._set_status(
-            f"Recovery execution complete: {result.executed_entry_count} action(s)."
+            (
+                f"Execução da recuperação concluída: {result.executed_entry_count} ação(ões)."
+                if self._localizer.effective_language == "pt-BR"
+                else f"Recovery execution complete: {result.executed_entry_count} action(s)."
+            )
         )
         self._refresh_install_operation_selector()
         self._current_recovery_inspection = None
@@ -5867,9 +6525,9 @@ class MainWindow(QMainWindow):
         operation = self._selected_install_operation()
         if operation is None:
             if self._install_operation_history:
-                message = "Select a recorded install to inspect recovery readiness."
+                message = self._tr("history.select_install_prompt")
             else:
-                message = "No recorded install history is available for recovery inspection."
+                message = self._tr("history.no_history_available")
             self._recovery_selection_summary_label.setText(message)
             self._recovery_selection_summary_label.setToolTip(message)
             return
@@ -5878,7 +6536,7 @@ class MainWindow(QMainWindow):
         if operation.operation_id is None:
             summary = (
                 f"{base_text}\n"
-                "Legacy record: recovery inspection is unavailable because this entry has no operation ID."
+                f"{self._tr('history.legacy_unavailable')}"
             )
             self._recovery_selection_summary_label.setText(summary)
             self._recovery_selection_summary_label.setToolTip(summary)
@@ -5888,17 +6546,21 @@ class MainWindow(QMainWindow):
         if inspection is None or inspection.operation.operation_id != operation.operation_id:
             summary = (
                 f"{base_text}\n"
-                "Recovery status: not inspected yet.\n"
+                f"{self._tr('history.recovery_status_pending')}\n"
                 f"{_latest_recovery_outcome_summary(None)}"
             )
             self._recovery_selection_summary_label.setText(summary)
             self._recovery_selection_summary_label.setToolTip(summary)
             return
 
-        state_text = "ready to run" if inspection.recovery_review.allowed else "blocked"
+        state_text = (
+            self._tr("history.state.ready")
+            if inspection.recovery_review.allowed
+            else self._tr("history.state.blocked")
+        )
         summary = (
             f"{base_text}\n"
-            f"Recovery status: {state_text}.\n"
+            f"{self._tr('history.recovery_status', state=state_text)}\n"
             f"{inspection.recovery_review.message}\n"
             f"{_latest_recovery_outcome_summary(inspection.linked_recovery_history)}"
         )
@@ -6022,19 +6684,24 @@ class MainWindow(QMainWindow):
 
     def _on_check_app_update_completed(self, status: AppUpdateStatus) -> None:
         self._apply_app_update_status(status)
+        summary = _app_update_summary_label(status)
         self._set_setup_output_text(
-            f"{status.message}\nRelease page: {self._shell_service.resolve_app_update_page_url(status)}"
+            (
+                f"{summary}\nPágina da versão: {self._shell_service.resolve_app_update_page_url(status)}"
+                if self._localizer.effective_language == "pt-BR"
+                else f"{summary}\nRelease page: {self._shell_service.resolve_app_update_page_url(status)}"
+            )
         )
-        self._set_status(status.message)
+        self._set_status(summary)
 
     def _apply_app_update_status(self, status: AppUpdateStatus) -> None:
         self._last_app_update_status = status
+        summary = _app_update_summary_label(status)
         _set_feedback_label_state(
             self._setup_app_update_status_label,
             _app_update_feedback_tone(status),
-            status.message,
+            summary,
         )
-        summary = _app_update_summary_label(status)
         self._workspace_nav_release_status_label.setVisible(True)
         _set_feedback_label_state(
             self._workspace_nav_release_status_label,
@@ -6109,21 +6776,41 @@ class MainWindow(QMainWindow):
         self._smapi_log_status_label.setText(summary)
         tooltip_lines = [summary]
         tooltip_lines.append(_smapi_log_report_summary_text(report))
-        tooltip_lines.append(f"Log context: {context_label}")
+        tooltip_lines.append(
+            f"Contexto do log: {context_label}"
+            if self._localizer.effective_language == "pt-BR"
+            else f"Log context: {context_label}"
+        )
         if context_detail:
             tooltip_lines.append(context_detail)
         missing_targets = _smapi_missing_dependency_targets(report)
         if missing_targets:
             tooltip_lines.append(
-                "Missing dependencies: " + ", ".join(missing_targets)
+                (
+                    "Dependências ausentes: " + ", ".join(missing_targets)
+                    if self._localizer.effective_language == "pt-BR"
+                    else "Missing dependencies: " + ", ".join(missing_targets)
+                )
             )
         self._smapi_log_status_label.setToolTip("\n".join(tooltip_lines))
         context_lines = [
-            "SMAPI log context",
-            f"- Detected context: {context_label}",
+            (
+                "Contexto do log do SMAPI"
+                if self._localizer.effective_language == "pt-BR"
+                else "SMAPI log context"
+            ),
+            (
+                f"- Contexto detectado: {context_label}"
+                if self._localizer.effective_language == "pt-BR"
+                else f"- Detected context: {context_label}"
+            ),
         ]
         if context_detail:
-            context_lines.append(f"- Basis: {context_detail}")
+            context_lines.append(
+                f"- Base: {context_detail}"
+                if self._localizer.effective_language == "pt-BR"
+                else f"- Basis: {context_detail}"
+            )
         self._set_inventory_output_text(
             "\n".join(context_lines) + "\n\n" + build_smapi_log_report_text(report)
         )
@@ -6351,16 +7038,21 @@ class MainWindow(QMainWindow):
 
     def _refresh_smapi_troubleshooting_surface(self) -> None:
         active_operation = self._active_operation_name
+        pt_br = self._localizer.effective_language == "pt-BR"
         if active_operation in {"SMAPI log check", "SMAPI log load", "Startup SMAPI log check"}:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "active",
-                "Parsing latest SMAPI log...",
+                "Analisando o log mais recente do SMAPI..."
+                if pt_br
+                else "Parsing latest SMAPI log...",
             )
             self._smapi_dependency_selector.setVisible(False)
             self._open_smapi_dependency_in_discover_button.setVisible(False)
             self._smapi_troubleshooting_details_box.setPlainText(
-                "SMAPI log details will appear here when the check finishes."
+                "Os detalhes do log do SMAPI vão aparecer aqui quando a verificação terminar."
+                if pt_br
+                else "SMAPI log details will appear here when the check finishes."
             )
             self._refresh_mods_troubleshooting_density()
             return
@@ -6370,12 +7062,16 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "empty",
-                "No SMAPI log checked yet.",
+                "Nenhum log do SMAPI foi verificado ainda."
+                if pt_br
+                else "No SMAPI log checked yet.",
             )
             self._smapi_dependency_selector.setVisible(False)
             self._open_smapi_dependency_in_discover_button.setVisible(False)
             self._smapi_troubleshooting_details_box.setPlainText(
-                "SMAPI log details appear here after you check a log."
+                "Os detalhes do log do SMAPI aparecem aqui depois que você verificar um log."
+                if pt_br
+                else "SMAPI log details appear here after you check a log."
             )
             self._refresh_mods_troubleshooting_density()
             return
@@ -6395,25 +7091,41 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "ready",
-                f"{context_label}: {report.missing_dependency_target_count} missing dependency target(s).",
+                (
+                    f"{context_label}: {report.missing_dependency_target_count} alvo(s) de dependência ausente(s)."
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"{context_label}: {report.missing_dependency_target_count} missing dependency target(s)."
+                ),
             )
         elif report.state == SMAPI_LOG_NOT_FOUND:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "empty",
-                "No SMAPI log found yet. Launch with SMAPI, then check again.",
+                (
+                    "Ainda não foi encontrado nenhum log do SMAPI. Inicie com SMAPI e depois verifique de novo."
+                    if self._localizer.effective_language == "pt-BR"
+                    else "No SMAPI log found yet. Launch with SMAPI, then check again."
+                ),
             )
         elif report.state == SMAPI_LOG_UNABLE_TO_DETERMINE:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "muted",
-                f"{context_label}: couldn't parse this log cleanly.",
+                (
+                    f"{context_label}: não foi possível analisar este log com clareza."
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"{context_label}: couldn't parse this log cleanly."
+                ),
             )
         else:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "muted",
-                f"{context_label}: no missing dependencies in latest log.",
+                (
+                    f"{context_label}: nenhuma dependência ausente foi encontrada no log mais recente."
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"{context_label}: no missing dependencies in latest log."
+                ),
             )
 
         selector_items = _smapi_missing_dependency_targets(report)
@@ -6449,17 +7161,22 @@ class MainWindow(QMainWindow):
 
     def _on_search_discovery(self) -> None:
         query_text = self._discovery_query_input.text()
+        pt_br = self._localizer.effective_language == "pt-BR"
         self._run_background_operation(
             operation_name="Discovery search",
             running_label="Discovery search",
-            started_status="Searching discovery index...",
-            error_title="Discovery search failed",
+            started_status=(
+                "Pesquisando no índice de descoberta..."
+                if pt_br
+                else "Searching discovery index..."
+            ),
+            error_title="A busca da descoberta falhou" if pt_br else "Discovery search failed",
             task_fn=lambda: self._shell_service.search_mod_discovery(
                 query_text=query_text,
             ),
             on_success=self._on_search_discovery_completed,
             busy_button=self._search_mods_button,
-            busy_button_text="Searching...",
+            busy_button_text="Pesquisando..." if pt_br else "Searching...",
         )
 
     def _on_search_discovery_completed(self, discovery_result: ModDiscoveryResult) -> None:
@@ -6473,32 +7190,43 @@ class MainWindow(QMainWindow):
         self._set_discovery_output_text(
             build_discovery_search_text(discovery_result, self._discovery_correlations)
         )
-        self._set_status(f"Discovery search complete: {len(discovery_result.results)} result(s)")
+        self._set_status(
+            self._tr("status.discovery_complete", count=len(discovery_result.results))
+        )
 
     def _on_open_discovered_page(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         if self._current_discovery_result is None:
-            message = "Run Find mods first."
-            QMessageBox.warning(self, "No discovery results", message)
+            message = "Use Encontrar mods primeiro." if pt_br else "Run Find mods first."
+            QMessageBox.warning(
+                self,
+                "Sem resultados da descoberta" if pt_br else "No discovery results",
+                message,
+            )
             self._set_status(message)
             return
 
         row = self._discovery_table.currentRow()
         if row < 0:
-            message = "Select a discovery result row first."
-            QMessageBox.warning(self, "No selection", message)
+            message = (
+                "Selecione primeiro uma linha de resultado da descoberta."
+                if pt_br
+                else "Select a discovery result row first."
+            )
+            QMessageBox.warning(self, "Sem seleção" if pt_br else "No selection", message)
             self._set_status(message)
             return
 
         if row >= len(self._current_discovery_result.results):
-            message = "Selected discovery row is invalid."
-            QMessageBox.warning(self, "Invalid selection", message)
+            message = "A linha selecionada da descoberta é inválida." if pt_br else "Selected discovery row is invalid."
+            QMessageBox.warning(self, "Seleção inválida" if pt_br else "Invalid selection", message)
             self._set_status(message)
             return
 
         row_item = self._discovery_table.item(row, 0)
         if row_item is None:
-            message = "Selected discovery row is invalid."
-            QMessageBox.warning(self, "Invalid selection", message)
+            message = "A linha selecionada da descoberta é inválida." if pt_br else "Selected discovery row is invalid."
+            QMessageBox.warning(self, "Seleção inválida" if pt_br else "Invalid selection", message)
             self._set_status(message)
             return
 
@@ -6506,8 +7234,8 @@ class MainWindow(QMainWindow):
         if not isinstance(result_index, int) or not (
             0 <= result_index < len(self._current_discovery_result.results)
         ):
-            message = "Selected discovery row is invalid."
-            QMessageBox.warning(self, "Invalid selection", message)
+            message = "A linha selecionada da descoberta é inválida." if pt_br else "Selected discovery row is invalid."
+            QMessageBox.warning(self, "Seleção inválida" if pt_br else "Invalid selection", message)
             self._set_status(message)
             return
 
@@ -6521,13 +7249,17 @@ class MainWindow(QMainWindow):
             try:
                 url = self._shell_service.resolve_discovery_source_page_url(entry)
             except AppShellError as exc:
-                QMessageBox.information(self, "No source link", str(exc))
+                QMessageBox.information(self, "Sem link de origem" if pt_br else "No source link", str(exc))
                 self._set_status(str(exc))
                 return
 
         if not QDesktopServices.openUrl(QUrl(url)):
-            message = f"Could not open discovered page: {url}"
-            QMessageBox.critical(self, "Open failed", message)
+            message = (
+                f"Não foi possível abrir a página descoberta: {url}"
+                if pt_br
+                else f"Could not open discovered page: {url}"
+            )
+            QMessageBox.critical(self, "Falha ao abrir" if pt_br else "Open failed", message)
             self._set_status(message)
             return
 
@@ -6553,7 +7285,11 @@ class MainWindow(QMainWindow):
             )
             self._set_discovery_output_text(hint)
             self._set_status(
-                f"Opened discovered page for {correlation.entry.unique_id}. Follow manual flow guidance."
+                (
+                    f"Página descoberta aberta para {correlation.entry.unique_id}. Siga a orientação do fluxo manual."
+                    if pt_br
+                    else f"Opened discovered page for {correlation.entry.unique_id}. Follow manual flow guidance."
+                )
             )
             self._sync_guided_update_intake_handoff(
                 allow_auto_select=False,
@@ -6562,7 +7298,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._set_status(f"Opened discovered page: {url}")
+        self._set_status(
+            f"Página descoberta aberta: {url}"
+            if pt_br
+            else f"Opened discovered page: {url}"
+        )
 
     def _on_check_nexus_connection(self) -> None:
         self._run_background_operation(
@@ -6586,8 +7326,13 @@ class MainWindow(QMainWindow):
             self._set_setup_output_and_details_text(status.message)
             self._set_status(status.message)
         else:
-            self._set_setup_output_text("Nexus status check complete.")
-            self._set_status("Nexus status check complete.")
+            message = (
+                "Verificação do status do Nexus concluída."
+                if self._localizer.effective_language == "pt-BR"
+                else "Nexus status check complete."
+            )
+            self._set_setup_output_text(message)
+            self._set_status(message)
 
     def _on_open_remote_page(self) -> None:
         if self._current_update_report is None:
@@ -6970,11 +7715,20 @@ class MainWindow(QMainWindow):
         cleanup_candidate_count = len(_archive_cleanup_candidate_entries(entries))
         if cleanup_candidate_count:
             self._set_status(
-                "Archive refresh complete: "
-                f"{len(entries)} entr(y/ies), {cleanup_candidate_count} cleanup candidate(s)"
+                self._tr(
+                    "status.archive_refresh_complete",
+                    entries=len(entries),
+                    cleanup=cleanup_candidate_count,
+                )
             )
             return
-        self._set_status(f"Archive refresh complete: {len(entries)} entr(y/ies)")
+        self._set_status(
+            self._tr(
+                "status.archive_refresh_complete",
+                entries=len(entries),
+                cleanup=0,
+            )
+        )
 
     def _on_cleanup_archives(self) -> None:
         try:
@@ -7034,7 +7788,13 @@ class MainWindow(QMainWindow):
         self._set_archive_output_text(build_archive_cleanup_result_text(result))
         self._refresh_archived_entries_after_change()
         self._set_status(
-            "Archive cleanup complete: "
+            (
+                "Limpeza do arquivo concluída: "
+                f"excluídas {len(result.deleted_paths)} entrada(s) antigas, "
+                f"mantidas as {result.plan.retention_keep_limit} mais recentes por mod"
+            )
+            if self._localizer.effective_language == "pt-BR"
+            else "Archive cleanup complete: "
             f"deleted {len(result.deleted_paths)} older entr(y/ies), "
             f"kept latest {result.plan.retention_keep_limit} per mod"
         )
@@ -7111,12 +7871,20 @@ class MainWindow(QMainWindow):
         self._set_archive_output_text(build_archive_restore_result_text(result))
         self._refresh_archived_entries_after_change()
         destination_label = (
-            "REAL Mods"
+            "Mods reais"
+            if result.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS and self._localizer.effective_language == "pt-BR"
+            else "REAL Mods"
             if result.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+            else "Mods sandbox"
+            if self._localizer.effective_language == "pt-BR"
             else "Sandbox Mods"
         )
         self._set_status(
-            f"Archive restore complete to {destination_label}: {result.restored_target.name}"
+            (
+                f"Restauração do arquivo concluída em {destination_label}: {result.restored_target.name}"
+                if self._localizer.effective_language == "pt-BR"
+                else f"Archive restore complete to {destination_label}: {result.restored_target.name}"
+            )
         )
 
     def _on_delete_selected_archive(self) -> None:
@@ -7172,7 +7940,13 @@ class MainWindow(QMainWindow):
     def _on_delete_selected_archive_completed(self, result: ArchiveDeleteResult) -> None:
         self._set_archive_output_text(build_archive_delete_result_text(result))
         self._refresh_archived_entries_after_change()
-        self._set_status(f"Archived item deleted permanently: {result.deleted_path.name}")
+        self._set_status(
+            (
+                f"Item arquivado excluído permanentemente: {result.deleted_path.name}"
+                if self._localizer.effective_language == "pt-BR"
+                else f"Archived item deleted permanently: {result.deleted_path.name}"
+            )
+        )
 
     def _on_archive_selection_changed(self) -> None:
         has_selection = self._selected_archive_entry() is not None
@@ -7192,7 +7966,13 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            self._set_status(f"Archive list refresh warning: {exc}")
+            self._set_status(
+                (
+                    f"Aviso ao atualizar a lista do arquivo: {exc}"
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Archive list refresh warning: {exc}"
+                )
+            )
             return
 
         self._archived_entries = entries
@@ -7232,9 +8012,9 @@ class MainWindow(QMainWindow):
 
     def _on_stop_watch(self) -> None:
         self._watch_timer.stop()
-        self._watch_status_label.setText("Stopped")
+        self._watch_status_label.setText(self._tr("status.stopped"))
         self._watch_status_label.setToolTip(self._watch_sources_tooltip())
-        self._set_status("Downloads watcher stopped.")
+        self._set_status(self._tr("status.watcher_stopped"))
         self._refresh_workflow_surface_states()
 
     def _on_start_watch_completed(self, result: SimpleNamespace) -> None:
@@ -7249,9 +8029,7 @@ class MainWindow(QMainWindow):
         if not initial_result.intakes:
             if watch_state_changed:
                 self._recompute_intake_correlations()
-            self._set_status(
-                "Downloads watcher started. Watching for new zip files."
-            )
+            self._set_status(self._tr("status.watcher_started"))
             self._refresh_workflow_surface_states()
             return
 
@@ -7302,7 +8080,7 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             self._watch_timer.stop()
-            self._watch_status_label.setText("Stopped (error)")
+            self._watch_status_label.setText(self._tr("status.stopped_error"))
             self._watch_status_label.setToolTip(self._watch_sources_tooltip())
             self._set_status(str(exc))
             self._set_packages_output_text(str(exc))
@@ -7530,19 +8308,32 @@ class MainWindow(QMainWindow):
         current_target: str,
         is_enabled: bool,
     ) -> tuple[str, str]:
+        pt_br = self._localizer.effective_language == "pt-BR"
         if is_enabled:
             return (
                 "not_checked",
-                "Check updates to evaluate update actionability.",
+                (
+                    "Verifique atualizações para avaliar se a atualização é acionável."
+                    if pt_br
+                    else "Check updates to evaluate update actionability."
+                ),
             )
         if self._is_custom_profile_view(current_target):
             return (
                 "not_in_profile",
-                "This mod is not part of the active profile yet. Add it to the profile before update and source actions.",
+                (
+                    "Este mod ainda não faz parte do perfil ativo. Adicione-o ao perfil antes das ações de atualização e origem."
+                    if pt_br
+                    else "This mod is not part of the active profile yet. Add it to the profile before update and source actions."
+                ),
             )
         return (
             "disabled",
-            "This mod is disabled. Re-enable it before update and source actions.",
+            (
+                "Este mod está desativado. Reative-o antes das ações de atualização e origem."
+                if pt_br
+                else "This mod is disabled. Re-enable it before update and source actions."
+            ),
         )
 
     def _is_custom_profile_view(self, target_kind: str) -> bool:
@@ -7556,8 +8347,8 @@ class MainWindow(QMainWindow):
 
     def _inventory_inactive_count_label(self, target_kind: str) -> str:
         if self._is_custom_profile_view(target_kind):
-            return "not in profile"
-        return "disabled"
+            return "fora do perfil" if self._localizer.effective_language == "pt-BR" else "not in profile"
+        return "desativadas" if self._localizer.effective_language == "pt-BR" else "disabled"
 
     def _cache_scan_result(self, result: ScanResult) -> None:
         self._scan_results_by_target[result.target_kind] = result
@@ -7774,7 +8565,11 @@ class MainWindow(QMainWindow):
         self._mods_table.clearSelection()
         self._mods_table.setSortingEnabled(was_sorting)
         self._set_inventory_output_text(
-            "No inventory loaded yet for the selected Mods source. Scan the selected source to populate the table."
+            (
+                "Ainda não há inventário carregado para a origem de Mods selecionada. Faça a leitura da origem selecionada para preencher a tabela."
+                if self._localizer.effective_language == "pt-BR"
+                else "No inventory loaded yet for the selected Mods source. Scan the selected source to populate the table."
+            )
         )
         self._refresh_detected_intakes_for_current_inventory()
         self._refresh_discovery_correlations()
@@ -7811,18 +8606,23 @@ class MainWindow(QMainWindow):
         try:
             self._real_profile_combo.clear()
             if not self._real_mod_profiles:
-                self._real_profile_combo.addItem("<no saved profiles>", "")
+                self._real_profile_combo.addItem(self._tr("library.profile.no_saved"), "")
                 self._real_profile_combo.setEnabled(False)
                 self._real_profile_combo.setToolTip(
-                    "Real profiles are unavailable until the configured real Mods library is configured."
+                    self._tr("library.profile.real_unavailable")
                 )
             else:
                 self._real_profile_combo.setEnabled(True)
                 self._real_profile_combo.setToolTip(
-                    "Select the active real Mods profile. Default mirrors the canonical real Mods library."
+                    self._tr("library.profile.real_select")
                 )
                 for profile in self._real_mod_profiles:
-                    self._real_profile_combo.addItem(profile.name, profile.profile_id)
+                    display_name = (
+                        self._tr("library.default_profile_name")
+                        if profile.profile_id == DEFAULT_REAL_PROFILE_ID
+                        else profile.name
+                    )
+                    self._real_profile_combo.addItem(display_name, profile.profile_id)
                 selected_index = (
                     self._real_profile_combo.findData(selected_before)
                     if selected_before
@@ -7842,7 +8642,7 @@ class MainWindow(QMainWindow):
             self._sandbox_profile_combo.blockSignals(True)
             try:
                 self._sandbox_profile_combo.clear()
-                self._sandbox_profile_combo.addItem("<profiles unavailable>", "")
+                self._sandbox_profile_combo.addItem(self._tr("library.profile.unavailable"), "")
                 self._sandbox_profile_combo.setEnabled(False)
                 self._sandbox_profile_combo.setToolTip(str(exc))
             finally:
@@ -7857,18 +8657,23 @@ class MainWindow(QMainWindow):
         try:
             self._sandbox_profile_combo.clear()
             if not self._sandbox_mod_profiles:
-                self._sandbox_profile_combo.addItem("<no saved profiles>", "")
+                self._sandbox_profile_combo.addItem(self._tr("library.profile.no_saved"), "")
                 self._sandbox_profile_combo.setEnabled(False)
                 self._sandbox_profile_combo.setToolTip(
-                    "Sandbox profiles are unavailable until the canonical sandbox library is configured."
+                    self._tr("library.profile.sandbox_unavailable")
                 )
             else:
                 self._sandbox_profile_combo.setEnabled(True)
                 self._sandbox_profile_combo.setToolTip(
-                    "Select the active sandbox profile. Default mirrors the canonical sandbox library."
+                    self._tr("library.profile.sandbox_select")
                 )
                 for profile in self._sandbox_mod_profiles:
-                    self._sandbox_profile_combo.addItem(profile.name, profile.profile_id)
+                    display_name = (
+                        self._tr("library.default_profile_name")
+                        if profile.profile_id == DEFAULT_SANDBOX_PROFILE_ID
+                        else profile.name
+                    )
+                    self._sandbox_profile_combo.addItem(display_name, profile.profile_id)
                 selected_index = (
                     self._sandbox_profile_combo.findData(selected_before)
                     if selected_before
@@ -7956,11 +8761,15 @@ class MainWindow(QMainWindow):
         self._create_real_profile_button.setEnabled(create_enabled)
         if create_enabled:
             self._create_real_profile_button.setToolTip(
-                "Create a new real profile from Default using the canonical real Mods library."
+                "Criar um novo perfil real a partir do Padrão usando a biblioteca canônica dos Mods reais."
+                if self._localizer.effective_language == "pt-BR"
+                else "Create a new real profile from Default using the canonical real Mods library."
             )
         else:
             self._create_real_profile_button.setToolTip(
-                "Configure the real Mods folder before creating real profiles."
+                "Configure a pasta de Mods reais antes de criar perfis reais."
+                if self._localizer.effective_language == "pt-BR"
+                else "Configure the real Mods folder before creating real profiles."
             )
 
         selected_profile = self._selected_real_profile()
@@ -7968,12 +8777,24 @@ class MainWindow(QMainWindow):
         self._delete_real_profile_button.setEnabled(delete_enabled)
         if delete_enabled:
             self._delete_real_profile_button.setToolTip(
-                f"Delete real profile: {selected_profile.name}"
+                (
+                    f"Excluir perfil real: {selected_profile.name}"
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Delete real profile: {selected_profile.name}"
+                )
             )
         elif selected_profile is not None and selected_profile.is_default:
-            self._delete_real_profile_button.setToolTip("Default profile cannot be deleted.")
+            self._delete_real_profile_button.setToolTip(
+                "O perfil Padrão não pode ser excluído."
+                if self._localizer.effective_language == "pt-BR"
+                else "Default profile cannot be deleted."
+            )
         else:
-            self._delete_real_profile_button.setToolTip("Select a custom real profile first.")
+            self._delete_real_profile_button.setToolTip(
+                "Selecione primeiro um perfil real personalizado."
+                if self._localizer.effective_language == "pt-BR"
+                else "Select a custom real profile first."
+            )
 
     def _refresh_inventory_sandbox_profile_action_state(self, *_: object) -> None:
         sandbox_target_selected = self._current_scan_target() == SCAN_TARGET_SANDBOX_MODS
@@ -8005,11 +8826,15 @@ class MainWindow(QMainWindow):
         self._create_sandbox_profile_button.setEnabled(create_enabled)
         if create_enabled:
             self._create_sandbox_profile_button.setToolTip(
-                "Create a new sandbox profile from Default using the canonical sandbox library."
+                "Criar um novo perfil sandbox a partir do Padrão usando a biblioteca canônica do sandbox."
+                if self._localizer.effective_language == "pt-BR"
+                else "Create a new sandbox profile from Default using the canonical sandbox library."
             )
         elif not sandbox_path_text:
             self._create_sandbox_profile_button.setToolTip(
-                "Configure the Sandbox Mods folder before creating sandbox profiles."
+                "Configure a pasta Mods sandbox antes de criar perfis sandbox."
+                if self._localizer.effective_language == "pt-BR"
+                else "Configure the Sandbox Mods folder before creating sandbox profiles."
             )
 
         selected_profile = self._selected_sandbox_profile()
@@ -8017,15 +8842,23 @@ class MainWindow(QMainWindow):
         self._delete_sandbox_profile_button.setEnabled(delete_enabled)
         if delete_enabled:
             self._delete_sandbox_profile_button.setToolTip(
-                f"Delete sandbox profile: {selected_profile.name}"
+                (
+                    f"Excluir perfil sandbox: {selected_profile.name}"
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Delete sandbox profile: {selected_profile.name}"
+                )
             )
         elif selected_profile is not None and selected_profile.is_default:
             self._delete_sandbox_profile_button.setToolTip(
-                "Default profile cannot be deleted."
+                "O perfil Padrão não pode ser excluído."
+                if self._localizer.effective_language == "pt-BR"
+                else "Default profile cannot be deleted."
             )
         else:
             self._delete_sandbox_profile_button.setToolTip(
-                "Select a custom sandbox profile first."
+                "Selecione primeiro um perfil sandbox personalizado."
+                if self._localizer.effective_language == "pt-BR"
+                else "Select a custom sandbox profile first."
             )
 
     def _on_create_real_profile(self) -> None:
@@ -8347,8 +9180,13 @@ class MainWindow(QMainWindow):
             )
             if resolved_row is None:
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
-                status_item = QTableWidgetItem("Metadata unavailable")
-                reason = "Metadata unavailable for this mod in the latest update check."
+                pt_br = self._localizer.effective_language == "pt-BR"
+                status_item = QTableWidgetItem("Metadados indisponíveis" if pt_br else "Metadata unavailable")
+                reason = (
+                    "Os metadados deste mod ficaram indisponíveis na verificação mais recente de atualizações."
+                    if pt_br
+                    else "Metadata unavailable for this mod in the latest update check."
+                )
                 status_item.setToolTip(reason)
                 self._mods_table.setItem(row, 4, status_item)
                 name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
@@ -8428,7 +9266,11 @@ class MainWindow(QMainWindow):
         version_tooltip = ""
         if name_item.data(_ROLE_MOD_IS_GROUPED) is True and selected_mod is not None:
             version_tooltip = (
-                "Grouped row currently reflects update status from:\n"
+                "A linha agrupada atualmente reflete o status de atualização de:\n"
+                f"- {selected_mod.name} ({selected_mod.unique_id})\n"
+                f"Versão instalada: {selected_mod.version}"
+                if self._localizer.effective_language == "pt-BR"
+                else "Grouped row currently reflects update status from:\n"
                 f"- {selected_mod.name} ({selected_mod.unique_id})\n"
                 f"Installed version: {selected_mod.version}"
             )
@@ -8510,7 +9352,9 @@ class MainWindow(QMainWindow):
             correlation = correlations[row] if row < len(correlations) else None
             source_label = _discovery_source_label(entry.source_provider)
             compatibility_label = _discovery_compatibility_label(entry.compatibility_state)
-            context_text = correlation.context_summary if correlation is not None else "No app context"
+            context_text = (
+                correlation.context_summary if correlation is not None else self._tr("discovery.context.none")
+            )
             provider_relation = (
                 correlation.provider_relation_note
                 if correlation is not None and correlation.provider_relation_note
@@ -8565,6 +9409,7 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_surface_states()
 
     def _render_archive_entries(self, entries: tuple[ArchivedModEntry, ...]) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         has_entries = bool(entries)
         self._archive_results_group.setVisible(has_entries)
         self._archive_empty_state_label.setVisible(not has_entries)
@@ -8572,7 +9417,9 @@ class MainWindow(QMainWindow):
             self._archive_empty_state_label.setText("")
         else:
             self._archive_empty_state_label.setText(
-                "No archived entries yet. Refresh archive list after archive or recovery activity."
+                "Ainda não há entradas arquivadas. Atualize a lista do arquivo depois de uma atividade de arquivamento ou recuperação."
+                if pt_br
+                else "No archived entries yet. Refresh archive list after archive or recovery activity."
             )
         was_sorting = self._archive_table.isSortingEnabled()
         self._archive_table.setSortingEnabled(False)
@@ -8759,11 +9606,16 @@ class MainWindow(QMainWindow):
         status: AppUpdateStatus | None = None,
         failure_message: str | None = None,
     ) -> str:
+        pt_br = get_active_ui_localizer().effective_language == "pt-BR"
         if status is not None:
             return status.message or _app_update_summary_label(status)
         if failure_message:
             return failure_message
-        return "Cinderleaf release status unavailable right now."
+        return (
+            "O status da versão do Cinderleaf está indisponível no momento."
+            if pt_br
+            else "Cinderleaf release status unavailable right now."
+        )
 
     def _refresh_workflow_surface_states(self) -> None:
         self._refresh_setup_readiness_state()
@@ -8857,6 +9709,7 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_mods_workspace_state(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         self._refresh_smapi_troubleshooting_surface()
         self._refresh_prepare_selected_updates_action_state()
         visible_count = _visible_table_row_count(self._mods_table)
@@ -8870,14 +9723,22 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "active",
-                "Scanning the selected Mods source. Inventory rows will appear here when the scan completes.",
+                (
+                    "Lendo a origem Mods selecionada. As linhas do inventário vão aparecer aqui quando a leitura terminar."
+                    if pt_br
+                    else "Scanning the selected Mods source. Inventory rows will appear here when the scan completes."
+                ),
             )
             return
         if active_operation == "Update check":
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "active",
-                "Checking remote metadata and update states for the current inventory.",
+                (
+                    "Verificando metadados remotos e status de atualização para o inventário atual."
+                    if pt_br
+                    else "Checking remote metadata and update states for the current inventory."
+                ),
             )
             return
         if total_count == 0:
@@ -8887,7 +9748,11 @@ class MainWindow(QMainWindow):
                     _set_feedback_label_state(
                         self._mods_inventory_state_label,
                         "empty",
-                        "Set the Real Mods folder in Setup, then scan that source to load the live inventory.",
+                        (
+                            "Defina a pasta Mods real em Configuração e depois leia essa origem para carregar o inventário ao vivo."
+                            if pt_br
+                            else "Set the Real Mods folder in Setup, then scan that source to load the live inventory."
+                        ),
                     )
                     return
             else:
@@ -8896,20 +9761,32 @@ class MainWindow(QMainWindow):
                     _set_feedback_label_state(
                         self._mods_inventory_state_label,
                         "empty",
-                        "Set the Sandbox Mods folder in Setup, then scan that source to load the sandbox inventory.",
+                        (
+                            "Defina a pasta Mods sandbox em Configuração e depois leia essa origem para carregar o inventário sandbox."
+                            if pt_br
+                            else "Set the Sandbox Mods folder in Setup, then scan that source to load the sandbox inventory."
+                        ),
                     )
                     return
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "empty",
-                "No inventory loaded yet. Scan the selected Mods source to populate the table.",
+                (
+                    "Ainda não há inventário carregado. Leia a origem Mods selecionada para preencher a tabela."
+                    if pt_br
+                    else "No inventory loaded yet. Scan the selected Mods source to populate the table."
+                ),
             )
             return
         if visible_count == 0:
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "muted",
-                "No installed mods match the current filter. Clear or relax the filter to bring rows back into view.",
+                (
+                    "Nenhum mod instalado combina com o filtro atual. Limpe ou alivie o filtro para trazer as linhas de volta."
+                    if pt_br
+                    else "No installed mods match the current filter. Clear or relax the filter to bring rows back into view."
+                ),
             )
             return
         if self._current_update_report is None:
@@ -8919,14 +9796,24 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "ready",
-                f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} {inactive_label}). Check updates to unlock page and source actions for active mods.",
+                (
+                    f"{visible_count} linha(s) de mods prontas ({active_count} ativas, {disabled_count} {inactive_label}). Verifique atualizações para liberar ações de página e origem para os mods ativos."
+                    if pt_br
+                    else f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} {inactive_label}). Check updates to unlock page and source actions for active mods."
+                ),
             )
             return
         inactive_label = self._inventory_inactive_count_label(self._current_scan_target())
         _set_feedback_label_state(
             self._mods_inventory_state_label,
             "ready",
-            f"{visible_count} mod row(s) visible ({active_count} active, {disabled_count} {inactive_label}). Select an active row to inspect guidance, sync to sandbox, or open its source page when actionable.",
+            self._tr(
+                "status.mods_rows_visible",
+                visible=visible_count,
+                active=active_count,
+                disabled=disabled_count,
+                inactive_label=inactive_label,
+            ),
         )
 
     def _refresh_discovery_workspace_state(self) -> None:
@@ -8935,15 +9822,15 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._discovery_results_state_label,
                 "active",
-                "Searching discovery sources. Results will land here when the query completes.",
+                self._tr("discovery.state.searching"),
             )
             return
         if self._current_discovery_result is None:
             query_text = self._discovery_query_input.text().strip()
             message = (
-                "Optional: search by mod name, UniqueID, or author when you need source pages or update context."
+                self._tr("discovery.state.optional")
                 if not query_text
-                else "Run Find mods to search this query and build a source list."
+                else self._tr("discovery.state.run_query")
             )
             _set_feedback_label_state(
                 self._discovery_results_state_label,
@@ -8957,23 +9844,24 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._discovery_results_state_label,
                 "muted",
-                "No results landed for this query. Try a broader name, UniqueID, or author search.",
+                self._tr("discovery.state.no_results"),
             )
             return
         if visible_count == 0:
             _set_feedback_label_state(
                 self._discovery_results_state_label,
                 "muted",
-                "No discovery rows match the current filter. Clear the filter to review the full result set.",
+                self._tr("discovery.state.filter_empty"),
             )
             return
         _set_feedback_label_state(
             self._discovery_results_state_label,
             "ready",
-            f"{visible_count} discovery result(s) ready. Select one to open its page and continue the workflow through Packages or Review.",
+            self._tr("discovery.summary_ready", count=visible_count),
         )
 
     def _refresh_packages_workspace_state(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         selected_count = len(self._selected_zip_package_paths)
         has_detected_intakes = bool(self._detected_intakes)
         has_inspection = self._package_inspection_batch_result is not None
@@ -8983,64 +9871,105 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "active",
-                "Starting watch...",
+                "Iniciando monitoramento..."
+                if self._localizer.effective_language == "pt-BR"
+                else "Starting watch...",
             )
             return
         if watch_active and not has_detected_intakes and not has_inspection:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "active",
-                "Watcher is running. New packages will appear here automatically.",
+                (
+                    "O monitor está em execução. Novos pacotes vão aparecer aqui automaticamente."
+                    if pt_br
+                    else "Watcher is running. New packages will appear here automatically."
+                ),
             )
             return
         if has_inspection:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Inspection ready. Open Install when the batch looks right.",
+                (
+                    "Inspeção pronta. Abra Instalar quando o lote estiver do jeito certo."
+                    if pt_br
+                    else "Inspection ready. Open Install when the batch looks right."
+                ),
             )
             return
         if has_detected_intakes:
             target_inventory = self._packages_comparison_inventory()
             if target_inventory is None:
-                target_note = f"Compare against is set to {target_label}, but that inventory has not been scanned yet."
+                target_note = (
+                    f"A comparação está configurada para {target_label}, mas esse inventário ainda não foi lido."
+                    if pt_br
+                    else f"Compare against is set to {target_label}, but that inventory has not been scanned yet."
+                )
             else:
-                target_note = f"Statuses below are comparing against {target_label}."
+                target_note = (
+                    f"Os status abaixo estão comparando com {target_label}."
+                    if pt_br
+                    else f"Statuses below are comparing against {target_label}."
+                )
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Detected packages ready. Check packages, then open Install. "
-                + target_note
-                + " Open as update appears when a download is a real update.",
+                (
+                    "Pacotes detectados prontos. Confira os pacotes e depois abra Instalar. "
+                    + target_note
+                    + " Abrir como atualização aparece quando um download é uma atualização real."
+                    if pt_br
+                    else "Detected packages ready. Check packages, then open Install. "
+                    + target_note
+                    + " Open as update appears when a download is a real update."
+                ),
             )
             return
         if selected_count > 0:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "muted",
-                "Packages queued. Inspect the queue, then open Install.",
+                (
+                    "Pacotes na fila. Inspecione a fila e depois abra Instalar."
+                    if pt_br
+                    else "Packages queued. Inspect the queue, then open Install."
+                ),
             )
             return
         _set_feedback_label_state(
             self._packages_workspace_state_label,
             "empty",
-            "Watch downloads or add packages here, then open Install.",
+            (
+                "Monitore downloads ou adicione pacotes aqui e depois abra Instalar."
+                if pt_br
+                else "Watch downloads or add packages here, then open Install."
+            ),
         )
 
     def _refresh_review_workspace_state(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         self._refresh_review_action_hierarchy()
         if self._active_operation_name == "Install planning":
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "active",
-                "Planning the selected package batch. The read-only plan will appear when the background check completes.",
+                (
+                    "Planejando o lote de pacotes selecionado. O plano só leitura vai aparecer quando a checagem em segundo plano terminar."
+                    if pt_br
+                    else "Planning the selected package batch. The read-only plan will appear when the background check completes."
+                ),
             )
             return
         if self._active_operation_name == "Install execution":
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "active",
-                "Applying the selected install batch. Results will update when the background write completes.",
+                (
+                    "Aplicando o lote de instalação selecionado. Os resultados vão atualizar quando a gravação em segundo plano terminar."
+                    if pt_br
+                    else "Applying the selected install batch. Results will update when the background write completes."
+                ),
             )
             return
         if self._last_install_completion_message is not None:
@@ -9054,7 +9983,11 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "ready",
-                "Install plan is ready. Check the summary, then apply when it looks right.",
+                (
+                    "O plano de instalação está pronto. Confira o resumo e aplique quando tudo parecer certo."
+                    if pt_br
+                    else "Install plan is ready. Check the summary, then apply when it looks right."
+                ),
             )
             return
         has_staged_package = bool(self._selected_zip_package_paths) or bool(
@@ -9064,28 +9997,41 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "muted",
-                "A package batch is staged. Plan install is the next step.",
+                (
+                    "Um lote de pacotes está preparado. Planejar instalação é o próximo passo."
+                    if pt_br
+                    else "A package batch is staged. Plan install is the next step."
+                ),
             )
             return
         _set_feedback_label_state(
             self._plan_install_state_label,
             "empty",
-            "Start in Packages: queue packages there, then use Open Install.",
+            self._tr("install.start_in_packages"),
         )
 
     def _refresh_compare_workspace_state(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         if self._active_operation_name == "Compare real vs sandbox":
             _set_feedback_label_state(
                 self._compare_summary_label,
                 "active",
-                "Comparing configured real Mods against sandbox Mods. The drift table will update when the read-only check completes.",
+                (
+                    "Comparando os Mods reais configurados com os Mods sandbox. A tabela de diferenças vai atualizar quando a checagem só leitura terminar."
+                    if pt_br
+                    else "Comparing configured real Mods against sandbox Mods. The drift table will update when the read-only check completes."
+                ),
             )
             return
         if self._current_mods_compare_result is None:
             _set_feedback_label_state(
                 self._compare_summary_label,
                 "empty",
-                "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path.",
+                (
+                    "Execute a comparação para ver diferenças acionáveis entre o caminho configurado de Mods reais e o de Mods sandbox."
+                    if pt_br
+                    else "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path."
+                ),
             )
             return
         self._refresh_compare_summary_feedback()
@@ -9096,35 +10042,56 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_archive_workspace_state(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         if self._active_operation_name == "Archive refresh":
             _set_feedback_label_state(
                 self._archive_empty_state_label,
                 "active",
-                "Refreshing archive entries from real and sandbox workflows.",
+                (
+                    "Atualizando entradas do arquivo a partir dos fluxos real e sandbox."
+                    if pt_br
+                    else "Refreshing archive entries from real and sandbox workflows."
+                ),
             )
             _set_feedback_label_state(
                 self._archive_state_hint_label,
                 "active",
-                "Restore and delete stay unavailable until the refreshed list lands and you select an entry.",
+                (
+                    "Restaurar e excluir ficam indisponíveis até a lista atualizada chegar e você selecionar uma entrada."
+                    if pt_br
+                    else "Restore and delete stay unavailable until the refreshed list lands and you select an entry."
+                ),
             )
             return
         if self._active_operation_name == "Archive cleanup":
             _set_feedback_label_state(
                 self._archive_state_hint_label,
                 "active",
-                "Cleaning up older archived copies with the explicit retention rule. Restore and delete stay paused until the refreshed list returns.",
+                (
+                    "Limpando cópias arquivadas antigas com a regra explícita de retenção. Restaurar e excluir ficam pausados até a lista atualizada voltar."
+                    if pt_br
+                    else "Cleaning up older archived copies with the explicit retention rule. Restore and delete stay paused until the refreshed list returns."
+                ),
             )
             return
         if not self._archived_entries:
             _set_feedback_label_state(
                 self._archive_empty_state_label,
                 "empty",
-                "No archived entries yet. Refresh archive list after archive or recovery activity.",
+                (
+                    "Ainda não há entradas arquivadas. Atualize a lista do arquivo depois de alguma atividade de arquivamento ou recuperação."
+                    if pt_br
+                    else "No archived entries yet. Refresh archive list after archive or recovery activity."
+                ),
             )
             _set_feedback_label_state(
                 self._archive_state_hint_label,
                 "muted",
-                "Archived entries will appear here after archive, recovery, or restore-safe actions.",
+                (
+                    "As entradas arquivadas vão aparecer aqui depois de ações seguras de arquivamento, recuperação ou restauração."
+                    if pt_br
+                    else "Archived entries will appear here after archive, recovery, or restore-safe actions."
+                ),
             )
             return
         cleanup_candidate_count = len(_archive_cleanup_candidate_entries(self._archived_entries))
@@ -9133,23 +10100,30 @@ class MainWindow(QMainWindow):
                 _set_feedback_label_state(
                     self._archive_state_hint_label,
                     "ready",
-                    "Archive list is ready. "
-                    f"{cleanup_candidate_count} older archived cop{'y' if cleanup_candidate_count == 1 else 'ies'} "
-                    f"exceed retention; Cleanup older archives keeps the latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} per mod.",
+                    self._tr(
+                        "archive.ready_cleanup",
+                        cleanup=cleanup_candidate_count,
+                        suffix="y" if cleanup_candidate_count == 1 else "ies",
+                        keep_latest=ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
+                    ),
                 )
             else:
                 _set_feedback_label_state(
                     self._archive_state_hint_label,
                     "muted",
-                    "Archive list is ready. Select an entry to restore it to its target or delete the archived copy explicitly.",
+                    self._tr("archive.ready_select"),
                 )
             return
         selected_message = (
-            "Archive entry selected. Restore returns it to its target, while delete permanently removes the archived copy."
+            "Entrada arquivada selecionada. Restaurar devolve ao destino, enquanto excluir remove a cópia arquivada permanentemente."
+            if pt_br
+            else "Archive entry selected. Restore returns it to its target, while delete permanently removes the archived copy."
         )
         if cleanup_candidate_count:
             selected_message += (
-                f" Cleanup older archives can also trim {cleanup_candidate_count} older cop"
+                f" Limpar arquivos antigos também pode remover {cleanup_candidate_count} cópia(s) antiga(s) além das {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} mais recentes por mod."
+                if pt_br
+                else f" Cleanup older archives can also trim {cleanup_candidate_count} older cop"
                 f"{'y' if cleanup_candidate_count == 1 else 'ies'} beyond the latest "
                 f"{ARCHIVE_RETENTION_KEEP_LATEST_COUNT} per mod."
             )
@@ -9190,7 +10164,7 @@ class MainWindow(QMainWindow):
                 busy_button,
                 busy_button_text or f"{running_label}...",
             )
-        self._operation_state_label.setText(f"Running: {running_label}")
+        self._operation_state_label.setText(self._tr("status.running", label=running_label))
         self._set_background_actions_enabled(False)
         self._refresh_workflow_surface_states()
         self._set_status(started_status)
@@ -9274,9 +10248,13 @@ class MainWindow(QMainWindow):
         if success and pending_callback is not None:
             QTimer.singleShot(0, pending_callback)
         if success:
-            self._operation_state_label.setText(f"Last: {operation_name} finished")
+            self._operation_state_label.setText(
+                self._tr("status.operation_finished", name=operation_name)
+            )
             return
-        self._operation_state_label.setText(f"Last: {operation_name} failed")
+        self._operation_state_label.setText(
+            self._tr("status.operation_failed", name=operation_name)
+        )
 
     def _set_background_actions_enabled(self, enabled: bool) -> None:
         for button in self._background_action_buttons:
@@ -9413,10 +10391,10 @@ class MainWindow(QMainWindow):
         self._current_restore_import_execution_review = None
         if reset_summary:
             self._restore_import_planning_summary_label.setText(
-                _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT
+                _no_restore_import_planning_summary_text()
             )
             self._restore_import_planning_summary_label.setToolTip(
-                _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT
+                _no_restore_import_planning_summary_text()
             )
 
     def _prompt_for_backup_bundle_path(self) -> Path | None:
@@ -9524,25 +10502,34 @@ class MainWindow(QMainWindow):
         label_text: str,
     ) -> None:
         self._active_backup_bundle_path = bundle_path
-        self._active_backup_bundle_context_label_text = label_text if bundle_path is not None else "none yet"
+        self._active_backup_bundle_context_label_text = (
+            label_text if bundle_path is not None else "none yet"
+        )
         self._refresh_active_backup_bundle_context()
         self._refresh_restore_import_execution_state()
 
     def _refresh_active_backup_bundle_context(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         if self._active_backup_bundle_path is None:
-            self._active_backup_bundle_label.setText(_NO_ACTIVE_BACKUP_BUNDLE_TEXT)
-            self._active_backup_bundle_label.setToolTip(_NO_ACTIVE_BACKUP_BUNDLE_TEXT)
+            self._active_backup_bundle_label.setText(_no_active_backup_bundle_text())
+            self._active_backup_bundle_label.setToolTip(_no_active_backup_bundle_text())
             return
 
         path_text = str(self._active_backup_bundle_path)
-        context_label = self._active_backup_bundle_context_label_text
+        context_label = _backup_bundle_context_label_text(
+            self._active_backup_bundle_context_label_text
+        )
         bundle_kind = (
             "zip"
             if self._active_backup_bundle_path.suffix.casefold() == ".zip"
-            else "folder"
+            else ("pasta" if pt_br else "folder")
         )
         self._active_backup_bundle_label.setText(
-            f"Active backup bundle {bundle_kind} ({context_label}): {_compact_path_text(path_text, max_length=84)}"
+            (
+                f"Pacote de backup ativo {bundle_kind} ({context_label}): {_compact_path_text(path_text, max_length=84)}"
+                if pt_br
+                else f"Active backup bundle {bundle_kind} ({context_label}): {_compact_path_text(path_text, max_length=84)}"
+            )
         )
         self._active_backup_bundle_label.setToolTip(path_text)
 
@@ -9575,6 +10562,7 @@ class MainWindow(QMainWindow):
         bundle_path: Path,
         planning_inputs: dict[str, object],
     ) -> _RestoreImportPlanningUiPayload:
+        pt_br = self._localizer.effective_language == "pt-BR"
         planning_result = self._shell_service.plan_restore_import_from_backup_bundle(
             bundle_path_text=str(bundle_path),
             **planning_inputs,
@@ -9583,7 +10571,11 @@ class MainWindow(QMainWindow):
         planning_text = build_restore_import_planning_text(planning_result)
         combined_text = (
             f"{planning_text}\n\n"
-            f"Execution readiness: {execution_review.message}"
+            + (
+                f"Prontidão da execução: {execution_review.message}"
+                if pt_br
+                else f"Execution readiness: {execution_review.message}"
+            )
         )
         summary_text = (
             execution_review.message if not execution_review.allowed else planning_result.message
@@ -9602,11 +10594,19 @@ class MainWindow(QMainWindow):
             return
         if self._active_operation_name is not None:
             button.setEnabled(False)
-            button.setToolTip("Wait for the current background operation to finish.")
+            button.setToolTip(
+                "Espere a operação em segundo plano atual terminar."
+                if self._localizer.effective_language == "pt-BR"
+                else "Wait for the current background operation to finish."
+            )
             return
         if self._pending_post_operation_callback is not None:
             button.setEnabled(False)
-            button.setToolTip("Wait for restore/import planning to start.")
+            button.setToolTip(
+                "Espere o planejamento de restauração/importação começar."
+                if self._localizer.effective_language == "pt-BR"
+                else "Wait for restore/import planning to start."
+            )
             return
 
         review = self._current_restore_import_execution_review
@@ -9614,11 +10614,15 @@ class MainWindow(QMainWindow):
             if self._active_backup_bundle_path is not None:
                 button.setEnabled(True)
                 button.setToolTip(
-                    "Refresh restore/import review for the current backup bundle before execution."
+                    (
+                        "Atualize a revisão de restauração/importação do pacote de backup atual antes da execução."
+                        if self._localizer.effective_language == "pt-BR"
+                        else "Refresh restore/import review for the current backup bundle before execution."
+                    )
                 )
             else:
                 button.setEnabled(False)
-                button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
+                button.setToolTip(_no_restore_import_execution_tooltip())
             return
 
         button.setEnabled(review.allowed)
@@ -9649,16 +10653,24 @@ class MainWindow(QMainWindow):
         self._compare_results_table.setVisible(False)
         self._compare_results_table.clearSelection()
         self._compare_copy_identity_button.setEnabled(False)
-        self._compare_copy_identity_button.setToolTip("Select a compare row first.")
+        self._compare_copy_identity_button.setToolTip(
+            "Selecione primeiro uma linha da comparação."
+            if self._localizer.effective_language == "pt-BR"
+            else "Select a compare row first."
+        )
         self._set_local_detail_group_visibility(
             getattr(self, "_compare_output_group", None),
             "",
         )
         self._compare_summary_label.setText(
-            "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path. Same-version rows stay hidden until you ask for them."
+            "Execute a comparação para ver diferenças acionáveis entre o caminho configurado dos Mods reais e o caminho dos Mods sandbox. Linhas com a mesma versão ficam ocultas até você pedir por elas."
+            if self._localizer.effective_language == "pt-BR"
+            else "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path. Same-version rows stay hidden until you ask for them."
         )
         self._compare_summary_label.setToolTip(
-            "Run compare after changing either Mods path or archive exclusion path."
+            "Execute a comparação depois de mudar qualquer caminho de Mods ou o caminho de exclusão do arquivo."
+            if self._localizer.effective_language == "pt-BR"
+            else "Run compare after changing either Mods path or archive exclusion path."
         )
         self._refresh_workflow_surface_states()
 
@@ -9712,7 +10724,7 @@ class MainWindow(QMainWindow):
         self._package_queue_list.blockSignals(True)
         self._package_queue_list.clear()
         if not self._detected_intakes:
-            empty_item = QListWidgetItem("No watched packages detected yet.")
+            empty_item = QListWidgetItem(self._tr("archive.empty_queue"))
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._package_queue_list.addItem(empty_item)
             self._package_queue_list.blockSignals(False)
@@ -9776,7 +10788,11 @@ class MainWindow(QMainWindow):
             visible_count += 1
 
         if visible_count == 0:
-            empty_item = QListWidgetItem("No detected packages match the current filter.")
+            empty_item = QListWidgetItem(
+                "Nenhum pacote detectado combina com o filtro atual."
+                if self._localizer.effective_language == "pt-BR"
+                else "No detected packages match the current filter."
+            )
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._package_queue_list.addItem(empty_item)
 
@@ -9976,9 +10992,7 @@ class MainWindow(QMainWindow):
     def _refresh_zip_selection_summary(self) -> None:
         selected_count = len(self._selected_zip_package_paths)
         if selected_count == 0:
-            self._zip_selection_summary_label.setText(
-                "No watched packages queued yet. Check packages in the queue to start install planning."
-            )
+            self._zip_selection_summary_label.setText(self._tr("archive.empty_queue"))
             self._zip_selection_summary_label.setToolTip("")
             self._refresh_workflow_surface_states()
             return
@@ -9987,14 +11001,18 @@ class MainWindow(QMainWindow):
         package_list = "\n".join(package_names)
         if selected_count == 1:
             self._zip_selection_summary_label.setText(
-                f"1 watched package queued: {package_names[0]}"
+                f"1 pacote monitorado na fila: {package_names[0]}"
+                if self._localizer.effective_language == "pt-BR"
+                else f"1 watched package queued: {package_names[0]}"
             )
             self._zip_selection_summary_label.setToolTip(package_list)
             self._refresh_workflow_surface_states()
             return
 
         self._zip_selection_summary_label.setText(
-            f"{selected_count} watched packages queued for Install."
+            f"{selected_count} pacotes monitorados na fila para Instalar."
+            if self._localizer.effective_language == "pt-BR"
+            else f"{selected_count} watched packages queued for Install."
         )
         self._zip_selection_summary_label.setToolTip(package_list)
         self._refresh_workflow_surface_states()
@@ -10029,17 +11047,21 @@ class MainWindow(QMainWindow):
     def _watch_sources_summary(self) -> str:
         configured_paths = self._configured_watch_path_texts()
         if not configured_paths:
-            return "no watch paths"
+            return self._tr("status.no_watch_paths")
         if len(configured_paths) == 1:
             return configured_paths[0]
-        return f"{len(configured_paths)} paths"
+        return self._tr("status.watch_path_count", count=len(configured_paths))
 
     def _watch_sources_tooltip(self) -> str:
         return "\n".join(self._configured_watch_path_texts())
 
     def _update_watch_runtime_status_label(self, baseline_count: int) -> None:
         self._watch_status_label.setText(
-            f"Running | {self._watch_sources_summary()} | baseline={baseline_count} zip(s)"
+            (
+                f"Em execução | {self._watch_sources_summary()} | base={baseline_count} zip(s)"
+                if self._localizer.effective_language == "pt-BR"
+                else f"Running | {self._watch_sources_summary()} | baseline={baseline_count} zip(s)"
+            )
         )
         self._watch_status_label.setToolTip(self._watch_sources_tooltip())
 
@@ -10051,7 +11073,10 @@ class MainWindow(QMainWindow):
         sections: list[str] = []
         configured_paths = self._configured_watch_path_texts()
         if len(configured_paths) > 1:
-            sections.append("Watcher sources:\n- " + "\n- ".join(configured_paths))
+            sections.append(
+                ("Pastas monitoradas:\n- " if self._localizer.effective_language == "pt-BR" else "Watcher sources:\n- ")
+                + "\n- ".join(configured_paths)
+            )
         sections.append(build_downloads_intake_text(result))
         sections.append(build_intake_correlation_text(correlations))
         return tuple(sections)
@@ -10059,20 +11084,17 @@ class MainWindow(QMainWindow):
     def _watch_detection_status_text(self, detected_count: int, *, started: bool) -> str:
         configured_paths = self._configured_watch_path_texts()
         if started and len(configured_paths) <= 1:
-            return (
-                f"Downloads watcher started. Detected {detected_count} package(s) in watched downloads."
-            )
+            return self._tr("status.watcher_started_detected", count=detected_count)
         if started:
-            return (
-                f"Downloads watcher started. Detected {detected_count} package(s) across watched downloads paths."
-            )
+            return self._tr("status.watcher_started_detected_paths", count=detected_count)
         if len(configured_paths) <= 1:
-            return f"Detected {detected_count} new package(s) in watched downloads."
-        return f"Detected {detected_count} new package(s) across watched downloads paths."
+            return self._tr("status.watcher_detected", count=detected_count)
+        return self._tr("status.watcher_detected_paths", count=detected_count)
 
     def _set_scan_context(self, path: Path, label: str) -> None:
         path_text = str(path)
-        self._scan_context_label.setText(f"{label} selected")
+        selected_suffix = "selecionado" if self._localizer.effective_language == "pt-BR" else "selected"
+        self._scan_context_label.setText(f"{label} {selected_suffix}")
         self._scan_context_label.setToolTip(path_text)
 
     def _apply_environment_status(self, status: GameEnvironmentStatus) -> None:
@@ -10086,22 +11108,30 @@ class MainWindow(QMainWindow):
         self._environment_status_label.setText(_environment_summary_label(status))
         self._environment_status_label.setToolTip(str(status.game_path))
         if status.smapi_path is None:
-            self._smapi_update_status_label.setText("SMAPI not detected")
+            self._smapi_update_status_label.setText(self._tr("environment.smapi_not_detected"))
             self._smapi_update_status_label.setToolTip(
-                "SMAPI entrypoint was not detected for this game path."
+                "O ponto de entrada do SMAPI não foi detectado para este caminho do jogo."
+                if self._localizer.effective_language == "pt-BR"
+                else "SMAPI entrypoint was not detected for this game path."
             )
         if "invalid_game_path" in status.state_codes:
-            self._smapi_log_status_label.setText("Need valid game path")
+            self._smapi_log_status_label.setText(
+                "Precisa de um caminho de jogo válido"
+                if self._localizer.effective_language == "pt-BR"
+                else "Need valid game path"
+            )
             self._smapi_log_status_label.setToolTip(
-                "SMAPI log auto-detection requires a valid game path context."
+                "A detecção automática do log do SMAPI exige um contexto de caminho do jogo válido."
+                if self._localizer.effective_language == "pt-BR"
+                else "SMAPI log auto-detection requires a valid game path context."
             )
 
     def _invalidate_pending_plan(self, *_: object) -> None:
         self._last_install_completion_message = None
         self._pending_install_plan = None
-        self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
-        self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
-        self._set_plan_facts_text(_NO_PLAN_FACTS_TEXT)
+        self._set_plan_review_summary_text(_no_plan_review_summary_text())
+        self._set_plan_review_explanation_text(_no_plan_review_explanation_text())
+        self._set_plan_facts_text(_no_plan_facts_text())
         self._refresh_workflow_surface_states()
 
     def _invalidate_restore_import_plan(self, *_: object) -> None:
@@ -10115,17 +11145,17 @@ class MainWindow(QMainWindow):
         self._refresh_intake_selector()
         if self._watch_timer.isActive():
             self._watch_timer.stop()
-            self._watch_status_label.setText("Stopped (path changed)")
+            self._watch_status_label.setText(self._tr("status.stopped_path_changed"))
             self._watch_status_label.setToolTip(self._watch_sources_tooltip())
-            self._set_status("Watcher stopped because watched path changed.")
+            self._set_status(self._tr("status.watcher_stopped_path_changed"))
 
     def _on_game_path_changed(self, *_: object) -> None:
         self._last_environment_status = None
         self._last_smapi_log_report = None
         self._last_smapi_update_status = None
-        self._environment_status_label.setText("Not checked")
-        self._smapi_log_status_label.setText("Not checked")
-        self._smapi_update_status_label.setText("Not checked")
+        self._environment_status_label.setText(self._tr("setup.environment_not_checked"))
+        self._smapi_log_status_label.setText(self._tr("setup.environment_not_checked"))
+        self._smapi_update_status_label.setText(self._tr("setup.environment_not_checked"))
         self._refresh_sandbox_dev_launch_state()
         self._refresh_smapi_troubleshooting_surface()
 
@@ -10134,14 +11164,22 @@ class MainWindow(QMainWindow):
 
     def _on_install_target_changed(self, *_: object) -> None:
         self._pending_install_plan = None
-        self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
-        self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
-        self._set_plan_facts_text(_NO_PLAN_FACTS_TEXT)
+        self._set_plan_review_summary_text(_no_plan_review_summary_text())
+        self._set_plan_review_explanation_text(_no_plan_review_explanation_text())
+        self._set_plan_facts_text(_no_plan_facts_text())
         self._refresh_install_destination_preview()
         if self._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS:
-            self._set_status("Install destination set to REAL game Mods path. Inspect carefully before executing.")
+            self._set_status(
+                "Destino de instalação definido para o caminho REAL dos Mods do jogo. Inspecione com cuidado antes de executar."
+                if self._localizer.effective_language == "pt-BR"
+                else "Install destination set to REAL game Mods path. Inspect carefully before executing."
+            )
         else:
-            self._set_status("Install destination set to sandbox Mods path.")
+            self._set_status(
+                "Destino de instalação definido para o caminho dos Mods sandbox."
+                if self._localizer.effective_language == "pt-BR"
+                else "Install destination set to sandbox Mods path."
+            )
 
     def _on_plan_selected_intake(self) -> None:
         selected_index = self._selected_intake_index()
@@ -10161,8 +11199,18 @@ class MainWindow(QMainWindow):
                 return
 
             if not any(entry.inspection is not None for entry in batch_result.entries):
-                message = "Select a detected package or inspect a zip package before opening Install."
-                QMessageBox.warning(self, "No package to install", message)
+                message = (
+                    "Selecione um pacote detectado ou inspecione um pacote zip antes de abrir Instalar."
+                    if self._localizer.effective_language == "pt-BR"
+                    else "Select a detected package or inspect a zip package before opening Install."
+                )
+                QMessageBox.warning(
+                    self,
+                    "Nenhum pacote para instalar"
+                    if self._localizer.effective_language == "pt-BR"
+                    else "No package to install",
+                    message,
+                )
                 self._set_intake_output_text(message)
                 self._set_status(message)
                 return
@@ -10175,7 +11223,11 @@ class MainWindow(QMainWindow):
             self._refresh_staged_package_preview()
             self._refresh_stage_package_action_state()
             self._set_status(
-                f"Opened Install for {len(selected_paths)} watched package(s). Next step: Plan install."
+                (
+                    f"Instalar aberto para {len(selected_paths)} pacote(s) monitorado(s). Próximo passo: planejar instalação."
+                    if self._localizer.effective_language == "pt-BR"
+                    else f"Opened Install for {len(selected_paths)} watched package(s). Next step: Plan install."
+                )
             )
             return
 
@@ -10204,8 +11256,11 @@ class MainWindow(QMainWindow):
             self._stage_package_for_plan_install(
                 str(intake.package_path),
                 status_message=(
-                    f"Opened Install for {intake.package_path.name}. "
-                    "Next step: Plan install."
+                    (
+                        f"Instalar aberto para {intake.package_path.name}. Próximo passo: planejar instalação."
+                        if self._localizer.effective_language == "pt-BR"
+                        else f"Opened Install for {intake.package_path.name}. Next step: Plan install."
+                    )
                 ),
             )
             return
@@ -10216,14 +11271,27 @@ class MainWindow(QMainWindow):
             self._stage_package_for_plan_install(
                 str(inspection_entry.package_path),
                 status_message=(
-                    f"Opened Install for {inspection_entry.package_path.name}. "
-                    "Next step: Plan install."
+                    (
+                        f"Instalar aberto para {inspection_entry.package_path.name}. Próximo passo: planejar instalação."
+                        if self._localizer.effective_language == "pt-BR"
+                        else f"Opened Install for {inspection_entry.package_path.name}. Next step: Plan install."
+                    )
                 ),
             )
             return
 
-        message = "Select a detected package or inspect a zip package before opening Install."
-        QMessageBox.warning(self, "No package to install", message)
+        message = (
+            "Selecione um pacote detectado ou inspecione um pacote zip antes de abrir Instalar."
+            if self._localizer.effective_language == "pt-BR"
+            else "Select a detected package or inspect a zip package before opening Install."
+        )
+        QMessageBox.warning(
+            self,
+            "Nenhum pacote para instalar"
+            if self._localizer.effective_language == "pt-BR"
+            else "No package to install",
+            message,
+        )
         self._set_intake_output_text(message)
         self._set_status(message)
 
@@ -10368,7 +11436,7 @@ class MainWindow(QMainWindow):
             if selected_profile.profile_id == DEFAULT_REAL_PROFILE_ID:
                 return (
                     False,
-                    "Default mirrors the canonical real Mods library. Create a custom profile to add or remove mods.",
+                    self._tr("library.profile.default_real_locked"),
                 )
             canonical_root = Path(os.path.abspath(os.path.normpath(str(real_root.expanduser()))))
             current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_CONFIGURED_REAL_MODS)
@@ -10399,7 +11467,7 @@ class MainWindow(QMainWindow):
         if selected_profile.profile_id == DEFAULT_SANDBOX_PROFILE_ID:
             return (
                 False,
-                "Default mirrors the canonical sandbox library. Create a custom profile to add or remove mods.",
+                self._tr("library.profile.default_sandbox_locked"),
             )
         canonical_root = Path(os.path.abspath(os.path.normpath(str(sandbox_root.expanduser()))))
         current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_SANDBOX_MODS)
@@ -10606,16 +11674,14 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_selected_mod_update_guidance(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         actionable_targets = self._selected_actionable_update_targets()
         row = self._mods_table.currentRow()
         has_selected_items = bool(self._mods_table.selectedItems())
         if row < 0 or self._mods_table.isRowHidden(row) or not has_selected_items:
+            empty_message = self._tr("library.status.select_row_actions")
             self._reset_inventory_update_guidance_state(
-                message=(
-                    "Select a mod row for actions."
-                    if self._smapi_troubleshooting_has_actionable_entries()
-                    else "Select a mod row to see actions."
-                ),
+                message=empty_message,
                 actionable_targets=actionable_targets,
             )
             return
@@ -10623,7 +11689,7 @@ class MainWindow(QMainWindow):
         context = self._resolve_selected_inventory_update_guidance_context(row=row)
         if context is None:
             self._reset_inventory_update_guidance_state(
-                message="Select a mod row to see actions.",
+                message=self._tr("library.status.select_row_actions"),
                 actionable_targets=actionable_targets,
             )
             return
@@ -10631,20 +11697,30 @@ class MainWindow(QMainWindow):
         if not context.is_enabled:
             if context.status_text == "not_in_profile":
                 message = (
-                    f"{context.mod_name}: not in profile. "
+                    f"{context.mod_name}: não está no perfil. Adicione este mod ao perfil ativo antes das ações de atualização e origem."
+                    if pt_br
+                    else f"{context.mod_name}: not in profile. "
                     "Add this mod to the active profile before update and source actions."
                 )
-                remote_tooltip = "Mods that are not in the active profile do not offer page actions."
+                remote_tooltip = (
+                    "Mods fora do perfil ativo não oferecem ações de página."
+                    if pt_br
+                    else "Mods that are not in the active profile do not offer page actions."
+                )
                 source_tooltip = (
-                    "Mods that are not in the active profile do not offer source-fix actions."
+                    "Mods fora do perfil ativo não oferecem ações para corrigir origem."
+                    if pt_br
+                    else "Mods that are not in the active profile do not offer source-fix actions."
                 )
             else:
                 message = (
-                    f"{context.mod_name}: disabled. "
+                    f"{context.mod_name}: desativado. Reative esta linha de mod antes das ações de atualização e origem."
+                    if pt_br
+                    else f"{context.mod_name}: disabled. "
                     "Re-enable this mod row before update and source actions."
                 )
-                remote_tooltip = "Disabled mod rows do not offer page actions."
-                source_tooltip = "Disabled mod rows do not offer source-fix actions."
+                remote_tooltip = "Linhas de mod desativadas não oferecem ações de página." if pt_br else "Disabled mod rows do not offer page actions."
+                source_tooltip = "Linhas de mod desativadas não oferecem ações para corrigir origem." if pt_br else "Disabled mod rows do not offer source-fix actions."
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
@@ -10660,21 +11736,23 @@ class MainWindow(QMainWindow):
             )
         elif context.status is None and context.status_text == "not_checked":
             message = (
-                f"{context.mod_name}: check updates first to evaluate update actionability. "
+                f"{context.mod_name}: verifique atualizações primeiro para avaliar se a atualização é acionável. Abrir página fica desativado até uma linha acionável ser selecionada."
+                if pt_br
+                else f"{context.mod_name}: check updates first to evaluate update actionability. "
                 "Open page stays disabled until an actionable row is selected."
             )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip="Check updates and select an actionable row first.",
+                tooltip="Verifique atualizações e selecione primeiro uma linha acionável." if pt_br else "Check updates and select an actionable row first.",
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Check updates and select a blocked row first.",
+                tooltip="Verifique atualizações e selecione primeiro uma linha bloqueada." if pt_br else "Check updates and select a blocked row first.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Check updates and select a blocked row first.",
+                tooltip="Verifique atualizações e selecione primeiro uma linha bloqueada." if pt_br else "Check updates and select a blocked row first.",
             )
         elif (
             context.effective_intent_state == "manual_source_association"
@@ -10686,34 +11764,46 @@ class MainWindow(QMainWindow):
                 if len(actionable_targets) > 1:
                     target_count = len(actionable_targets)
                     message = (
-                        f"{target_count} updates selected. Open pages to continue."
+                        f"{target_count} atualizações selecionadas. Abra as páginas para continuar."
+                        if pt_br
+                        else f"{target_count} updates selected. Open pages to continue."
                     )
                 else:
                     message = (
-                        f"{context.mod_name}: update available via saved source. "
+                        f"{context.mod_name}: atualização disponível via origem salva. Abra a página para continuar."
+                        if pt_br
+                        else f"{context.mod_name}: update available via saved source. "
                         "Open page to continue."
                     )
             else:
                 message = (
-                    f"{context.mod_name}: saved source ready. Open page to review."
+                    f"{context.mod_name}: origem salva pronta. Abra a página para revisar."
+                    if pt_br
+                    else f"{context.mod_name}: saved source ready. Open page to review."
                 )
             self._set_inventory_blocked_detail_text(
-                f"Update source intent: manual source association is recorded in app state{provider_text}."
+                (
+                    f"Intenção de origem: associação manual registrada no estado do app{provider_text}."
+                    if pt_br
+                    else f"Update source intent: manual source association is recorded in app state{provider_text}."
+                )
             )
             self._set_open_remote_page_state(
                 enabled=True,
                 tooltip=(
-                    f"Open page for selected mod: {context.mod_name}. "
+                    f"Abrir página do mod selecionado: {context.mod_name}. O Cinderleaf iniciará o monitoramento se precisar."
+                    if pt_br
+                    else f"Open page for selected mod: {context.mod_name}. "
                     "Cinderleaf will start intake watch if needed."
                 ),
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="A saved manual source already provides a direct page action.",
+                tooltip="Uma origem manual salva já fornece uma ação direta de página." if pt_br else "A saved manual source already provides a direct page action.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="A saved manual source already provides a direct page action.",
+                tooltip="Uma origem manual salva já fornece uma ação direta de página." if pt_br else "A saved manual source already provides a direct page action.",
             )
         elif context.effective_intent_state is not None:
             intent_state = context.effective_intent_state
@@ -10736,52 +11826,68 @@ class MainWindow(QMainWindow):
                 enabled=False,
                 tooltip=(
                     "A saved update-source intent is already recorded for this row."
+                    if not pt_br
+                    else "Já existe uma intenção salva de origem de atualização registrada para esta linha."
                     if context.overlay_intent is not None
-                    else "This companion row is intentionally not tracked as a standalone update source."
+                    else "Esta linha auxiliar não é rastreada de propósito como origem de atualização independente." if pt_br else "This companion row is intentionally not tracked as a standalone update source."
                 ),
             )
             self._set_use_suggested_source_state(
                 enabled=False,
                 tooltip=(
                     "A saved update-source intent is already recorded for this row."
+                    if not pt_br
+                    else "Já existe uma intenção salva de origem de atualização registrada para esta linha."
                     if context.overlay_intent is not None
-                    else "This companion row is intentionally not tracked as a standalone update source."
+                    else "Esta linha auxiliar não é rastreada de propósito como origem de atualização independente." if pt_br else "This companion row is intentionally not tracked as a standalone update source."
                 ),
             )
         elif context.is_actionable:
             if len(actionable_targets) > 1:
                 target_count = len(actionable_targets)
                 message = (
-                    f"{target_count} updates selected. Open pages to continue."
+                    f"{target_count} atualizações selecionadas. Abra as páginas para continuar."
+                    if pt_br
+                    else f"{target_count} updates selected. Open pages to continue."
                 )
             else:
                 message = (
-                    f"{context.mod_name}: update available. Open page to continue."
+                    f"{context.mod_name}: atualização disponível. Abra a página para continuar."
+                    if pt_br
+                    else f"{context.mod_name}: update available. Open page to continue."
                 )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=True,
-                tooltip=f"Open page for selected mod: {context.mod_name}. Cinderleaf will start intake watch if needed.",
+                tooltip=(
+                    f"Abrir página do mod selecionado: {context.mod_name}. O Cinderleaf iniciará o monitoramento se precisar."
+                    if pt_br
+                    else f"Open page for selected mod: {context.mod_name}. Cinderleaf will start intake watch if needed."
+                ),
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Actionable update rows already have a direct page action.",
+                tooltip="Linhas de atualização acionáveis já têm uma ação direta de página." if pt_br else "Actionable update rows already have a direct page action.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Actionable update rows already have a direct page action.",
+                tooltip="Linhas de atualização acionáveis já têm uma ação direta de página." if pt_br else "Actionable update rows already have a direct page action.",
             )
         elif isinstance(context.blocked_reason, str) and context.blocked_reason.strip():
             message = (
                 f"{context.mod_name}: {context.blocked_reason.strip()} "
-                "Open page is unavailable for this row."
+                f"{self._tr('library.open_page_unavailable')}"
             )
             self._set_inventory_blocked_detail_text(
                 _diagnostics_text_for_update_status(context.status)
             )
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip=f"Page action unavailable: {context.blocked_reason.strip()}",
+                tooltip=(
+                    f"Ação de página indisponível: {context.blocked_reason.strip()}"
+                    if pt_br
+                    else f"Page action unavailable: {context.blocked_reason.strip()}"
+                ),
             )
             can_open_discovery_hint = (
                 context.status is not None and _supports_discovery_source_hint(context.status)
@@ -10789,10 +11895,12 @@ class MainWindow(QMainWindow):
             self._set_find_source_hint_state(
                 enabled=can_open_discovery_hint,
                 tooltip=(
-                    "Search Discover for SMAPI compatibility hints, unofficial updates, "
+                    "Procure em Descobrir por dicas de compatibilidade do SMAPI, atualizações não oficiais ou sugestões de origem para o mod selecionado."
+                    if pt_br
+                    else "Search Discover for SMAPI compatibility hints, unofficial updates, "
                     "or source suggestions for the selected mod."
                     if can_open_discovery_hint
-                    else "Source hints are available only for blocked source/update rows."
+                    else "Dicas de origem ficam disponíveis só para linhas bloqueadas de origem/atualização." if pt_br else "Source hints are available only for blocked source/update rows."
                 ),
             )
             can_use_suggested_source = (
@@ -10802,26 +11910,36 @@ class MainWindow(QMainWindow):
             self._set_use_suggested_source_state(
                 enabled=can_use_suggested_source,
                 tooltip=(
-                    "Search Discover, auto-save a safe source when possible, or prefill "
+                    "Procure em Descobrir, salve automaticamente uma origem segura quando possível ou preencha Origem manual com a melhor dica de página disponível."
+                    if pt_br
+                    else "Search Discover, auto-save a safe source when possible, or prefill "
                     "Manual source from the best available page hint."
                     if can_use_suggested_source
-                    else "Suggested source is available only for blocked rows that still need source repair."
+                    else "Origem sugerida fica disponível só para linhas bloqueadas que ainda precisam corrigir a origem." if pt_br else "Suggested source is available only for blocked rows that still need source repair."
                 ),
             )
         else:
-            message = f"{context.mod_name}: no update action is currently available."
+            message = (
+                f"{context.mod_name}: nenhuma ação de atualização está disponível no momento."
+                if pt_br
+                else f"{context.mod_name}: no update action is currently available."
+            )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip="Page action is unavailable for the selected row.",
+                tooltip="A ação de página está indisponível para a linha selecionada." if pt_br else "Page action is unavailable for the selected row.",
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Source hints are available only for blocked source/update rows.",
+                tooltip="Dicas de origem ficam disponíveis só para linhas bloqueadas de origem/atualização." if pt_br else "Source hints are available only for blocked source/update rows.",
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Suggested source is available only for blocked rows that still need source repair.",
+                tooltip=(
+                    "Origem sugerida fica disponível só para linhas bloqueadas que ainda precisam corrigir a origem."
+                    if pt_br
+                    else "Suggested source is available only for blocked rows that still need source repair."
+                ),
             )
 
         self._finalize_inventory_update_guidance_state(
@@ -10838,19 +11956,30 @@ class MainWindow(QMainWindow):
         message: str,
         actionable_targets: tuple[tuple[str, str, str], ...],
     ) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         self._set_inventory_blocked_detail_text(None)
         self._set_open_remote_page_state(
             enabled=False,
-            tooltip="Select an actionable mod row to open its remote page.",
+            tooltip=(
+                "Selecione uma linha de mod acionável para abrir a página remota."
+                if pt_br
+                else "Select an actionable mod row to open its remote page."
+            ),
         )
         self._set_find_source_hint_state(
             enabled=False,
-            tooltip="Select a blocked mod row to search Discover for SMAPI compatibility hints.",
+            tooltip=(
+                "Selecione uma linha de mod bloqueada para pesquisar em Descobrir por dicas de compatibilidade do SMAPI."
+                if pt_br
+                else "Select a blocked mod row to search Discover for SMAPI compatibility hints."
+            ),
         )
         self._set_use_suggested_source_state(
             enabled=False,
             tooltip=(
-                "Select a blocked mod row to search Discover and auto-save "
+                "Selecione uma linha de mod bloqueada para pesquisar em Descobrir e salvar automaticamente uma origem Nexus ou GitHub com alta confiança."
+                if pt_br
+                else "Select a blocked mod row to search Discover and auto-save "
                 "a high-confidence Nexus or GitHub source."
             ),
         )
@@ -11874,13 +13003,17 @@ class MainWindow(QMainWindow):
         target = self._current_scan_target()
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             path_text = self._mods_path_input.text().strip() or "<unset>"
-            target_label = "REAL Mods"
+            target_label = self._tr("packages.real_mods")
         else:
             path_text = self._sandbox_mods_path_input.text().strip() or "<unset>"
-            target_label = "Sandbox Mods"
-        context_text = f"{target_label} selected"
+            target_label = self._tr("packages.sandbox_mods")
+        context_text = (
+            f"{target_label} selecionado"
+            if self._localizer.effective_language == "pt-BR"
+            else f"{target_label} selected"
+        )
         if path_text == "<unset>":
-            context_text = f"{context_text} (path unset)"
+            context_text = f"{context_text}{self._tr('install.context.path_unset_suffix')}"
         self._scan_context_label.setText(context_text)
         self._scan_context_label.setToolTip(path_text)
 
@@ -11902,11 +13035,11 @@ class MainWindow(QMainWindow):
     def _refresh_install_destination_preview(self) -> None:
         target = self._current_install_target()
         if target == INSTALL_TARGET_CONFIGURED_REAL_MODS:
-            self._install_archive_label.setText("Archive path for real Game Mods destination")
+            self._install_archive_label.setText(self._tr("install.archive_path_real"))
             path_text = self._mods_path_input.text().strip() or "<unset>"
-            context_text = "REAL game Mods destination selected (confirmation required)"
+            context_text = self._tr("install.context.real")
             if path_text == "<unset>":
-                context_text = f"{context_text} (path unset)"
+                context_text = f"{context_text}{self._tr('install.context.path_unset_suffix')}"
             self._install_context_label.setText(context_text)
             self._install_context_label.setToolTip(path_text)
             if not self._real_archive_path_input.text().strip() and self._mods_path_input.text().strip():
@@ -11917,11 +13050,11 @@ class MainWindow(QMainWindow):
             self._refresh_install_safety_panel()
             return
 
-        self._install_archive_label.setText("Archive path for sandbox destination")
+        self._install_archive_label.setText(self._tr("install.archive_path_sandbox"))
         path_text = self._sandbox_mods_path_input.text().strip() or "<unset>"
-        context_text = "Sandbox Mods destination selected (recommended/test path)"
+        context_text = self._tr("install.context.sandbox")
         if path_text == "<unset>":
-            context_text = f"{context_text} (path unset)"
+            context_text = f"{context_text}{self._tr('install.context.path_unset_suffix')}"
         self._install_context_label.setText(context_text)
         self._install_context_label.setToolTip(path_text)
         if (
@@ -11944,13 +13077,11 @@ class MainWindow(QMainWindow):
             destination_path = self._mods_path_input.text().strip() or "<unset>"
             archive_path = self._real_archive_path_input.text().strip() or "<unset>"
             panel_label.setText(
-                "REAL game Mods destination selected (live changes warning).\n"
-                "Destination Mods path: "
-                f"{destination_path}\n"
-                "Archive path: "
-                f"{archive_path}\n"
-                "Explicit confirmation is required before execution.\n"
-                "Inspect Recovery after execution if rollback is needed."
+                self._tr(
+                    "install.safety.real",
+                    destination=destination_path,
+                    archive=archive_path,
+                )
             )
             panel_label.setToolTip(
                 f"Destination Mods path: {destination_path}\nArchive path: {archive_path}"
@@ -11960,12 +13091,11 @@ class MainWindow(QMainWindow):
         destination_path = self._sandbox_mods_path_input.text().strip() or "<unset>"
         archive_path = self._sandbox_archive_path_input.text().strip() or "<unset>"
         panel_label.setText(
-            "Sandbox destination selected (recommended/test path).\n"
-            "Destination Mods path: "
-            f"{destination_path}\n"
-            "Archive path: "
-            f"{archive_path}\n"
-            "Use this path to validate changes before live Mods installs."
+            self._tr(
+                "install.safety.sandbox",
+                destination=destination_path,
+                archive=archive_path,
+            )
         )
         panel_label.setToolTip(
             f"Destination Mods path: {destination_path}\nArchive path: {archive_path}"
@@ -11993,7 +13123,10 @@ class MainWindow(QMainWindow):
         self._refresh_packages_compare_target_summary()
 
         if not self._detected_intakes:
-            self._intake_result_combo.addItem("<no detected packages>", -1)
+            self._intake_result_combo.addItem(
+                "<nenhum pacote detectado>" if self._localizer.effective_language == "pt-BR" else "<no detected packages>",
+                -1,
+            )
             self._intake_result_combo.setEnabled(False)
             if self._selected_zip_package_paths:
                 self._set_selected_zip_package_paths(tuple())
@@ -12027,7 +13160,12 @@ class MainWindow(QMainWindow):
 
         if visible_count == 0:
             self._intake_result_combo.clear()
-            self._intake_result_combo.addItem("<no detected packages match filter>", -1)
+            self._intake_result_combo.addItem(
+                "<nenhum pacote detectado combina com o filtro>"
+                if self._localizer.effective_language == "pt-BR"
+                else "<no detected packages match filter>",
+                -1,
+            )
             self._intake_result_combo.setEnabled(False)
             self._refresh_stage_package_action_state()
             self._refresh_package_queue()
@@ -12100,13 +13238,21 @@ class MainWindow(QMainWindow):
     def _refresh_packages_compare_target_summary(self) -> None:
         target_label = self._packages_comparison_target_label_text()
         inventory = self._packages_comparison_inventory()
+        pt_br = self._localizer.effective_language == "pt-BR"
         if inventory is None:
             text = (
-                f"Status will compare against {target_label} after that inventory is scanned in this session."
+                f"O status vai comparar com {target_label} depois que esse inventário for lido nesta sessão."
+                if pt_br
+                else f"Status will compare against {target_label} after that inventory is scanned in this session."
             )
         else:
             text = (
-                f"Status is comparing against {target_label} "
+                (
+                    f"O status está comparando com {target_label} "
+                    f"({len(inventory.mods)} mod(s) instalados em cache)."
+                )
+                if pt_br
+                else f"Status is comparing against {target_label} "
                 f"({len(inventory.mods)} installed mod(s) cached)."
             )
         self._packages_compare_target_summary_label.setText(text)
@@ -12114,17 +13260,27 @@ class MainWindow(QMainWindow):
 
     def _selected_intake_detail_text(self) -> str:
         correlation = self._selected_intake_correlation()
+        pt_br = self._localizer.effective_language == "pt-BR"
         if correlation is None:
             target_label = self._packages_comparison_target_label_text()
             return (
-                f"Choose a detected package to compare against {target_label}. "
+                (
+                    f"Escolha um pacote detectado para comparar com {target_label}. "
+                    "Abrir Instalar ainda prepara o pacote selecionado sem gravar nada."
+                )
+                if pt_br
+                else f"Choose a detected package to compare against {target_label}. "
                 "Open Install still stages the selected package without writing anything."
             )
 
         lines = [
-            f"Comparison target: {correlation.comparison_target_label}",
-            f"Status: {correlation.summary}",
-            f"Next: {correlation.next_step}",
+            (
+                f"Alvo da comparação: {correlation.comparison_target_label}"
+                if pt_br
+                else f"Comparison target: {correlation.comparison_target_label}"
+            ),
+            f"{'Status' if pt_br else 'Status'}: {correlation.summary}",
+            f"{'Próximo' if pt_br else 'Next'}: {correlation.next_step}",
         ]
         return "\n".join(lines)
 
@@ -12231,7 +13387,11 @@ class MainWindow(QMainWindow):
             self._refresh_workflow_surface_states()
             return
         self._stage_update_intake_button.setToolTip(
-            "Open as update only appears when the selected package batch is newer than the currently selected comparison target."
+            (
+                "Abrir como atualização só aparece quando o lote de pacotes selecionado é mais novo que o alvo de comparação selecionado."
+                if self._localizer.effective_language == "pt-BR"
+                else "Open as update only appears when the selected package batch is newer than the currently selected comparison target."
+            )
         )
         self._refresh_workflow_surface_states()
 
@@ -12242,34 +13402,46 @@ class MainWindow(QMainWindow):
         has_reviewed_plan = self._pending_install_plan is not None
 
         if has_reviewed_plan:
-            self._plan_install_button.setText("Plan again")
+            self._plan_install_button.setText(
+                "Planejar de novo" if self._localizer.effective_language == "pt-BR" else "Plan again"
+            )
             self._plan_install_button.setEnabled(has_staged_package)
             self._plan_install_button.setToolTip(
-                "Rebuild the read-only install plan for the staged package batch."
+                "Reconstruir o plano de instalação só leitura para o lote de pacotes preparado."
+                if self._localizer.effective_language == "pt-BR"
+                else "Rebuild the read-only install plan for the staged package batch."
             )
             _set_secondary_button_style(self._plan_install_button)
 
-            self._run_install_button.setText("Apply install")
+            self._run_install_button.setText(
+                self._tr("install.apply_install")
+            )
             self._run_install_button.setEnabled(True)
             self._run_install_button.setToolTip(
-                "Apply the current install plan to the selected destination."
+                "Aplicar o plano de instalação atual ao destino selecionado."
+                if self._localizer.effective_language == "pt-BR"
+                else "Apply the current install plan to the selected destination."
             )
             _set_primary_button_style(self._run_install_button)
             return
 
-        self._plan_install_button.setText("Plan install")
+        self._plan_install_button.setText(self._tr("install.plan_install"))
         self._plan_install_button.setEnabled(has_staged_package)
         self._plan_install_button.setToolTip(
-            "Generate the read-only install plan for the staged package batch."
+            "Gerar o plano de instalação só leitura para o lote de pacotes preparado."
+            if self._localizer.effective_language == "pt-BR"
+            else "Generate the read-only install plan for the staged package batch."
             if has_staged_package
-            else "Choose packages in Packages first."
+            else self._tr("install.choose_packages_first")
         )
         _set_primary_button_style(self._plan_install_button)
 
-        self._run_install_button.setText("Apply install")
+        self._run_install_button.setText(self._tr("install.apply_install"))
         self._run_install_button.setEnabled(False)
         self._run_install_button.setToolTip(
-            "Create an install plan before executing install."
+            "Crie um plano de instalação antes de executar a instalação."
+            if self._localizer.effective_language == "pt-BR"
+            else "Create an install plan before executing install."
         )
         _set_secondary_button_style(self._run_install_button)
 
@@ -12292,18 +13464,21 @@ class MainWindow(QMainWindow):
         self._compare_summary_label.setToolTip(build_mods_compare_text(result))
 
     def _refresh_staged_package_preview(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         staged_paths = self._selected_zip_package_paths
         package_path = self._zip_path_input.text().strip()
         if not package_path and not staged_paths:
             self._staged_package_label.setText(
-                "Choose packages in Packages to start install planning."
+                self._tr("install.choose_packages_to_start")
             )
             self._staged_package_label.setToolTip("")
             return
         if len(staged_paths) > 1:
             package_names = ", ".join(path.name for path in staged_paths)
             self._staged_package_label.setText(
-                f"{len(staged_paths)} packages staged for install: {package_names}"
+                f"{len(staged_paths)} pacote(s) preparados para instalar: {package_names}"
+                if pt_br
+                else f"{len(staged_paths)} packages staged for install: {package_names}"
             )
             self._staged_package_label.setToolTip("\n".join(str(path) for path in staged_paths))
             return
@@ -12597,7 +13772,11 @@ class MainWindow(QMainWindow):
                             str(intake.package_path),
                             apply_update_intent=True,
                             status_message=(
-                                "Opened Install for a newly detected update for "
+                                "Abriu Instalar para uma nova atualização detectada de "
+                                f"{correlation.comparison_target_label}: {intake.package_path.name}. "
+                                "A substituição com apoio de arquivo foi pré-selecionada. Próximo passo: Planejar instalação."
+                                if self._localizer.effective_language == "pt-BR"
+                                else "Opened Install for a newly detected update for "
                                 f"{correlation.comparison_target_label}: {intake.package_path.name}. "
                                 "Archive-aware replace is preselected. Next step: Plan install."
                             ),
@@ -12606,29 +13785,43 @@ class MainWindow(QMainWindow):
                         self._stage_package_for_plan_install(
                             str(intake.package_path),
                             status_message=(
-                                "Opened Install for newly detected package "
+                                f"Abriu Instalar para o pacote recém-detectado {intake.package_path.name}. Próximo passo: Planejar instalação."
+                                if self._localizer.effective_language == "pt-BR"
+                                else "Opened Install for newly detected package "
                                 f"{intake.package_path.name}. Next step: Plan install."
                             ),
                         )
                     return
                 if correlation.actionable_as_update:
                     message = (
-                        f"Detected update ready for {correlation.comparison_target_label}: "
+                        f"Atualização detectada pronta para {correlation.comparison_target_label}: "
+                        f"{intake.package_path.name}. Use Abrir como atualização quando quiser."
+                        if self._localizer.effective_language == "pt-BR"
+                        else f"Detected update ready for {correlation.comparison_target_label}: "
                         f"{intake.package_path.name}. Open as update when ready."
                     )
                 else:
                     message = (
-                        f"Detected package ready in Packages: "
+                        f"Pacote detectado pronto em Pacotes: "
+                        f"{intake.package_path.name}. Use Abrir Instalar quando quiser."
+                        if self._localizer.effective_language == "pt-BR"
+                        else f"Detected package ready in Packages: "
                         f"{intake.package_path.name}. Open Install when ready."
                     )
             else:
                 message = (
-                    "Detected package is ready in Packages, but the current filter hides it. "
+                    "O pacote detectado está pronto em Pacotes, mas o filtro atual o está escondendo. "
+                    "Limpe o filtro ou escolha-o manualmente."
+                    if self._localizer.effective_language == "pt-BR"
+                    else "Detected package is ready in Packages, but the current filter hides it. "
                     "Clear the filter or choose it manually."
                 )
         else:
             message = (
-                f"Detected {len(actionable_matches)} packages ready in Packages. "
+                f"Detectados {len(actionable_matches)} pacotes prontos em Pacotes. "
+                "Revise-os e depois abra Instalar."
+                if self._localizer.effective_language == "pt-BR"
+                else f"Detected {len(actionable_matches)} packages ready in Packages. "
                 "Review them, then open Install."
             )
 
@@ -12705,9 +13898,10 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _scan_target_label(target: str) -> str:
+        localizer = get_active_ui_localizer()
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
-            return "real Mods directory"
-        return "sandbox Mods directory"
+            return "diretório Mods real" if localizer.effective_language == "pt-BR" else "real Mods directory"
+        return "diretório Mods sandbox" if localizer.effective_language == "pt-BR" else "sandbox Mods directory"
 
     def _refresh_responsive_panel_bounds(self) -> None:
         window_height = max(self.height(), self.minimumHeight())
@@ -12751,7 +13945,12 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _set_filter_stats(label: QLabel, *, shown_count: int, total_count: int) -> None:
-        label.setText(f"{shown_count}/{total_count} shown")
+        pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+        label.setText(
+            f"{shown_count}/{total_count} exibidos"
+            if pt_br
+            else f"{shown_count}/{total_count} shown"
+        )
 
     @staticmethod
     def _merge_detected_intakes(
@@ -12782,37 +13981,52 @@ class MainWindow(QMainWindow):
 
 
 def _install_operation_selector_text(operation: InstallOperationRecord) -> str:
+    localizer = get_active_ui_localizer()
     destination_label = (
-        "REAL Mods" if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "Sandbox"
+        "Mods REAIS"
+        if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS and localizer.effective_language == "pt-BR"
+        else "REAL Mods"
+        if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+        else "Sandbox"
     )
     package_name = operation.package_path.name
     if operation.operation_id is None:
-        return f"{package_name} | {operation.timestamp} | {destination_label} | legacy record"
+        legacy_text = "registro legado" if localizer.effective_language == "pt-BR" else "legacy record"
+        return f"{package_name} | {operation.timestamp} | {destination_label} | {legacy_text}"
     return f"{package_name} | {operation.timestamp} | {destination_label}"
 
 
 def _build_install_operation_summary_text(operation: InstallOperationRecord) -> str:
-    destination_label = (
-        "REAL Mods" if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "Sandbox"
-    )
+    localizer = get_active_ui_localizer()
+    destination_label = _install_destination_label(operation.destination_kind)
     return (
-        f"Selected install: {operation.package_path.name}\n"
-        f"Recorded at: {operation.timestamp}\n"
-        f"Destination: {destination_label}"
+        f"{localizer.text('history.selected_install', package_name=operation.package_path.name)}\n"
+        f"{localizer.text('history.recorded_at', timestamp=operation.timestamp)}\n"
+        f"{localizer.text('history.destination', destination=destination_label)}"
     )
 
 
 def _latest_recovery_outcome_summary(
     linked_history: tuple[RecoveryExecutionRecord, ...] | None,
 ) -> str:
+    localizer = get_active_ui_localizer()
     if not linked_history:
-        return "Latest recovery outcome: none recorded yet."
+        return localizer.text("history.recovery_outcome_none")
 
     latest_record = max(linked_history, key=lambda record: record.timestamp)
-    return (
-        "Latest recovery outcome: "
-        f"{latest_record.outcome_status} at {latest_record.timestamp} "
-        f"(executed={latest_record.executed_entry_count})."
+    status_text = latest_record.outcome_status
+    if localizer.effective_language == "pt-BR":
+        status_text = {
+            "executed": "executada",
+            "blocked": "bloqueada",
+            "cancelled": "cancelada",
+            "planned": "planejada",
+        }.get(latest_record.outcome_status, latest_record.outcome_status)
+    return localizer.text(
+        "history.recovery_outcome",
+        status=status_text,
+        timestamp=latest_record.timestamp,
+        count=latest_record.executed_entry_count,
     )
 
 
@@ -12828,27 +14042,57 @@ def _inventory_guidance_for_update_source_intent(
     intent_state: str,
     manual_provider: str | None,
 ) -> tuple[str, str, str]:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if intent_state == "local_private_mod":
         return (
-            f"{mod_name}: marked as local/private in saved update-source intent. "
-            "Open page is unavailable for this row.",
-            "Update source intent: local/private mod is recorded in app state.",
-            "Page action unavailable: mod is marked local/private in saved update-source intent.",
+            (
+                f"{mod_name}: marcado como local/privado na intenção salva de origem de atualização. "
+                f"{get_active_ui_localizer().text('library.open_page_unavailable')}"
+            )
+            if pt_br
+            else f"{mod_name}: marked as local/private in saved update-source intent. "
+            f"{get_active_ui_localizer().text('library.open_page_unavailable')}",
+            "Intenção de origem: mod local/privado registrado no estado do app."
+            if pt_br
+            else "Update source intent: local/private mod is recorded in app state.",
+            "Ação de página indisponível: o mod está marcado como local/privado na intenção salva de origem de atualização."
+            if pt_br
+            else "Page action unavailable: mod is marked local/private in saved update-source intent.",
         )
     if intent_state == "no_tracking":
         return (
-            f"{mod_name}: update tracking is intentionally disabled in saved update-source intent. "
-            "Open page is unavailable for this row.",
-            "Update source intent: no-tracking is recorded in app state.",
-            "Page action unavailable: update tracking is intentionally disabled in saved update-source intent.",
+            (
+                f"{mod_name}: o rastreamento de atualização está desativado de propósito na intenção salva de origem de atualização. "
+                f"{get_active_ui_localizer().text('library.open_page_unavailable')}"
+            )
+            if pt_br
+            else f"{mod_name}: update tracking is intentionally disabled in saved update-source intent. "
+            f"{get_active_ui_localizer().text('library.open_page_unavailable')}",
+            "Intenção de origem: sem rastreamento registrado no estado do app."
+            if pt_br
+            else "Update source intent: no-tracking is recorded in app state.",
+            "Ação de página indisponível: o rastreamento de atualização está desativado de propósito na intenção salva de origem de atualização."
+            if pt_br
+            else "Page action unavailable: update tracking is intentionally disabled in saved update-source intent.",
         )
 
     provider_text = f" (provider: {manual_provider})" if manual_provider else ""
     return (
-        f"{mod_name}: manual source association is recorded in saved update-source intent. "
-        "Open page is unavailable for this row.",
-        f"Update source intent: manual source association is recorded in app state{provider_text}.",
-        "Page action unavailable: manual source association is recorded in saved update-source intent.",
+        (
+            f"{mod_name}: a associação manual de origem está registrada na intenção salva de origem de atualização. "
+            f"{get_active_ui_localizer().text('library.open_page_unavailable')}"
+        )
+        if pt_br
+        else f"{mod_name}: manual source association is recorded in saved update-source intent. "
+        f"{get_active_ui_localizer().text('library.open_page_unavailable')}",
+        (
+            f"Intenção de origem: associação manual registrada no estado do app{provider_text}."
+            if pt_br
+            else f"Update source intent: manual source association is recorded in app state{provider_text}."
+        ),
+        "Ação de página indisponível: a associação manual de origem está registrada na intenção salva de origem de atualização."
+        if pt_br
+        else "Page action unavailable: manual source association is recorded in saved update-source intent.",
     )
 
 
@@ -12948,6 +14192,7 @@ def _build_plan_review_summary_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     package_count = _plan_source_package_count(plan)
     has_dependency_block = bool(plan.dependency_findings) or any(
         _contains_dependency_terms(warning)
@@ -12967,24 +14212,31 @@ def _build_plan_review_summary_text(
 
     if not review.allowed:
         if has_dependency_block:
-            return "Install plan: blocked by dependency issues."
+            return "Plano de instalação: bloqueado por problemas de dependência." if pt_br else "Install plan: blocked by dependency issues."
         if has_package_block:
-            return "Install plan: blocked by package issues."
-        return "Install plan: blocked. Inspect plan details."
+            return "Plano de instalação: bloqueado por problemas no pacote." if pt_br else "Install plan: blocked by package issues."
+        return "Plano de instalação: bloqueado. Inspecione os detalhes do plano." if pt_br else "Install plan: blocked. Inspect plan details."
 
     if has_runnable_warnings:
         return (
-            "Install batch: runnable with warnings."
+            "Lote de instalação: executável com avisos."
+            if package_count > 1 and pt_br
+            else "Install batch: runnable with warnings."
             if package_count > 1
+            else "Plano de instalação: executável com avisos."
+            if pt_br
             else "Install plan: runnable with warnings."
         )
-    return "Install batch: ready to install." if package_count > 1 else "Install plan: ready to install."
+    if package_count > 1:
+        return "Lote de instalação: pronto para instalar." if pt_br else "Install batch: ready to install."
+    return "Plano de instalação: pronto para instalar." if pt_br else "Install plan: ready to install."
 
 
 def _build_plan_review_explanation_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     package_count = _plan_source_package_count(plan)
     dependency_warning = _first_dependency_warning_text(plan)
     package_issue = _first_package_issue_text(plan)
@@ -12993,36 +14245,50 @@ def _build_plan_review_explanation_text(
 
     if not review.allowed:
         if dependency_warning:
-            return f"Dependency issue: {dependency_warning}"
+            return f"Problema de dependência: {dependency_warning}" if pt_br else f"Dependency issue: {dependency_warning}"
         if package_issue:
-            return f"Package issue: {package_issue}"
+            return f"Problema no pacote: {package_issue}" if pt_br else f"Package issue: {package_issue}"
         return (
-            "Blocked: this batch contains non-runnable entries."
+            "Bloqueado: este lote contém entradas que não podem ser executadas."
+            if package_count > 1 and pt_br
+            else "Blocked: this batch contains non-runnable entries."
             if package_count > 1
+            else "Bloqueado: este plano contém entradas que não podem ser executadas."
+            if pt_br
             else "Blocked: this plan contains non-runnable entries."
         )
 
     if runnable_warning:
-        return f"Warning: {runnable_warning}"
+        return f"Aviso: {runnable_warning}" if pt_br else f"Warning: {runnable_warning}"
     if staged_dependency_note is not None:
         return staged_dependency_note
-    return "Ready: no blocking issues detected."
+    return "Pronto: nenhum problema bloqueante encontrado." if pt_br else "Ready: no blocking issues detected."
 
 
 def _build_plan_facts_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     summary = review.summary
     blocked_entry_count = _count_blocked_plan_entries(plan)
     package_count = _plan_source_package_count(plan)
     lines = [
-        f"Packages: {package_count}\n"
-        f"Entries: {summary.total_entry_count}\n"
-        f"Replace existing: {'yes' if summary.has_existing_targets_to_replace else 'no'}\n"
-        f"Archive writes: {'yes' if summary.has_archive_writes else 'no'}\n"
-        f"Approval required: {'yes' if review.requires_explicit_approval else 'no'}\n"
-        f"Blocked entries: {blocked_entry_count}"
+        (
+            f"Pacotes: {package_count}\n"
+            f"Entradas: {summary.total_entry_count}\n"
+            f"Substitui existentes: {'sim' if summary.has_existing_targets_to_replace else 'não'}\n"
+            f"Gravações no arquivo: {'sim' if summary.has_archive_writes else 'não'}\n"
+            f"Aprovação obrigatória: {'sim' if review.requires_explicit_approval else 'não'}\n"
+            f"Entradas bloqueadas: {blocked_entry_count}"
+            if pt_br
+            else f"Packages: {package_count}\n"
+            f"Entries: {summary.total_entry_count}\n"
+            f"Replace existing: {'yes' if summary.has_existing_targets_to_replace else 'no'}\n"
+            f"Archive writes: {'yes' if summary.has_archive_writes else 'no'}\n"
+            f"Approval required: {'yes' if review.requires_explicit_approval else 'no'}\n"
+            f"Blocked entries: {blocked_entry_count}"
+        )
     ]
     config_preservation_fact = _config_preservation_fact_text(plan)
     if config_preservation_fact is not None:
@@ -13096,25 +14362,34 @@ def _staged_dependency_relation_counts(plan: SandboxInstallPlan) -> tuple[int, i
 
 
 def _staged_dependency_note_text(plan: SandboxInstallPlan) -> str | None:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     relation_count, provider_count, dependent_count = _staged_dependency_relation_counts(plan)
     if relation_count == 0:
         return None
-    relation_label = "dependency" if relation_count == 1 else "dependencies"
+    relation_label = "dependência" if pt_br and relation_count == 1 else "dependências" if pt_br else "dependency" if relation_count == 1 else "dependencies"
     dependent_label = "mod" if dependent_count == 1 else "mods"
-    provider_label = "provider" if provider_count == 1 else "providers"
+    provider_label = "fornecedor" if pt_br and provider_count == 1 else "fornecedores" if pt_br else "provider" if provider_count == 1 else "providers"
     return (
-        f"Ready: {relation_count} staged {relation_label} satisfied for "
+        f"Pronto: {relation_count} {relation_label} em lote atendidas para "
+        f"{dependent_count} {dependent_label} na fila por meio de {provider_count} {provider_label} em lote."
+        if pt_br
+        else f"Ready: {relation_count} staged {relation_label} satisfied for "
         f"{dependent_count} queued {dependent_label} via {provider_count} staged {provider_label}."
     )
 
 
 def _staged_dependency_fact_text(plan: SandboxInstallPlan) -> str | None:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     relation_count, provider_count, _ = _staged_dependency_relation_counts(plan)
     if relation_count == 0:
         return None
-    provider_label = "provider" if provider_count == 1 else "providers"
+    provider_label = "fornecedor" if pt_br and provider_count == 1 else "fornecedores" if pt_br else "provider" if provider_count == 1 else "providers"
     return (
-        f"\nBatch dependencies: {relation_count} satisfied in batch "
+        f"\nDependências em lote: {relation_count} atendidas em lote "
+        f"por {provider_count} {provider_label} em lote"
+        if pt_br
+        else f"\nBatch dependencies: {relation_count} satisfied in batch "
         f"via {provider_count} staged {provider_label}"
     )
 
@@ -13196,27 +14471,58 @@ def _contains_dependency_terms(text: str) -> bool:
 def _build_install_recovery_inspection_text(
     inspection: InstallRecoveryInspectionResult,
 ) -> str:
+    localizer = get_active_ui_localizer()
     operation = inspection.operation
     plan_summary = inspection.recovery_plan.summary
     review = inspection.recovery_review
     lines = [
-        "Recovery readiness inspection",
-        f"Install operation ID: {operation.operation_id or '<legacy>'}",
-        f"Recorded at: {operation.timestamp}",
-        f"Package: {operation.package_path}",
-        f"Destination: {operation.destination_kind} -> {operation.destination_mods_path}",
-        "",
-        "Current recovery status",
-        f"Review: {review.message}",
+        localizer.text("history.readiness_title"),
         (
-            "Recoverable vs non-executable: "
+            f"ID da operação de instalação: {operation.operation_id or '<legado>'}"
+            if localizer.effective_language == "pt-BR"
+            else f"Install operation ID: {operation.operation_id or '<legacy>'}"
+        ),
+        localizer.text("history.recorded_at", timestamp=operation.timestamp),
+        (
+            f"Pacote: {operation.package_path}"
+            if localizer.effective_language == "pt-BR"
+            else f"Package: {operation.package_path}"
+        ),
+        (
+            f"Destino: {_install_destination_label(operation.destination_kind)} -> {operation.destination_mods_path}"
+            if localizer.effective_language == "pt-BR"
+            else f"Destination: {_install_destination_label(operation.destination_kind)} -> {operation.destination_mods_path}"
+        ),
+        "",
+        "Status atual da recuperação" if localizer.effective_language == "pt-BR" else "Current recovery status",
+        (
+            f"Revisão: {review.message}"
+            if localizer.effective_language == "pt-BR"
+            else f"Review: {review.message}"
+        ),
+        (
+            "Recuperáveis vs não executáveis: "
+            f"{plan_summary.recoverable_entry_count} recuperáveis / "
+            f"{review.summary.non_executable_entry_count} não executáveis agora"
+            if localizer.effective_language == "pt-BR"
+            else "Recoverable vs non-executable: "
             f"{plan_summary.recoverable_entry_count} recoverable / "
             f"{review.summary.non_executable_entry_count} non-executable now"
         ),
-        f"Archive restoration involved: {'yes' if plan_summary.involves_archive_restore else 'no'}",
-        f"Executable now: {review.summary.executable_entry_count}/{review.summary.total_entry_count}",
+        (
+            f"Restauração de arquivo envolvida: {'sim' if plan_summary.involves_archive_restore else 'não'}"
+            if localizer.effective_language == "pt-BR"
+            else f"Archive restoration involved: {'yes' if plan_summary.involves_archive_restore else 'no'}"
+        ),
+        (
+            f"Executáveis agora: {review.summary.executable_entry_count}/{review.summary.total_entry_count}"
+            if localizer.effective_language == "pt-BR"
+            else f"Executable now: {review.summary.executable_entry_count}/{review.summary.total_entry_count}"
+        ),
         "",
-        "Linked prior recovery executions",
+        "Execuções anteriores de recuperação vinculadas"
+        if localizer.effective_language == "pt-BR"
+        else "Linked prior recovery executions",
     ]
     if inspection.linked_recovery_history:
         lines.extend(
@@ -13224,143 +14530,188 @@ def _build_install_recovery_inspection_text(
             for record in inspection.linked_recovery_history
         )
     else:
-        lines.append("No linked recovery execution records.")
+        lines.append(
+            "Nenhum registro vinculado de execução de recuperação."
+            if localizer.effective_language == "pt-BR"
+            else "No linked recovery execution records."
+        )
     if review.summary.warnings:
         lines.append("")
-        lines.append("Warnings")
+        lines.append("Avisos" if localizer.effective_language == "pt-BR" else "Warnings")
         lines.extend(f"- {warning}" for warning in review.summary.warnings)
     return "\n".join(lines)
 
 
 def _build_install_recovery_confirmation_message(review: object) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     return (
         f"{review.message}\n\n"
-        "Execute recovery now?\n"
-        f"Executable now: {review.summary.executable_entry_count}/{review.summary.total_entry_count}\n"
-        f"Non-executable now: {review.summary.non_executable_entry_count}\n"
-        f"Archive restoration involved: {'yes' if review.summary.involves_archive_restore else 'no'}"
+        + (
+            "Executar a recuperação agora?\n"
+            f"Executáveis agora: {review.summary.executable_entry_count}/{review.summary.total_entry_count}\n"
+            f"Não executáveis agora: {review.summary.non_executable_entry_count}\n"
+            f"Restauração de arquivo envolvida: {'sim' if review.summary.involves_archive_restore else 'não'}"
+            if pt_br
+            else "Execute recovery now?\n"
+            f"Executable now: {review.summary.executable_entry_count}/{review.summary.total_entry_count}\n"
+            f"Non-executable now: {review.summary.non_executable_entry_count}\n"
+            f"Archive restoration involved: {'yes' if review.summary.involves_archive_restore else 'no'}"
+        )
     )
 
 
 def _build_install_recovery_execution_result_text(
     result: InstallRecoveryExecutionResult,
 ) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Recovery execution result",
-        f"Outcome: completed",
-        f"Executed actions: {result.executed_entry_count}",
-        f"Destination: {result.destination_kind} -> {result.destination_mods_path}",
-        f"Removed targets: {len(result.removed_target_paths)}",
-        f"Restored targets: {len(result.restored_target_paths)}",
+        "Resultado da execução da recuperação" if pt_br else "Recovery execution result",
+        "Resultado: concluído" if pt_br else "Outcome: completed",
+        f"{'Ações executadas' if pt_br else 'Executed actions'}: {result.executed_entry_count}",
+        f"{'Destino' if pt_br else 'Destination'}: {result.destination_kind} -> {result.destination_mods_path}",
+        f"{'Alvos removidos' if pt_br else 'Removed targets'}: {len(result.removed_target_paths)}",
+        f"{'Alvos restaurados' if pt_br else 'Restored targets'}: {len(result.restored_target_paths)}",
     ]
     if result.removed_target_paths:
-        lines.append("Removed target paths")
+        lines.append("Caminhos dos alvos removidos" if pt_br else "Removed target paths")
         lines.extend(f"- {path}" for path in result.removed_target_paths)
     if result.restored_target_paths:
-        lines.append("Restored target paths")
+        lines.append("Caminhos dos alvos restaurados" if pt_br else "Restored target paths")
         lines.extend(f"- {path}" for path in result.restored_target_paths)
     return "\n".join(lines)
 
 
 def _format_recovery_execution_record(record: RecoveryExecutionRecord) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     summary = (
         f"- {record.timestamp} | {record.outcome_status} | "
-        f"executed={record.executed_entry_count} | "
-        f"removed={len(record.removed_target_paths)} | "
-        f"restored={len(record.restored_target_paths)}"
+        f"{'executados' if pt_br else 'executed'}={record.executed_entry_count} | "
+        f"{'removidos' if pt_br else 'removed'}={len(record.removed_target_paths)} | "
+        f"{'restaurados' if pt_br else 'restored'}={len(record.restored_target_paths)}"
     )
     if record.failure_message:
-        return f"{summary} | failure={record.failure_message}"
+        return f"{summary} | {'falha' if pt_br else 'failure'}={record.failure_message}"
     return summary
 
 
 def _build_sandbox_mods_sync_result_text(result: SandboxModsSyncResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Sandbox sync result",
-        f"Direction: real Mods -> sandbox Mods",
-        f"Configured real Mods path: {result.real_mods_path}",
-        f"Sandbox Mods path: {result.sandbox_mods_path}",
-        f"Copied targets: {len(result.synced_target_paths)}",
+        "Resultado da sincronização do sandbox" if pt_br else "Sandbox sync result",
+        (
+            "Direção: Mods reais -> Mods sandbox"
+            if pt_br
+            else "Direction: real Mods -> sandbox Mods"
+        ),
+        (
+            f"Caminho configurado dos Mods reais: {result.real_mods_path}"
+            if pt_br
+            else f"Configured real Mods path: {result.real_mods_path}"
+        ),
+        f"{'Caminho dos Mods sandbox' if pt_br else 'Sandbox Mods path'}: {result.sandbox_mods_path}",
+        f"{'Alvos copiados' if pt_br else 'Copied targets'}: {len(result.synced_target_paths)}",
     ]
     if result.source_mod_paths:
-        lines.append("Source mod folders")
+        lines.append("Pastas de origem dos mods" if pt_br else "Source mod folders")
         lines.extend(f"- {path}" for path in result.source_mod_paths)
     if result.synced_target_paths:
-        lines.append("Sandbox target folders")
+        lines.append("Pastas de destino no sandbox" if pt_br else "Sandbox target folders")
         lines.extend(f"- {path}" for path in result.synced_target_paths)
     lines.append("")
-    lines.append("Next step: switch scan source to Sandbox Mods and Scan to inspect the copied dev set.")
+    lines.append(
+        "Próximo passo: troque a origem da leitura para Mods sandbox e leia para inspecionar o conjunto copiado de teste."
+        if pt_br
+        else "Next step: switch scan source to Sandbox Mods and Scan to inspect the copied dev set."
+    )
     return "\n".join(lines)
 
 
 def _build_sandbox_profile_create_text(result: SandboxModProfileCreateResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Sandbox profile created",
-        f"Profile: {result.profile.name}",
-        "Starts with no enabled mods.",
-        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        "Perfil sandbox criado" if pt_br else "Sandbox profile created",
+        f"{'Perfil' if pt_br else 'Profile'}: {result.profile.name}",
+        "Começa sem mods ativados." if pt_br else "Starts with no enabled mods.",
+        f"{'Mods ativos no perfil' if pt_br else 'Active mods in profile'}: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: add the mods you want to this profile without changing Default.",
+        "Próximo passo: adicione os mods que você quer a este perfil sem mudar o Padrão."
+        if pt_br
+        else "Next step: add the mods you want to this profile without changing Default.",
     ]
     return "\n".join(lines)
 
 
 def _build_real_profile_create_text(result: RealModProfileCreateResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Real profile created",
-        f"Profile: {result.profile.name}",
-        "Starts with no enabled mods.",
-        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        "Perfil real criado" if pt_br else "Real profile created",
+        f"{'Perfil' if pt_br else 'Profile'}: {result.profile.name}",
+        "Começa sem mods ativados." if pt_br else "Starts with no enabled mods.",
+        f"{'Mods ativos no perfil' if pt_br else 'Active mods in profile'}: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: add the mods you want to this profile, then launch SMAPI against it.",
+        "Próximo passo: adicione os mods que você quer a este perfil e depois abra o SMAPI com ele."
+        if pt_br
+        else "Next step: add the mods you want to this profile, then launch SMAPI against it.",
     ]
     return "\n".join(lines)
 
 
 def _build_sandbox_profile_select_text(result: SandboxModProfileSelectResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Sandbox profile selected",
-        f"Profile: {result.profile.name}",
-        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        "Perfil sandbox selecionado" if pt_br else "Sandbox profile selected",
+        f"{'Perfil' if pt_br else 'Profile'}: {result.profile.name}",
+        f"{'Mods ativos no perfil' if pt_br else 'Active mods in profile'}: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: add or remove mods in this profile, or launch sandbox dev against it.",
+        "Próximo passo: adicione ou remova mods neste perfil, ou abra o teste sandbox com ele."
+        if pt_br
+        else "Next step: add or remove mods in this profile, or launch sandbox dev against it.",
     ]
     return "\n".join(lines)
 
 
 def _build_real_profile_select_text(result: RealModProfileSelectResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Real profile selected",
-        f"Profile: {result.profile.name}",
-        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        "Perfil real selecionado" if pt_br else "Real profile selected",
+        f"{'Perfil' if pt_br else 'Profile'}: {result.profile.name}",
+        f"{'Mods ativos no perfil' if pt_br else 'Active mods in profile'}: {len(result.scan_result.inventory.mods)}",
         f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
-        "Next step: add or remove mods in this profile, or launch SMAPI against it.",
+        "Próximo passo: adicione ou remova mods neste perfil, ou abra o SMAPI com ele."
+        if pt_br
+        else "Next step: add or remove mods in this profile, or launch SMAPI against it.",
     ]
     return "\n".join(lines)
 
 
 def _build_sandbox_profile_delete_text(result: SandboxModProfileDeleteResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Sandbox profile deleted",
-        f"Profile: {result.profile.name}",
-        f"Remaining profiles: {len(result.profiles.profiles)}",
+        "Perfil sandbox excluído" if pt_br else "Sandbox profile deleted",
+        f"{'Perfil' if pt_br else 'Profile'}: {result.profile.name}",
+        f"{'Perfis restantes' if pt_br else 'Remaining profiles'}: {len(result.profiles.profiles)}",
         "",
-        "Next step: select another profile or create a new one from Default.",
+        "Próximo passo: selecione outro perfil ou crie um novo a partir do Padrão."
+        if pt_br
+        else "Next step: select another profile or create a new one from Default.",
     ]
     return "\n".join(lines)
 
 
 def _build_real_profile_delete_text(result: RealModProfileDeleteResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     lines = [
-        "Real profile deleted",
-        f"Profile: {result.profile.name}",
-        f"Remaining profiles: {len(result.profiles.profiles)}",
+        "Perfil real excluído" if pt_br else "Real profile deleted",
+        f"{'Perfil' if pt_br else 'Profile'}: {result.profile.name}",
+        f"{'Perfis restantes' if pt_br else 'Remaining profiles'}: {len(result.profiles.profiles)}",
         "",
-        "Next step: select another real profile or create a new one from Default.",
+        "Próximo passo: selecione outro perfil real ou crie um novo a partir do Padrão."
+        if pt_br
+        else "Next step: select another real profile or create a new one from Default.",
     ]
     return "\n".join(lines)
 
@@ -13437,11 +14788,12 @@ def _build_sandbox_mods_promotion_result_text(result: SandboxModsPromotionResult
 
 
 def _discovery_source_label(provider: str) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     labels = {
         "nexus": "Nexus",
         "github": "GitHub",
-        "custom_url": "Custom source",
-        "none": "No source link",
+        "custom_url": "Origem personalizada" if pt_br else "Custom source",
+        "none": "Sem link de origem" if pt_br else "No source link",
     }
     return labels.get(provider, provider)
 
@@ -13478,9 +14830,11 @@ def _set_button_emphasis_style(button: QPushButton, *, bold: bool = False) -> No
     button.setStyleSheet("")
 
 
-def _context_caption(text: str) -> QLabel:
+def _context_caption(text: str, *, translation_key: str | None = None) -> QLabel:
     label = QLabel(text)
     label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    if translation_key is not None:
+        label.setProperty("translationKey", translation_key)
     _set_auxiliary_label_style(label)
     return label
 
@@ -13614,9 +14968,10 @@ def _set_busy_control_text(control: QWidget, text: str) -> None:
 
 
 def _profile_inactive_count_summary_label(is_default_profile: bool) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if is_default_profile:
-        return "Disabled mods"
-    return "Mods not in profile"
+        return "Mods desativados" if pt_br else "Disabled mods"
+    return "Mods fora do perfil" if pt_br else "Mods not in profile"
 
 
 def _configure_combo_box_readability(
@@ -13635,29 +14990,35 @@ def _configure_combo_box_readability(
 
 
 def _smapi_update_summary_label(status: SmapiUpdateStatus) -> str:
+    localizer = get_active_ui_localizer()
     installed = status.installed_version or "unknown"
     latest = status.latest_version or "unknown"
     if status.state == SMAPI_NOT_DETECTED_FOR_UPDATE:
-        return "SMAPI not detected"
+        return "SMAPI não detectado" if localizer.effective_language == "pt-BR" else "SMAPI not detected"
     if status.state == SMAPI_UPDATE_AVAILABLE:
-        return f"Update available ({installed} -> {latest})"
+        return f"{localizer.text('library.update.available')} ({installed} -> {latest})"
     if status.state == SMAPI_UP_TO_DATE:
-        return f"Up to date ({installed})"
+        return f"{localizer.text('library.update.up_to_date')} ({installed})"
     if status.state == SMAPI_DETECTED_VERSION_KNOWN:
-        return f"Detected ({installed})"
+        return f"{'Detectado' if localizer.effective_language == 'pt-BR' else 'Detected'} ({installed})"
     if status.state == SMAPI_UNABLE_TO_DETERMINE:
-        return "Unable to determine"
+        return "Não foi possível determinar" if localizer.effective_language == "pt-BR" else "Unable to determine"
     return status.state.replace("_", " ")
 
 
 def _app_update_summary_label(status: AppUpdateStatus) -> str:
+    localizer = get_active_ui_localizer()
     current = status.current_version or "unknown"
     latest = status.latest_version or "unknown"
     if status.state == "update_available":
-        return f"Update available ({current} -> {latest})"
+        return f"{localizer.text('library.update.available')} ({current} -> {latest})"
     if status.state == "up_to_date":
-        return f"App up to date ({current})"
-    return "Release status unavailable"
+        return localizer.text("setup.release_up_to_date", installed=current, latest=latest)
+    return (
+        "Status da versão indisponível"
+        if localizer.effective_language == "pt-BR"
+        else "Release status unavailable"
+    )
 
 
 def _app_update_feedback_tone(status: AppUpdateStatus) -> str:
@@ -13669,10 +15030,11 @@ def _app_update_feedback_tone(status: AppUpdateStatus) -> str:
 
 
 def _smapi_log_summary_label(report: SmapiLogReport, *, context_label: str | None = None) -> str:
+    localizer = get_active_ui_localizer()
     if report.state == SMAPI_LOG_NOT_FOUND:
-        return "Log not found"
+        return "Log não encontrado" if localizer.effective_language == "pt-BR" else "Log not found"
     if report.state == SMAPI_LOG_UNABLE_TO_DETERMINE:
-        return "Unable to determine"
+        return "Não foi possível determinar" if localizer.effective_language == "pt-BR" else "Unable to determine"
 
     counts = _smapi_log_issue_counts(report)
 
@@ -13684,11 +15046,19 @@ def _smapi_log_summary_label(report: SmapiLogReport, *, context_label: str | Non
     )
     if issue_count == 0 and counts[SMAPI_LOG_WARNING] == 0:
         if context_label:
-            return f"{_smapi_log_context_short_label(context_label)}: no obvious issues"
-        return "No obvious issues parsed"
+            return localizer.text(
+                "smapi.log.no_obvious_issues_context",
+                context=_smapi_log_context_short_label(context_label),
+            )
+        return localizer.text("smapi.log.no_obvious_issues")
 
     summary = (
-        f"Issues: err {counts[SMAPI_LOG_ERROR]}, "
+        f"Problemas: err {counts[SMAPI_LOG_ERROR]}, "
+        f"falha {counts[SMAPI_LOG_FAILED_MOD]}, "
+        f"dep {counts[SMAPI_LOG_MISSING_DEPENDENCY]}, "
+        f"aviso {counts[SMAPI_LOG_WARNING]}"
+        if localizer.effective_language == "pt-BR"
+        else f"Issues: err {counts[SMAPI_LOG_ERROR]}, "
         f"fail {counts[SMAPI_LOG_FAILED_MOD]}, "
         f"dep {counts[SMAPI_LOG_MISSING_DEPENDENCY]}, "
         f"warn {counts[SMAPI_LOG_WARNING]}"
@@ -13699,16 +15069,33 @@ def _smapi_log_summary_label(report: SmapiLogReport, *, context_label: str | Non
 
 
 def _smapi_log_status_message(report: SmapiLogReport, *, context_label: str) -> str:
-    context_text = f"Log context: {context_label}."
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+    context_text = (
+        f"Contexto do log: {context_label}."
+        if pt_br
+        else f"Log context: {context_label}."
+    )
     missing_targets = _smapi_missing_dependency_targets(report)
     if missing_targets:
         preview = ", ".join(missing_targets[:4])
         if len(missing_targets) > 4:
-            preview = f"{preview}, +{len(missing_targets) - 4} more"
-        return f"Missing dependencies from SMAPI log: {preview}. {context_text}"
+            preview = (
+                f"{preview}, +{len(missing_targets) - 4} a mais"
+                if pt_br
+                else f"{preview}, +{len(missing_targets) - 4} more"
+            )
+        return (
+            f"Dependências ausentes no log do SMAPI: {preview}. {context_text}"
+            if pt_br
+            else f"Missing dependencies from SMAPI log: {preview}. {context_text}"
+        )
     if report.message:
         return f"{report.message} {context_text}"
-    return f"SMAPI log check complete. {context_text}"
+    return (
+        f"Verificação do log do SMAPI concluída. {context_text}"
+        if pt_br
+        else f"SMAPI log check complete. {context_text}"
+    )
 
 
 def _build_smapi_troubleshooting_surface_text(
@@ -13717,21 +15104,33 @@ def _build_smapi_troubleshooting_surface_text(
     context_label: str,
     context_detail: str,
 ) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     log_name = report.log_path.name if report.log_path is not None else "<not loaded>"
-    lines = [f"Context: {context_label} | Log: {log_name} ({report.source})"]
+    lines = [
+        (
+            f"Contexto: {context_label} | Log: {log_name} ({report.source})"
+            if pt_br
+            else f"Context: {context_label} | Log: {log_name} ({report.source})"
+        )
+    ]
     if context_detail:
-        lines.append(f"Basis: {context_detail}")
+        lines.append(f"Base: {context_detail}" if pt_br else f"Basis: {context_detail}")
     if report.missing_dependencies:
         lines.append("")
-        lines.append("Missing dependencies:")
+        lines.append("Dependências ausentes:" if pt_br else "Missing dependencies:")
         for entry in report.missing_dependencies:
             lines.append(f"- {_smapi_missing_dependency_entry_text(entry)}")
     elif report.state == SMAPI_LOG_NOT_FOUND:
         lines.append("")
-        lines.append("No SMAPI log was found in the supported locations yet.")
+        lines.append(
+            "Ainda não foi encontrado um log do SMAPI nos locais suportados."
+            if pt_br
+            else "No SMAPI log was found in the supported locations yet."
+        )
     else:
         lines.append("")
-        lines.append("No missing dependency targets were detected in this parsed log.")
+        lines.append(localizer.text("smapi.log.no_missing_dependencies"))
     return "\n".join(lines)
 
 
@@ -13740,11 +15139,17 @@ def _smapi_missing_dependency_targets(report: SmapiLogReport) -> tuple[str, ...]
 
 
 def _smapi_missing_dependency_entry_text(entry: SmapiMissingDependency) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     requiring_mod = entry.requiring_mod_name or entry.requiring_mod_unique_id or "Unknown mod"
     dependency_target = entry.dependency_target or "<unknown dependency>"
     line = f"{requiring_mod} -> {dependency_target}"
     if entry.required_version:
-        line += f" (required {entry.required_version})"
+        line += (
+            f" (requer {entry.required_version})"
+            if pt_br
+            else f" (required {entry.required_version})"
+        )
     return line
 
 
@@ -13764,9 +15169,17 @@ def _smapi_log_issue_counts(report: SmapiLogReport) -> dict[str, int]:
 
 
 def _smapi_log_report_summary_text(report: SmapiLogReport) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     counts = _smapi_log_issue_counts(report)
     return (
-        "Parsed SMAPI log: "
+        "Log do SMAPI analisado: "
+        f"erros={counts[SMAPI_LOG_ERROR]}, "
+        f"avisos={counts[SMAPI_LOG_WARNING]}, "
+        f"mods_com_falha={counts[SMAPI_LOG_FAILED_MOD]}, "
+        f"dependências_ausentes={counts[SMAPI_LOG_MISSING_DEPENDENCY]}, "
+        f"problemas_de_runtime={counts[SMAPI_LOG_RUNTIME_ISSUE]}."
+        if pt_br
+        else "Parsed SMAPI log: "
         f"errors={counts[SMAPI_LOG_ERROR]}, "
         f"warnings={counts[SMAPI_LOG_WARNING]}, "
         f"failed_mods={counts[SMAPI_LOG_FAILED_MOD]}, "
@@ -13776,30 +15189,64 @@ def _smapi_log_report_summary_text(report: SmapiLogReport) -> str:
 
 
 def _smapi_log_context_short_label(context_label: str) -> str:
+    localizer = get_active_ui_localizer()
     if context_label == "Real Mods":
-        return "Real log"
+        return localizer.text("smapi.log.real_short")
     if context_label == "Sandbox Mods":
-        return "Sandbox log"
-    return "Unknown log"
+        return localizer.text("smapi.log.sandbox_short")
+    return localizer.text("smapi.log.unknown_short")
 
 
 def _packages_comparison_badge_text(correlation: IntakeUpdateCorrelation) -> str:
+    localizer = get_active_ui_localizer()
     target_label = correlation.comparison_target_label
     if correlation.comparison_state == "newer_than_installed":
-        return f"update for {target_label}"
+        return (
+            f"atualização para {target_label}"
+            if localizer.effective_language == "pt-BR"
+            else f"update for {target_label}"
+        )
     if correlation.comparison_state == "same_version_installed":
-        return f"same version as {target_label}"
+        return (
+            f"mesma versão que {target_label}"
+            if localizer.effective_language == "pt-BR"
+            else f"same version as {target_label}"
+        )
     if correlation.comparison_state == "older_than_installed":
-        return f"older than {target_label}"
+        return (
+            f"mais antigo que {target_label}"
+            if localizer.effective_language == "pt-BR"
+            else f"older than {target_label}"
+        )
     if correlation.comparison_state == "not_installed_in_target":
-        return f"not installed in {target_label}"
+        return (
+            f"não instalado em {target_label}"
+            if localizer.effective_language == "pt-BR"
+            else f"not installed in {target_label}"
+        )
     if correlation.comparison_state == "version_comparison_unavailable":
-        return f"can't compare with {target_label}"
+        return (
+            f"não dá para comparar com {target_label}"
+            if localizer.effective_language == "pt-BR"
+            else f"can't compare with {target_label}"
+        )
     if correlation.comparison_state == "mixed_version_state":
-        return f"needs review against {target_label}"
+        return (
+            f"precisa revisão contra {target_label}"
+            if localizer.effective_language == "pt-BR"
+            else f"needs review against {target_label}"
+        )
     if correlation.comparison_state == "target_inventory_unavailable":
-        return f"{target_label} not scanned yet"
-    return f"install against {target_label}"
+        return (
+            f"{target_label} ainda não lido"
+            if localizer.effective_language == "pt-BR"
+            else f"{target_label} not scanned yet"
+        )
+    return (
+        f"instalar em {target_label}"
+        if localizer.effective_language == "pt-BR"
+        else f"install against {target_label}"
+    )
 
 
 def _packages_review_target_label(
@@ -13824,6 +15271,7 @@ def _smapi_log_context_details(
     session_launch_expected_log_path_text: str = "",
     session_launch_started_at_epoch: float | None = None,
 ) -> tuple[str, str]:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     detected_override_paths = tuple(
         _normalized_path_text(note.partition(":")[2])
         for note in report.notes
@@ -13859,46 +15307,62 @@ def _smapi_log_context_details(
     ):
         return (
             "Sandbox Mods",
-            "Using the Cinderleaf-owned sandbox SMAPI log captured under the game folder.",
+            "Usando o log sandbox do SMAPI mantido pelo Cinderleaf dentro da pasta do jogo."
+            if pt_br
+            else "Using the Cinderleaf-owned sandbox SMAPI log captured under the game folder.",
         )
     if owned_real_log_root and report_log_path and report_log_path.startswith(
         owned_real_log_root + "/"
     ):
         return (
             "Real Mods",
-            "Using the Cinderleaf-owned real Mods SMAPI log captured under the game folder.",
+            "Usando o log dos Mods reais mantido pelo Cinderleaf dentro da pasta do jogo."
+            if pt_br
+            else "Using the Cinderleaf-owned real Mods SMAPI log captured under the game folder.",
         )
 
     if sandbox_path and sandbox_path in detected_override_paths:
         return (
             "Sandbox Mods",
-            "Detected a --mods-path override matching the configured sandbox Mods path.",
+            "Foi detectado um --mods-path override que corresponde ao caminho configurado dos Mods sandbox."
+            if pt_br
+            else "Detected a --mods-path override matching the configured sandbox Mods path.",
         )
     if real_mods_path and real_mods_path in detected_override_paths:
         return (
             "Real Mods",
-            "Detected a --mods-path override matching the configured real Mods path.",
+            "Foi detectado um --mods-path override que corresponde ao caminho configurado dos Mods reais."
+            if pt_br
+            else "Detected a --mods-path override matching the configured real Mods path.",
         )
     if detected_override_paths:
         return (
             "Unknown",
-            "The log included a custom --mods-path override, but it did not match the configured real or sandbox Mods paths.",
+            "O log incluiu um --mods-path override personalizado, mas ele não corresponde aos caminhos configurados dos Mods reais ou sandbox."
+            if pt_br
+            else "The log included a custom --mods-path override, but it did not match the configured real or sandbox Mods paths.",
         )
 
     if sandbox_path and sandbox_path in haystack:
         return (
             "Sandbox Mods",
-            "Matched the configured sandbox Mods path in the parsed log details.",
+            "Encontrou o caminho configurado dos Mods sandbox nos detalhes analisados do log."
+            if pt_br
+            else "Matched the configured sandbox Mods path in the parsed log details.",
         )
     if real_mods_path and real_mods_path in haystack:
         return (
             "Real Mods",
-            "Matched the configured real Mods path in the parsed log details.",
+            "Encontrou o caminho configurado dos Mods reais nos detalhes analisados do log."
+            if pt_br
+            else "Matched the configured real Mods path in the parsed log details.",
         )
     if "--mods-path" in haystack or " mods-path " in haystack:
         return (
             "Unknown",
-            "The log references a custom mods-path override, but it did not match the configured real or sandbox Mods paths.",
+            "O log faz referência a um mods-path override personalizado, mas ele não corresponde aos caminhos configurados dos Mods reais ou sandbox."
+            if pt_br
+            else "The log references a custom mods-path override, but it did not match the configured real or sandbox Mods paths.",
         )
 
     latest_log_matches_session = False
@@ -13919,12 +15383,16 @@ def _smapi_log_context_details(
     if session_launch_context_label == "Sandbox Mods" and latest_log_matches_session:
         return (
             "Sandbox Mods",
-            "Matched the latest SMAPI log path and write time to a sandbox launch started from this Cinderleaf session.",
+            "O caminho e o horário de escrita do log mais recente correspondem a uma abertura sandbox iniciada nesta sessão do Cinderleaf."
+            if pt_br
+            else "Matched the latest SMAPI log path and write time to a sandbox launch started from this Cinderleaf session.",
         )
     if session_launch_context_label == "Real Mods" and latest_log_matches_session:
         return (
             "Real Mods",
-            "Matched the latest SMAPI log path and write time to a real Mods SMAPI launch started from this Cinderleaf session.",
+            "O caminho e o horário de escrita do log mais recente correspondem a uma abertura SMAPI dos Mods reais iniciada nesta sessão do Cinderleaf."
+            if pt_br
+            else "Matched the latest SMAPI log path and write time to a real Mods SMAPI launch started from this Cinderleaf session.",
         )
 
     if report.log_path is not None and report.game_path is not None:
@@ -13934,7 +15402,9 @@ def _smapi_log_context_details(
         if log_parent and default_error_logs and log_parent == default_error_logs and real_mods_path and default_game_mods and real_mods_path == default_game_mods:
             return (
                 "Real Mods",
-                "Used the default game ErrorLogs location and no sandbox override was detected.",
+                "Foi usado o local padrão ErrorLogs do jogo e nenhum override de sandbox foi detectado."
+                if pt_br
+                else "Used the default game ErrorLogs location and no sandbox override was detected.",
             )
 
     if game_path and real_mods_path:
@@ -13942,12 +15412,16 @@ def _smapi_log_context_details(
         if default_game_mods and real_mods_path == default_game_mods and "--mods-path" not in haystack:
             return (
                 "Real Mods",
-                "No sandbox override was detected, and the configured real Mods path matches the default game Mods folder.",
+                "Nenhum override de sandbox foi detectado, e o caminho configurado dos Mods reais corresponde à pasta Mods padrão do jogo."
+                if pt_br
+                else "No sandbox override was detected, and the configured real Mods path matches the default game Mods folder.",
             )
 
     return (
         "Unknown",
-        "This log did not clearly identify whether it came from the real Mods folder or a sandbox launch.",
+        "Este log não identificou com clareza se veio da pasta real de Mods ou de uma abertura sandbox."
+        if pt_br
+        else "This log did not clearly identify whether it came from the real Mods folder or a sandbox launch.",
     )
 
 
@@ -13962,70 +15436,93 @@ def _normalized_path_text(raw_text: str) -> str:
 
 
 def _discovery_compatibility_label(state: str) -> str:
+    localizer = get_active_ui_localizer()
     labels = {
-        "compatible": "Compatible",
-        "compatible_with_caveat": "Compatible (caveat)",
-        "unofficial_update": "Use unofficial update",
-        "workaround_available": "Use workaround",
-        "incompatible": "Incompatible",
-        "abandoned": "Abandoned",
-        "obsolete": "Obsolete",
-        "compatibility_unknown": "Compatibility unknown",
+        "compatible": "Compatível" if localizer.effective_language == "pt-BR" else "Compatible",
+        "compatible_with_caveat": "Compatível (com ressalva)" if localizer.effective_language == "pt-BR" else "Compatible (caveat)",
+        "unofficial_update": "Usar atualização não oficial" if localizer.effective_language == "pt-BR" else "Use unofficial update",
+        "workaround_available": "Usar contorno" if localizer.effective_language == "pt-BR" else "Use workaround",
+        "incompatible": "Incompatível" if localizer.effective_language == "pt-BR" else "Incompatible",
+        "abandoned": "Abandonado" if localizer.effective_language == "pt-BR" else "Abandoned",
+        "obsolete": "Obsoleto" if localizer.effective_language == "pt-BR" else "Obsolete",
+        "compatibility_unknown": "Compatibilidade desconhecida" if localizer.effective_language == "pt-BR" else "Compatibility unknown",
     }
     return labels.get(state, state.replace("_", " ").title())
 
 
 def _environment_summary_label(status: GameEnvironmentStatus) -> str:
+    localizer = get_active_ui_localizer()
     if "invalid_game_path" in status.state_codes:
-        return "Invalid game path"
+        return localizer.text("environment.invalid_game_path")
 
-    mods_state = "mods detected" if "mods_path_detected" in status.state_codes else "mods not detected"
-    smapi_state = "SMAPI detected" if "smapi_detected" in status.state_codes else "SMAPI not detected"
+    mods_state = (
+        localizer.text("environment.mods_detected")
+        if "mods_path_detected" in status.state_codes
+        else localizer.text("environment.mods_not_detected")
+    )
+    smapi_state = (
+        localizer.text("environment.smapi_detected")
+        if "smapi_detected" in status.state_codes
+        else localizer.text("environment.smapi_not_detected")
+    )
     return f"{mods_state}, {smapi_state}"
 
 
 def _sandbox_dev_launch_summary_label(ready: bool, message: str) -> str:
+    localizer = get_active_ui_localizer()
     if ready:
-        return "Ready"
+        return localizer.text("status.ready")
     lowered = message.casefold()
     if "matches the configured real mods path" in lowered:
-        return "Blocked: matches real Mods"
+        return "Bloqueado: coincide com Mods reais" if localizer.effective_language == "pt-BR" else "Blocked: matches real Mods"
     if "sandbox mods directory" in lowered:
-        return "Needs sandbox Mods path"
+        return "Precisa do caminho dos Mods sandbox" if localizer.effective_language == "pt-BR" else "Needs sandbox Mods path"
     if "game directory" in lowered or "game path" in lowered:
-        return "Needs game path"
+        return "Precisa do caminho do jogo" if localizer.effective_language == "pt-BR" else "Needs game path"
     if "smapi launch is unavailable" in lowered or "smapi executable target" in lowered:
-        return "SMAPI unavailable"
-    return "Not ready"
+        return "SMAPI indisponível" if localizer.effective_language == "pt-BR" else "SMAPI unavailable"
+    return "Não pronto" if localizer.effective_language == "pt-BR" else "Not ready"
 
 
 def _nexus_status_label(state: str, masked_key: str | None) -> str:
+    localizer = get_active_ui_localizer()
+    masked = masked_key or ("chave definida" if localizer.effective_language == "pt-BR" else "key set")
     if state == "not_configured":
-        return "Not configured"
+        return localizer.text("nexus.status.not_configured")
     if state == "working_validated":
-        return f"Working ({masked_key or 'key set'})"
+        return localizer.text("nexus.status.working", masked=masked)
     if state == "invalid_auth_failure":
-        return f"Invalid/auth failed ({masked_key or 'key set'})"
-    return f"Configured ({masked_key or 'key set'})"
+        return localizer.text("nexus.status.invalid_auth", masked=masked)
+    return localizer.text("nexus.status.configured", masked=masked)
 
 
 def _archive_source_summary_label(source_kind: str) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if source_kind == ARCHIVE_SOURCE_REAL:
-        return "Real archive"
+        return "Arquivo real" if pt_br else "Real archive"
     if source_kind == ARCHIVE_SOURCE_SANDBOX:
-        return "Sandbox archive"
+        return "Arquivo sandbox" if pt_br else "Sandbox archive"
     return source_kind.replace("_", " ").title()
 
 
 def _archive_retention_status_label(entry: ArchivedModEntry) -> str:
+    localizer = get_active_ui_localizer()
     if entry.retention_keep_limit is None:
-        return "Keep"
+        return "Manter" if localizer.effective_language == "pt-BR" else "Keep"
     position_text = f"{entry.retention_position}/{entry.retention_total}"
     if entry.retention_cleanup_candidate:
-        return f"Cleanup candidate ({position_text})"
+        return (
+            f"Candidato à limpeza ({position_text})"
+            if localizer.effective_language == "pt-BR"
+            else f"Cleanup candidate ({position_text})"
+        )
     if entry.retention_total > entry.retention_keep_limit:
-        return f"Keep latest ({position_text})"
-    return "Keep"
+        return (
+            f"Manter mais recentes ({position_text})"
+            if localizer.effective_language == "pt-BR"
+            else f"Keep latest ({position_text})"
+        )
+    return "Manter" if localizer.effective_language == "pt-BR" else "Keep"
 
 
 def _archive_cleanup_candidate_entries(
@@ -14044,12 +15541,13 @@ def _archive_retention_group_display_name(
 
 
 def _mods_compare_state_label(state: str) -> str:
+    localizer = get_active_ui_localizer()
     labels = {
-        "only_in_real": "Only in real",
-        "only_in_sandbox": "Only in sandbox",
-        "same_version": "Same version",
-        "version_mismatch": "Version mismatch",
-        "ambiguous_match": "Ambiguous",
+        "only_in_real": localizer.text("compare.state.only_real"),
+        "only_in_sandbox": localizer.text("compare.state.only_sandbox"),
+        "same_version": localizer.text("compare.state.same_version"),
+        "version_mismatch": localizer.text("compare.state.version_mismatch"),
+        "ambiguous_match": localizer.text("compare.state.ambiguous"),
     }
     return labels.get(state, state.replace("_", " ").title())
 
@@ -14061,10 +15559,11 @@ def _mods_compare_summary_text(
     visible_count: int | None = None,
     selected_entry: ModsCompareEntry | None = None,
 ) -> str:
+    localizer = get_active_ui_localizer()
     counts = Counter(entry.state for entry in result.entries)
     visible_rows_text = ""
     if visible_count is not None:
-        visible_rows_text = f" Showing {visible_count} row(s) in the current view."
+        visible_rows_text = localizer.text("compare.summary.visible_rows", count=visible_count)
 
     summary = (
         _mods_compare_filter_intro_text(
@@ -14073,18 +15572,20 @@ def _mods_compare_summary_text(
             visible_count=visible_count,
         )
         + visible_rows_text
-        + " Last compare: "
-        f"{counts.get('only_in_real', 0)} only in real, "
-        f"{counts.get('only_in_sandbox', 0)} only in sandbox, "
-        f"{counts.get('same_version', 0)} same version, "
-        f"{counts.get('version_mismatch', 0)} version mismatch, "
-        f"{counts.get('ambiguous_match', 0)} ambiguous."
+        + localizer.text(
+            "compare.summary.last_compare",
+            only_real=counts.get("only_in_real", 0),
+            only_sandbox=counts.get("only_in_sandbox", 0),
+            same_version=counts.get("same_version", 0),
+            version_mismatch=counts.get("version_mismatch", 0),
+            ambiguous=counts.get("ambiguous_match", 0),
+        )
     )
     parse_warning_total = (
         len(result.real_inventory.parse_warnings) + len(result.sandbox_inventory.parse_warnings)
     )
     if parse_warning_total:
-        summary += f" Additional scan warnings: {parse_warning_total}."
+        summary += localizer.text("compare.summary.additional_warnings", count=parse_warning_total)
     summary += _mods_compare_next_step_text(
         result,
         filter_value=filter_value,
@@ -14101,45 +15602,25 @@ def _mods_compare_next_step_text(
     visible_count: int | None,
     selected_entry: ModsCompareEntry | None,
 ) -> str:
+    localizer = get_active_ui_localizer()
     if selected_entry is not None:
         if selected_entry.state == "only_in_sandbox":
-            return (
-                f" Selected row: {selected_entry.name} exists only in sandbox. "
-                "If sandbox testing looks good, return to Mods on the sandbox scan target and use Promote selected to real."
-            )
+            return localizer.text("compare.next.selected_sandbox", name=selected_entry.name)
         if selected_entry.state == "version_mismatch":
-            return (
-                f" Selected row: {selected_entry.name} differs between live and sandbox. "
-                "Review which version should win, then use Mods to promote from sandbox or sync from real."
-            )
+            return localizer.text("compare.next.selected_mismatch", name=selected_entry.name)
         if selected_entry.state == "only_in_real":
-            return (
-                f" Selected row: {selected_entry.name} exists only in real Mods. "
-                "Use Mods on the real scan target if you want to sync it into sandbox before testing."
-            )
+            return localizer.text("compare.next.selected_real", name=selected_entry.name)
         if selected_entry.state == "ambiguous_match":
-            return (
-                f" Selected row: {selected_entry.name} is ambiguous. "
-                "Resolve duplicate folders in Mods before you promote or sync anything."
-            )
-        return (
-            f" Selected row: {selected_entry.name} already matches on both sides. "
-            "No promote step is needed unless you want to inspect identity details."
-        )
+            return localizer.text("compare.next.selected_ambiguous", name=selected_entry.name)
+        return localizer.text("compare.next.selected_same", name=selected_entry.name)
 
     if filter_value == _COMPARE_FILTER_ACTIONABLE and visible_count and visible_count > 0:
-        return (
-            " Next step: select a drift row, then return to Mods to sync from real to sandbox or promote from sandbox to real."
-        )
+        return localizer.text("compare.next.select_drift")
     if filter_value == _COMPARE_FILTER_ACTIONABLE and visible_count == 0:
         if any(entry.state == "same_version" for entry in result.entries):
-            return (
-                " Next step: switch to Same version or All categories if you want to inspect rows that already match."
-            )
+            return localizer.text("compare.next.same_version")
     if any(entry.state in {"only_in_sandbox", "version_mismatch"} for entry in result.entries):
-        return (
-            " Next step: use Mods on the sandbox scan target when you are ready to choose what should be promoted to the live Mods folder."
-        )
+        return localizer.text("compare.next.promote_sandbox")
     return ""
 
 
@@ -14149,26 +15630,24 @@ def _mods_compare_filter_intro_text(
     filter_value: str,
     visible_count: int | None,
 ) -> str:
+    localizer = get_active_ui_localizer()
     if filter_value == _COMPARE_FILTER_ACTIONABLE:
         if visible_count == 0 and any(entry.state == "same_version" for entry in result.entries):
-            return (
-                "No actionable drift found. Same-version rows are hidden by default; "
-                "choose Same version or All categories to inspect matching rows."
-            )
-        return "Showing actionable drift by default. Same-version rows are hidden until you ask for them."
+            return localizer.text("compare.summary.none_actionable")
+        return localizer.text("compare.summary.actionable")
     if filter_value == _COMPARE_FILTER_ALL:
-        return "Showing all compare categories."
+        return localizer.text("compare.summary.all")
     if filter_value == _COMPARE_FILTER_ONLY_IN_REAL:
-        return "Showing only mods found in real Mods but not sandbox Mods."
+        return localizer.text("compare.summary.only_real")
     if filter_value == _COMPARE_FILTER_ONLY_IN_SANDBOX:
-        return "Showing only mods found in sandbox Mods but not real Mods."
+        return localizer.text("compare.summary.only_sandbox")
     if filter_value == _COMPARE_FILTER_VERSION_MISMATCH:
-        return "Showing version mismatches: same UniqueID, different versions."
+        return localizer.text("compare.summary.version_mismatch")
     if filter_value == _COMPARE_FILTER_AMBIGUOUS:
-        return "Showing ambiguous matches: duplicate folders share a UniqueID, so compare cannot pick one clean match."
+        return localizer.text("compare.summary.ambiguous")
     if filter_value == _COMPARE_FILTER_SAME_VERSION:
-        return "Showing same-version rows only."
-    return "Showing compare results."
+        return localizer.text("compare.summary.same_version")
+    return localizer.text("compare.summary.default")
 
 
 def _mods_compare_state_matches_filter(state: str, filter_value: str) -> bool:
@@ -14309,87 +15788,149 @@ def _compact_path_text(path_text: str, *, max_length: int = 56) -> str:
 
 
 def _package_inspection_entry_label(entry: PackageInspectionBatchEntry) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if entry.inspection is None:
-        return f"{entry.package_path.name} [inspection failed]"
+        return (
+            f"{entry.package_path.name} [inspeção falhou]"
+            if pt_br
+            else f"{entry.package_path.name} [inspection failed]"
+        )
 
-    mods_label = "1 mod" if len(entry.inspection.mods) == 1 else f"{len(entry.inspection.mods)} mods"
-    readiness = "ready to install" if entry.inspection.mods else "install only"
+    mods_label = (
+        "1 mod"
+        if len(entry.inspection.mods) == 1
+        else f"{len(entry.inspection.mods)} mods"
+    )
+    readiness = (
+        "pronto para instalar"
+        if entry.inspection.mods and pt_br
+        else "ready to install"
+        if entry.inspection.mods
+        else "somente instalar"
+        if pt_br
+        else "install only"
+    )
     return f"{entry.package_path.name} [{mods_label}, {readiness}]"
 
 
 def _package_inspection_entry_text(entry: PackageInspectionBatchEntry) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if entry.inspection is not None:
         return build_package_inspection_text(entry.inspection)
 
     return (
-        "Package Inspection\n"
-        f"- Package: {entry.package_path.name}\n"
-        "- Status: inspection failed\n"
-        f"- Error: {entry.error_message or 'Unknown package inspection error.'}"
+        ("Inspeção do pacote\n" if pt_br else "Package Inspection\n")
+        + (
+            f"- Pacote: {entry.package_path.name}\n"
+            if pt_br
+            else f"- Package: {entry.package_path.name}\n"
+        )
+        + ("- Status: inspeção falhou\n" if pt_br else "- Status: inspection failed\n")
+        + (
+            f"- Erro: {entry.error_message or 'Erro desconhecido ao inspecionar o pacote.'}"
+            if pt_br
+            else f"- Error: {entry.error_message or 'Unknown package inspection error.'}"
+        )
     )
 
 
 def _package_inspection_batch_summary_label_text(
     batch_result: PackageInspectionBatchResult,
 ) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     total_count = len(batch_result.entries)
     success_count = sum(1 for entry in batch_result.entries if entry.inspection is not None)
     failure_count = total_count - success_count
     if success_count == 1 and total_count == 1:
-        return "Package inspected and ready for Install. Next step: open Install."
+        return (
+            "Pacote inspecionado e pronto para Instalar. Próximo passo: abrir Instalar."
+            if pt_br
+            else "Package inspected and ready for Install. Next step: open Install."
+        )
     if success_count == 1:
         return (
-            f"{total_count} packages inspected: 1 package is ready for Install, "
+            f"{total_count} pacotes inspecionados: 1 pacote está pronto para Instalar, "
+            f"{failure_count} falhou. Próximo passo: abrir Instalar."
+            if pt_br
+            else f"{total_count} packages inspected: 1 package is ready for Install, "
             f"{failure_count} failed. Next step: open Install."
         )
     if total_count <= 1:
-        return "Inspect one package, then continue into install planning."
+        return (
+            "Inspecione um pacote e depois continue para o planejamento da instalação."
+            if pt_br
+            else "Inspect one package, then continue into install planning."
+        )
     return (
-        f"{total_count} packages inspected: {success_count} ready to install, "
+        f"{total_count} pacotes inspecionados: {success_count} prontos para instalar, "
+        f"{failure_count} falharam. Inspecione um pacote selecionado por vez."
+        if pt_br
+        else f"{total_count} packages inspected: {success_count} ready to install, "
         f"{failure_count} failed. Inspect one selected package at a time."
     )
 
 
 def _batch_inspection_status_text(batch_result: PackageInspectionBatchResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     total_count = len(batch_result.entries)
     success_count = sum(1 for entry in batch_result.entries if entry.inspection is not None)
     failure_count = total_count - success_count
     if failure_count == 0:
-        return f"Zip inspection complete: {total_count} package(s) inspected"
+        return (
+            f"Inspeção do zip concluída: {total_count} pacote(s) inspecionado(s)"
+            if pt_br
+            else f"Zip inspection complete: {total_count} package(s) inspected"
+        )
     return (
-        f"Zip inspection complete: {total_count} package(s) inspected, "
+        f"Inspeção do zip concluída: {total_count} pacote(s) inspecionado(s), "
+        f"{failure_count} falharam"
+        if pt_br
+        else f"Zip inspection complete: {total_count} package(s) inspected, "
         f"{failure_count} failed"
     )
 
 
 def _build_package_inspection_batch_text(batch_result: PackageInspectionBatchResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     total_count = len(batch_result.entries)
     success_count = sum(1 for entry in batch_result.entries if entry.inspection is not None)
     failure_count = total_count - success_count
 
     lines = [
-        "Package Inspection Batch",
-        f"- Packages selected: {total_count}",
-        f"- Successful inspections: {success_count}",
-        f"- Failed inspections: {failure_count}",
+        "Lote de inspeção de pacotes" if pt_br else "Package Inspection Batch",
+        f"- {'Pacotes selecionados' if pt_br else 'Packages selected'}: {total_count}",
+        f"- {'Inspeções com sucesso' if pt_br else 'Successful inspections'}: {success_count}",
+        f"- {'Inspeções com falha' if pt_br else 'Failed inspections'}: {failure_count}",
     ]
     if total_count > 1:
-        lines.append("- Review flow: select one inspected package at a time for install review.")
+        lines.append(
+            "- Fluxo de revisão: selecione um pacote inspecionado por vez para revisar a instalação."
+            if pt_br
+            else "- Review flow: select one inspected package at a time for install review."
+        )
 
     lines.append("")
-    lines.append("Per-package results:")
+    lines.append("Resultados por pacote:" if pt_br else "Per-package results:")
     for entry in batch_result.entries:
         if entry.inspection is None:
-            lines.append(f"- {entry.package_path.name}: failed")
+            lines.append(
+                f"- {entry.package_path.name}: falhou"
+                if pt_br
+                else f"- {entry.package_path.name}: failed"
+            )
             if entry.error_message:
-                lines.append(f"  Error: {entry.error_message}")
+                lines.append(
+                    f"  Erro: {entry.error_message}"
+                    if pt_br
+                    else f"  Error: {entry.error_message}"
+                )
             continue
 
         lines.append(
             f"- {entry.package_path.name}: "
             f"{len(entry.inspection.mods)} mod(s), "
-            f"{len(entry.inspection.findings)} finding(s), "
-            f"{len(entry.inspection.warnings)} warning(s)"
+            f"{len(entry.inspection.findings)} {'achado(s)' if pt_br else 'finding(s)'}, "
+            f"{len(entry.inspection.warnings)} {'aviso(s)' if pt_br else 'warning(s)'}"
         )
 
     return "\n".join(lines)

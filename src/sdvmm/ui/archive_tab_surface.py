@@ -11,11 +11,14 @@ from PySide6.QtWidgets import QTableWidget
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
+from sdvmm.app.i18n import UiLocalizer
+
 
 class ArchiveTabSurface(QWidget):
     def __init__(
         self,
         *,
+        localizer: UiLocalizer,
         archive_filter_input: QLineEdit,
         archive_filter_stats_label: QLabel,
         archive_state_hint_label: QLabel,
@@ -26,6 +29,7 @@ class ArchiveTabSurface(QWidget):
         delete_archived_button: QPushButton,
     ) -> None:
         super().__init__()
+        self._localizer = localizer
         self.setObjectName("archive_tab")
 
         layout = QVBoxLayout(self)
@@ -48,7 +52,8 @@ class ArchiveTabSurface(QWidget):
         archive_filter_row_layout.setHorizontalSpacing(10)
         archive_filter_row_layout.setVerticalSpacing(4)
         archive_filter_row_layout.setColumnStretch(1, 1)
-        archive_filter_row_layout.addWidget(QLabel("Filter"), 0, 0)
+        archive_filter_label = QLabel(localizer.text("archive.filter"))
+        archive_filter_row_layout.addWidget(archive_filter_label, 0, 0)
         archive_filter_row_layout.addWidget(archive_filter_input, 0, 1)
         archive_filter_row_layout.addWidget(archive_filter_stats_label, 0, 2)
         archive_controls_layout.addWidget(archive_filter_row)
@@ -67,7 +72,7 @@ class ArchiveTabSurface(QWidget):
         archive_controls_layout.addWidget(archive_actions_row)
 
         archive_empty_state_label = QLabel(
-            "Refresh archive list to browse archived entries from real and sandbox workflows."
+            localizer.text("archive.empty_state")
         )
         archive_empty_state_label.setObjectName("archive_empty_state_label")
         archive_empty_state_label.setWordWrap(True)
@@ -85,7 +90,7 @@ class ArchiveTabSurface(QWidget):
 
         layout.addWidget(archive_controls_group)
 
-        archive_results_group = QGroupBox("Archived Entries (real + sandbox)")
+        archive_results_group = QGroupBox(localizer.text("archive.results"))
         archive_results_group.setObjectName("archive_results_group")
         archive_results_group.setFlat(True)
         archive_results_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -101,3 +106,10 @@ class ArchiveTabSurface(QWidget):
         self.empty_state_label = archive_empty_state_label
         self.state_hint_label = archive_state_hint_label
         self.results_group = archive_results_group
+        self.filter_label = archive_filter_label
+
+    def retranslate(self, localizer: UiLocalizer) -> None:
+        self._localizer = localizer
+        self.filter_label.setText(localizer.text("archive.filter"))
+        self.empty_state_label.setText(localizer.text("archive.empty_state"))
+        self.results_group.setTitle(localizer.text("archive.results"))

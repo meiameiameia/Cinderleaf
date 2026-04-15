@@ -16,6 +16,7 @@ from typing import Literal
 from uuid import uuid4
 import zipfile
 
+from sdvmm.app.i18n import get_active_ui_localizer
 from sdvmm.domain.models import (
     ArchivedModEntry,
     ArchiveCleanupPlan,
@@ -5474,10 +5475,15 @@ class AppShellService:
         destination_mods_path: Path,
         configured_real_mods_path: Path | None,
     ) -> InstallTargetSafetyDecision:
+        pt_br = get_active_ui_localizer().effective_language == "pt-BR"
         if install_target not in {INSTALL_TARGET_SANDBOX_MODS, INSTALL_TARGET_CONFIGURED_REAL_MODS}:
             return InstallTargetSafetyDecision(
                 allowed=False,
-                message=f"Unknown install target: {install_target}",
+                message=(
+                    f"Destino de instalação desconhecido: {install_target}"
+                    if pt_br
+                    else f"Unknown install target: {install_target}"
+                ),
                 requires_explicit_confirmation=False,
             )
 
@@ -5485,12 +5491,16 @@ class AppShellService:
             if install_target == INSTALL_TARGET_SANDBOX_MODS:
                 return InstallTargetSafetyDecision(
                     allowed=True,
-                    message="Sandbox destination selected.",
+                    message="Destino sandbox selecionado." if pt_br else "Sandbox destination selected.",
                     requires_explicit_confirmation=False,
                 )
             return InstallTargetSafetyDecision(
                 allowed=False,
-                message="Configured real Mods path is required for destination safety checks.",
+                message=(
+                    "O caminho configurado de Mods reais é obrigatório para as verificações de segurança do destino."
+                    if pt_br
+                    else "Configured real Mods path is required for destination safety checks."
+                ),
                 requires_explicit_confirmation=False,
             )
 
@@ -5499,7 +5509,10 @@ class AppShellService:
                 return InstallTargetSafetyDecision(
                     allowed=False,
                     message=(
-                        "Sandbox install target matches configured real Mods path. "
+                        "O destino sandbox da instalação coincide com o caminho configurado dos Mods reais. "
+                        "Selecione o destino sandbox ou escolha um caminho diferente."
+                        if pt_br
+                        else "Sandbox install target matches configured real Mods path. "
                         "Select sandbox destination or choose a different path."
                     ),
                     requires_explicit_confirmation=False,
@@ -5507,7 +5520,7 @@ class AppShellService:
 
             return InstallTargetSafetyDecision(
                 allowed=True,
-                message="Sandbox destination selected.",
+                message="Destino sandbox selecionado." if pt_br else "Sandbox destination selected.",
                 requires_explicit_confirmation=False,
             )
 
@@ -5515,14 +5528,20 @@ class AppShellService:
             return InstallTargetSafetyDecision(
                 allowed=False,
                 message=(
-                    "Real install destination must exactly match the configured real Mods path."
+                    "O destino real da instalação precisa corresponder exatamente ao caminho configurado dos Mods reais."
+                    if pt_br
+                    else "Real install destination must exactly match the configured real Mods path."
                 ),
                 requires_explicit_confirmation=False,
             )
 
         return InstallTargetSafetyDecision(
             allowed=True,
-            message="Real game Mods destination selected. Explicit confirmation required before install.",
+            message=(
+                "Destino Mods do jogo real selecionado. É necessária confirmação explícita antes da instalação."
+                if pt_br
+                else "Real game Mods destination selected. Explicit confirmation required before install."
+            ),
             requires_explicit_confirmation=True,
         )
 
@@ -9332,16 +9351,17 @@ def _group_installed_mods_for_compare(
 
 
 def _mods_compare_state_label(state: str) -> str:
+    localizer = get_active_ui_localizer()
     if state == "only_in_real":
-        return "only in real"
+        return localizer.text("compare.state.only_real")
     if state == "only_in_sandbox":
-        return "only in sandbox"
+        return localizer.text("compare.state.only_sandbox")
     if state == "same_version":
-        return "same version"
+        return localizer.text("compare.state.same_version")
     if state == "version_mismatch":
-        return "version mismatch"
+        return localizer.text("compare.state.version_mismatch")
     if state == "ambiguous_match":
-        return "ambiguous match"
+        return localizer.text("compare.state.ambiguous")
     return state
 
 
@@ -9424,25 +9444,32 @@ def _build_discovery_provider_relation(
     discovery_source_provider: str,
     tracked_provider: str | None,
 ) -> tuple[str, str | None]:
+    localizer = get_active_ui_localizer()
     if tracked_provider is None:
         return ("no_update_provider_context", None)
 
     if discovery_source_provider not in {"nexus", "github"}:
         return (
             "provider_not_comparable",
-            "Tracked update provider exists, but discovery source is custom/other.",
+            localizer.text("discovery.provider_relation.custom"),
         )
 
     if discovery_source_provider == tracked_provider:
         return (
             "provider_aligned",
-            f"Discovery source matches tracked update provider ({_provider_label(tracked_provider)}).",
+            localizer.text(
+                "discovery.provider_relation.matches",
+                provider=_provider_label(tracked_provider),
+            ),
         )
 
     return (
         "provider_mismatch",
-        "Discovery source differs from tracked update provider "
-        f"({_provider_label(discovery_source_provider)} vs {_provider_label(tracked_provider)}).",
+        localizer.text(
+            "discovery.provider_relation.differs",
+            discovery=_provider_label(discovery_source_provider),
+            tracked=_provider_label(tracked_provider),
+        ),
     )
 
 
@@ -9451,54 +9478,72 @@ def _build_discovery_context_messages(
     installed_match_unique_id: str | None,
     update_state: str | None,
 ) -> tuple[str, str]:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     if installed_match_unique_id is None:
         return (
-            "Not currently installed in the scanned inventory",
+            localizer.text("discovery.context.not_installed"),
             (
-                "Open source page, download manually, let watcher detect the zip, "
-                "then plan a safe install."
+                "Abra a página da origem, baixe manualmente, deixe o monitor detectar o zip e depois planeje uma instalação segura."
+                if pt_br
+                else "Open source page, download manually, let watcher detect the zip, then plan a safe install."
             ),
         )
 
     if update_state == "update_available":
         return (
-            f"Already installed ({installed_match_unique_id}); update is available in current metadata report",
+            localizer.text("discovery.context.update_available", unique_id=installed_match_unique_id),
             (
-                "Open source page, download manually, let watcher detect the zip, "
-                "then plan a safe update/replace."
+                "Abra a página da origem, baixe manualmente, deixe o monitor detectar o zip e depois planeje uma atualização/substituição segura."
+                if pt_br
+                else "Open source page, download manually, let watcher detect the zip, then plan a safe update/replace."
             ),
         )
 
     if update_state == "up_to_date":
         return (
-            f"Already installed ({installed_match_unique_id}); currently marked up to date",
+            localizer.text("discovery.context.up_to_date", unique_id=installed_match_unique_id),
             (
-                "Open source page only if you intentionally want a manual reinstall or alternate build. "
-                "If downloaded, continue via watcher -> intake -> plan."
+                "Abra a página da origem apenas se você quiser de propósito uma reinstalação manual ou uma build alternativa. Se baixar, continue por monitor -> entrada -> plano."
+                if pt_br
+                else "Open source page only if you intentionally want a manual reinstall or alternate build. If downloaded, continue via watcher -> intake -> plan."
             ),
         )
 
     if update_state == "metadata_unavailable":
         return (
-            f"Already installed ({installed_match_unique_id}); update metadata currently unavailable",
+            localizer.text(
+                "discovery.context.metadata_unavailable",
+                unique_id=installed_match_unique_id,
+            ),
             (
-                "Open source page and continue manual flow if needed. You can also run Check updates again "
-                "after fixing metadata/provider issues."
+                "Abra a página da origem e continue o fluxo manual se precisar. Você também pode usar Verificar atualizações novamente depois de corrigir problemas de metadados/provedor."
+                if pt_br
+                else "Open source page and continue manual flow if needed. You can also run Check updates again after fixing metadata/provider issues."
             ),
         )
 
     if update_state == "no_remote_link":
         return (
-            f"Already installed ({installed_match_unique_id}); no tracked remote link in update report",
+            localizer.text("discovery.context.no_remote_link", unique_id=installed_match_unique_id),
             (
-                "Use discovery source page as manual source. Download manually, then continue via watcher "
-                "-> intake -> plan."
+                "Use a página encontrada em Descobrir como origem manual. Baixe manualmente e depois continue por monitor -> entrada -> plano."
+                if pt_br
+                else "Use discovery source page as manual source. Download manually, then continue via watcher -> intake -> plan."
             ),
         )
 
     return (
-        f"Already installed ({installed_match_unique_id}); update state not checked yet",
-        "Run Check updates for richer context, or continue manual watcher -> intake -> plan flow.",
+        (
+            f"Já instalado ({installed_match_unique_id}); o estado da atualização ainda não foi verificado"
+            if pt_br
+            else f"Already installed ({installed_match_unique_id}); update state not checked yet"
+        ),
+        (
+            "Use Verificar atualizações para ter mais contexto ou continue pelo fluxo manual monitor -> entrada -> plano."
+            if pt_br
+            else "Run Check updates for richer context, or continue manual watcher -> intake -> plan flow."
+        ),
     )
 
 
@@ -9622,39 +9667,75 @@ def _restore_import_config_state_label(state: str) -> str:
 
 
 def build_mods_compare_text(result: ModsCompareResult) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     counts = Counter(entry.state for entry in result.entries)
     lines = [
-        "Real vs sandbox Mods compare",
-        f"Real Mods path: {result.real_mods_path}",
-        f"Sandbox Mods path: {result.sandbox_mods_path}",
-        f"Only in real: {counts.get('only_in_real', 0)}",
-        f"Only in sandbox: {counts.get('only_in_sandbox', 0)}",
-        f"Same version: {counts.get('same_version', 0)}",
-        f"Version mismatch: {counts.get('version_mismatch', 0)}",
-        f"Ambiguous match: {counts.get('ambiguous_match', 0)}",
+        "Comparação entre Mods reais e sandbox"
+        if localizer.effective_language == "pt-BR"
+        else "Real vs sandbox Mods compare",
+        (
+            f"Caminho dos Mods reais: {result.real_mods_path}"
+            if localizer.effective_language == "pt-BR"
+            else f"Real Mods path: {result.real_mods_path}"
+        ),
+        (
+            f"Caminho dos Mods sandbox: {result.sandbox_mods_path}"
+            if localizer.effective_language == "pt-BR"
+            else f"Sandbox Mods path: {result.sandbox_mods_path}"
+        ),
+        f"{localizer.text('compare.state.only_real')}: {counts.get('only_in_real', 0)}",
+        f"{localizer.text('compare.state.only_sandbox')}: {counts.get('only_in_sandbox', 0)}",
+        f"{localizer.text('compare.state.same_version')}: {counts.get('same_version', 0)}",
+        f"{localizer.text('compare.state.version_mismatch')}: {counts.get('version_mismatch', 0)}",
+        f"{localizer.text('compare.state.ambiguous')}: {counts.get('ambiguous_match', 0)}",
     ]
     parse_warning_total = (
         len(result.real_inventory.parse_warnings) + len(result.sandbox_inventory.parse_warnings)
     )
     if parse_warning_total:
         lines.append(
-            f"Additional scan warnings outside direct compare rows: {parse_warning_total}"
+            (
+                f"Avisos extras de leitura fora das linhas diretas da comparação: {parse_warning_total}"
+                if pt_br
+                else f"Additional scan warnings outside direct compare rows: {parse_warning_total}"
+            )
         )
 
     lines.extend(
         (
             "",
-            "Category guide:",
-            "- only in real / only in sandbox: the mod exists on one side only.",
-            "- version mismatch: the same UniqueID exists in both places, but the versions differ.",
-            "- ambiguous match: duplicate folders share a UniqueID, so compare cannot identify one clean match.",
-            "- same version: the same UniqueID and version exist in both places.",
+            "Guia das categorias:" if pt_br else "Category guide:",
+            (
+                "- só no real / só no sandbox: o mod existe apenas de um lado."
+                if pt_br
+                else "- only in real / only in sandbox: the mod exists on one side only."
+            ),
+            (
+                "- versão diferente: o mesmo UniqueID existe nos dois lugares, mas as versões são diferentes."
+                if pt_br
+                else "- version mismatch: the same UniqueID exists in both places, but the versions differ."
+            ),
+            (
+                "- correspondência ambígua: pastas duplicadas compartilham um UniqueID, então a comparação não consegue identificar uma correspondência limpa."
+                if pt_br
+                else "- ambiguous match: duplicate folders share a UniqueID, so compare cannot identify one clean match."
+            ),
+            (
+                "- mesma versão: o mesmo UniqueID e a mesma versão existem nos dois lugares."
+                if pt_br
+                else "- same version: the same UniqueID and version exist in both places."
+            ),
         )
     )
 
-    lines.extend(("", "Compared rows:"))
+    lines.extend(("", "Linhas comparadas:" if pt_br else "Compared rows:"))
     if not result.entries:
-        lines.append("- No installed mods were found in either location.")
+        lines.append(
+            "- Nenhum mod instalado foi encontrado em qualquer um dos locais."
+            if pt_br
+            else "- No installed mods were found in either location."
+        )
         return "\n".join(lines)
 
     for entry in result.entries:
@@ -10177,16 +10258,33 @@ def _build_intake_flow_messages(
     matched_update_available: tuple[str, ...],
     matched_guided: tuple[str, ...],
 ) -> tuple[str, str]:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if not actionable:
         return (
-            "Detected package is unusable for install planning.",
-            "Fix or replace this package before planning (non-actionable).",
+            (
+                "O pacote detectado não pode ser usado no planejamento da instalação."
+                if pt_br
+                else "Detected package is unusable for install planning."
+            ),
+            (
+                "Corrija ou substitua este pacote antes de planejar (não acionável)."
+                if pt_br
+                else "Fix or replace this package before planning (non-actionable)."
+            ),
         )
 
     if comparison_state == "target_inventory_unavailable":
         return (
-            f"Packages are set to compare against {comparison_target_label}, but that inventory has not been scanned in this session yet.",
-            f"Scan {comparison_target_label} if you want truthful version comparison, or use Open Install for a manual plan now.",
+            (
+                f"Pacotes está configurado para comparar com {comparison_target_label}, mas esse inventário ainda não foi lido nesta sessão."
+                if pt_br
+                else f"Packages are set to compare against {comparison_target_label}, but that inventory has not been scanned in this session yet."
+            ),
+            (
+                f"Leia {comparison_target_label} se quiser uma comparação de versão fiel, ou use Abrir Instalar para um plano manual agora."
+                if pt_br
+                else f"Scan {comparison_target_label} if you want truthful version comparison, or use Open Install for a manual plan now."
+            ),
         )
 
     if comparison_state == "newer_than_installed":
@@ -10194,59 +10292,139 @@ def _build_intake_flow_messages(
         if matched_guided:
             joined = ", ".join(matched_guided)
             return (
-                f"This download looks like an update for {comparison_target_label}. {detail} Guided target match: {joined}.",
-                f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+                (
+                    f"Este download parece ser uma atualização para {comparison_target_label}. {detail} Correspondência guiada: {joined}."
+                    if pt_br
+                    else f"This download looks like an update for {comparison_target_label}. {detail} Guided target match: {joined}."
+                ),
+                (
+                    f"Use Abrir como atualização para {comparison_target_label} e depois confirme o plano de substituição com apoio de arquivo."
+                    if pt_br
+                    else f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan."
+                ),
             )
         if matched_update_available:
             joined = ", ".join(matched_update_available)
             return (
-                f"This download looks like an update for {comparison_target_label}. {detail} Update-available match: {joined}.",
-                f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+                (
+                    f"Este download parece ser uma atualização para {comparison_target_label}. {detail} Correspondência com atualização disponível: {joined}."
+                    if pt_br
+                    else f"This download looks like an update for {comparison_target_label}. {detail} Update-available match: {joined}."
+                ),
+                (
+                    f"Use Abrir como atualização para {comparison_target_label} e depois confirme o plano de substituição com apoio de arquivo."
+                    if pt_br
+                    else f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan."
+                ),
             )
         return (
-            f"This download looks like an update for {comparison_target_label}. {detail}",
-            f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+            (
+                f"Este download parece ser uma atualização para {comparison_target_label}. {detail}"
+                if pt_br
+                else f"This download looks like an update for {comparison_target_label}. {detail}"
+            ),
+            (
+                f"Use Abrir como atualização para {comparison_target_label} e depois confirme o plano de substituição com apoio de arquivo."
+                if pt_br
+                else f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan."
+            ),
         )
 
     if comparison_state == "same_version_installed":
         return (
-            f"This same version is already installed in {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Install stays available for inspection, but this download is not a real update.",
+            (
+                f"Essa mesma versão já está instalada em {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}"
+                if pt_br
+                else f"This same version is already installed in {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}"
+            ),
+            (
+                "Abrir Instalar continua disponível para inspeção, mas este download não é uma atualização real."
+                if pt_br
+                else "Open Install stays available for inspection, but this download is not a real update."
+            ),
         )
 
     if comparison_state == "older_than_installed":
         return (
-            f"{comparison_target_label} already has a newer version than this download. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Install if you still need a manual check, but Open as update stays off for older downloads.",
+            (
+                f"{comparison_target_label} já tem uma versão mais nova que este download. {_first_version_comparison_detail(version_comparisons)}"
+                if pt_br
+                else f"{comparison_target_label} already has a newer version than this download. {_first_version_comparison_detail(version_comparisons)}"
+            ),
+            (
+                "Use Abrir Instalar se ainda quiser uma checagem manual, mas Abrir como atualização fica desligado para downloads mais antigos."
+                if pt_br
+                else "Open Install if you still need a manual check, but Open as update stays off for older downloads."
+            ),
         )
 
     if comparison_state == "not_installed_in_target":
         return (
-            f"This package is not installed in {comparison_target_label} yet.",
-            f"Use Open Install to plan it as a new install against {comparison_target_label}.",
+            (
+                f"Este pacote ainda não está instalado em {comparison_target_label}."
+                if pt_br
+                else f"This package is not installed in {comparison_target_label} yet."
+            ),
+            (
+                f"Use Abrir Instalar para planejá-lo como uma nova instalação em {comparison_target_label}."
+                if pt_br
+                else f"Use Open Install to plan it as a new install against {comparison_target_label}."
+            ),
         )
 
     if comparison_state == "version_comparison_unavailable":
         return (
-            f"Version comparison against {comparison_target_label} is unavailable for this package. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Install if you need manual inspection. Open as update stays off until the version comparison is clear.",
+            (
+                f"A comparação de versões com {comparison_target_label} está indisponível para este pacote. {_first_version_comparison_detail(version_comparisons)}"
+                if pt_br
+                else f"Version comparison against {comparison_target_label} is unavailable for this package. {_first_version_comparison_detail(version_comparisons)}"
+            ),
+            (
+                "Use Abrir Instalar se precisar de inspeção manual. Abrir como atualização continua desligado até a comparação de versões ficar clara."
+                if pt_br
+                else "Open Install if you need manual inspection. Open as update stays off until the version comparison is clear."
+            ),
         )
 
     if comparison_state == "mixed_version_state":
         return (
-            f"This package has mixed install/update state against {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Install for a manual inspection. Open as update stays off because the package is not a clear newer-than-installed update.",
+            (
+                f"Este pacote tem um estado misto de instalação/atualização em relação a {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}"
+                if pt_br
+                else f"This package has mixed install/update state against {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}"
+            ),
+            (
+                "Use Abrir Instalar para uma inspeção manual. Abrir como atualização continua desligado porque o pacote não é uma atualização claramente mais nova que a instalada."
+                if pt_br
+                else "Open Install for a manual inspection. Open as update stays off because the package is not a clear newer-than-installed update."
+            ),
         )
 
     if intake.classification == "multi_mod_package":
         return (
-            f"Detected package contains multiple mods for {comparison_target_label}.",
-            "Open Install and inspect the per-entry plan before any write action.",
+            (
+                f"O pacote detectado contém vários mods para {comparison_target_label}."
+                if pt_br
+                else f"Detected package contains multiple mods for {comparison_target_label}."
+            ),
+            (
+                "Abra Instalar e inspecione o plano por entrada antes de qualquer gravação."
+                if pt_br
+                else "Open Install and inspect the per-entry plan before any write action."
+            ),
         )
 
     return (
-        f"Detected package is ready to install against {comparison_target_label}.",
-        "Use Open Install to continue into the read-only install plan.",
+        (
+            f"O pacote detectado está pronto para instalar em {comparison_target_label}."
+            if pt_br
+            else f"Detected package is ready to install against {comparison_target_label}."
+        ),
+        (
+            "Use Abrir Instalar para continuar até o plano de instalação só leitura."
+            if pt_br
+            else "Use Open Install to continue into the read-only install plan."
+        ),
     )
 
 
@@ -10257,48 +10435,98 @@ def _build_legacy_intake_flow_messages(
     matched_update_available: tuple[str, ...],
     matched_guided: tuple[str, ...],
 ) -> tuple[str, str]:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if not actionable:
         return (
-            "Detected package is unusable for install planning.",
-            "Fix or replace this package before planning (non-actionable).",
+            (
+                "O pacote detectado não pode ser usado no planejamento da instalação."
+                if pt_br
+                else "Detected package is unusable for install planning."
+            ),
+            (
+                "Corrija ou substitua este pacote antes de planejar (não acionável)."
+                if pt_br
+                else "Fix or replace this package before planning (non-actionable)."
+            ),
         )
 
     if matched_guided:
         joined = ", ".join(matched_guided)
         return (
-            f"Detected package matches a guided update target: {joined}.",
-            "Open as update for archive-aware planning before install.",
+            (
+                f"O pacote detectado corresponde a um alvo guiado de atualização: {joined}."
+                if pt_br
+                else f"Detected package matches a guided update target: {joined}."
+            ),
+            (
+                "Use Abrir como atualização para um planejamento com apoio de arquivo antes de instalar."
+                if pt_br
+                else "Open as update for archive-aware planning before install."
+            ),
         )
 
     if matched_update_available:
         joined = ", ".join(matched_update_available)
         return (
-            f"Detected package matches an installed mod with an update available: {joined}.",
-            "Open as update for archive-aware planning before install.",
+            (
+                f"O pacote detectado corresponde a um mod instalado com atualização disponível: {joined}."
+                if pt_br
+                else f"Detected package matches an installed mod with an update available: {joined}."
+            ),
+            (
+                "Use Abrir como atualização para um planejamento com apoio de arquivo antes de instalar."
+                if pt_br
+                else "Open as update for archive-aware planning before install."
+            ),
         )
 
     if intake.classification == "new_install_candidate":
         return (
-            "Detected package is a new install candidate.",
-            "Open Install to plan install and inspect the read-only summary.",
+            (
+                "O pacote detectado é um novo candidato de instalação."
+                if pt_br
+                else "Detected package is a new install candidate."
+            ),
+            (
+                "Use Abrir Instalar para planejar a instalação e inspecionar o resumo só leitura."
+                if pt_br
+                else "Open Install to plan install and inspect the read-only summary."
+            ),
         )
 
     if intake.classification == "multi_mod_package":
         return (
-            "Detected package contains multiple mods.",
-            "Open Install to inspect the per-entry install plan before any write action.",
+            (
+                "O pacote detectado contém vários mods."
+                if pt_br
+                else "Detected package contains multiple mods."
+            ),
+            (
+                "Use Abrir Instalar para inspecionar o plano por entrada antes de qualquer gravação."
+                if pt_br
+                else "Open Install to inspect the per-entry install plan before any write action."
+            ),
         )
 
     return (
-        "Detected package is ready to install.",
-        "Open Install to continue into the read-only install plan.",
+        (
+            "O pacote detectado está pronto para instalar."
+            if pt_br
+            else "Detected package is ready to install."
+        ),
+        (
+            "Use Abrir Instalar para continuar até o plano de instalação só leitura."
+            if pt_br
+            else "Open Install to continue into the read-only install plan."
+        ),
     )
 
 
 def _packages_comparison_target_label(target: ScanTargetKind | None) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if target == SCAN_TARGET_SANDBOX_MODS:
-        return "Sandbox Mods"
-    return "Real Mods"
+        return "Mods sandbox" if pt_br else "Sandbox Mods"
+    return "Mods reais" if pt_br else "Real Mods"
 
 
 def _compare_intake_against_inventory(
@@ -10422,26 +10650,39 @@ def _resolve_package_comparison_state(
 def _first_version_comparison_detail(
     comparisons: tuple[IntakeVersionComparison, ...],
 ) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     if not comparisons:
-        return "No installed comparison details are available yet."
+        return "Ainda não há detalhes de comparação com itens instalados." if pt_br else "No installed comparison details are available yet."
     entry = comparisons[0]
     target_label = entry.installed_unique_id or entry.package_unique_id
     if entry.state == "not_installed":
-        return f"{target_label} is not installed yet."
+        return f"{target_label} ainda não está instalado." if pt_br else f"{target_label} is not installed yet."
     if entry.state == "newer":
         return (
-            f"{target_label}: installed {entry.installed_version or 'unknown'} -> "
+            f"{target_label}: instalado {entry.installed_version or 'desconhecido'} -> "
+            f"pacote {entry.package_version or 'desconhecido'}."
+            if pt_br
+            else f"{target_label}: installed {entry.installed_version or 'unknown'} -> "
             f"package {entry.package_version or 'unknown'}."
         )
     if entry.state == "same":
-        return f"{target_label}: installed {entry.installed_version or 'unknown'} matches the package version."
+        return (
+            f"{target_label}: a versão instalada {entry.installed_version or 'desconhecida'} corresponde à versão do pacote."
+            if pt_br
+            else f"{target_label}: installed {entry.installed_version or 'unknown'} matches the package version."
+        )
     if entry.state == "older":
         return (
-            f"{target_label}: installed {entry.installed_version or 'unknown'} is newer than "
+            f"{target_label}: a versão instalada {entry.installed_version or 'desconhecida'} é mais nova que "
+            f"o pacote {entry.package_version or 'desconhecida'}."
+            if pt_br
+            else f"{target_label}: installed {entry.installed_version or 'unknown'} is newer than "
             f"package {entry.package_version or 'unknown'}."
         )
     return (
-        f"{target_label}: package {entry.package_version or 'unknown'} could not be compared against "
+        f"{target_label}: o pacote {entry.package_version or 'desconhecido'} não pôde ser comparado com a versão instalada {entry.installed_version or 'desconhecida'}."
+        if pt_br
+        else f"{target_label}: package {entry.package_version or 'unknown'} could not be compared against "
         f"installed {entry.installed_version or 'unknown'}."
     )
 
@@ -10465,8 +10706,12 @@ def _same_version_remote_update_conflict_details(
         if remote_comparison is None or remote_comparison >= 0:
             continue
         details.append(
-            f"{entry.installed_unique_id}: installed {entry.installed_version or 'unknown'} matches the package version, "
-            f"but the remote page reports {status.remote_version}."
+            (
+                f"{entry.installed_unique_id}: a versão instalada {entry.installed_version or 'desconhecida'} corresponde ao pacote, mas a página remota informa {status.remote_version}."
+                if get_active_ui_localizer().effective_language == "pt-BR"
+                else f"{entry.installed_unique_id}: installed {entry.installed_version or 'unknown'} matches the package version, "
+                f"but the remote page reports {status.remote_version}."
+            )
         )
     return tuple(details)
 

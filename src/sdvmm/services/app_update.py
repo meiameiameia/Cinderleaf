@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
+from sdvmm.app.i18n import get_active_ui_localizer
 from sdvmm.domain.models import AppUpdateStatus
 from sdvmm.services.update_metadata import (
     JsonMetadataFetcher,
@@ -96,23 +97,27 @@ def check_app_update_status(
         )
 
     if comparison < 0:
+        localizer = get_active_ui_localizer()
         return AppUpdateStatus(
             state="update_available",
             current_version=normalized_current_version,
             latest_version=latest_version,
             update_page_url=release_page_url,
             message=(
-                f"Cinderleaf update available: installed {normalized_current_version}, latest {latest_version}."
+                f"{localizer.text('library.update.available')}: installed {normalized_current_version}, latest {latest_version}."
             ),
         )
 
+    localizer = get_active_ui_localizer()
     return AppUpdateStatus(
         state="up_to_date",
         current_version=normalized_current_version,
         latest_version=latest_version,
         update_page_url=release_page_url,
-        message=(
-            f"Cinderleaf is up to date (installed {normalized_current_version}, latest {latest_version})."
+        message=localizer.text(
+            "status.app_up_to_date",
+            installed=normalized_current_version,
+            latest=latest_version,
         ),
     )
 

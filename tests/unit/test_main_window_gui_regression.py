@@ -57,6 +57,7 @@ from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
+from sdvmm.domain.environment_codes import GAME_PATH_DETECTED, MODS_PATH_DETECTED, SMAPI_DETECTED
 from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.package_codes import INVALID_MANIFEST_PACKAGE
 from sdvmm.domain.smapi_codes import SMAPI_UP_TO_DATE
@@ -346,6 +347,102 @@ def test_setup_language_preference_change_retranslates_visible_shell_without_res
         "Começo rápido: defina a pasta do jogo, a pasta Mods real e a pasta Mods sandbox."
     )
     assert "Idioma do app atualizado" in window._status_strip_label.text()
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_main_window_portuguese_localizer_translates_packages_compare_and_history_surfaces(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    packages_button = window.findChild(QPushButton, "workspace_nav_button_packages")
+    compare_button = window.findChild(QPushButton, "workspace_nav_button_compare")
+    history_button = window.findChild(QPushButton, "workspace_nav_button_history")
+    add_package_button = window.findChild(QPushButton, "packages_add_package_button")
+    compare_button_run = window.findChild(QPushButton, "compare_run_button")
+    queue_details_group = window.findChild(QGroupBox, "packages_output_group")
+    compare_results_group = window.findChild(QGroupBox, "compare_results_group")
+
+    assert packages_button is not None
+    assert compare_button is not None
+    assert history_button is not None
+    assert add_package_button is not None
+    assert compare_button_run is not None
+    assert queue_details_group is not None
+    assert compare_results_group is not None
+
+    assert packages_button.text() == "Pacotes"
+    assert compare_button.text() == "Comparar"
+    assert history_button.text() == "Histórico"
+    assert add_package_button.text() == "Adicionar pacote"
+    assert compare_button_run.text() == "Comparar real e sandbox"
+    assert queue_details_group.title() == "Detalhes da fila"
+    assert compare_results_group.title() == "Resultados da comparação"
+    assert window._history_workspace_tabs.tabText(0) == "Cópias arquivadas"
+    assert window._history_workspace_tabs.tabText(1) == "Histórico de instalação"
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_main_window_portuguese_localizer_translates_runtime_surface_summaries(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    window._set_scan_context(
+        Path("C:/Stardew/Cinderleaf/Sandbox Mods"),
+        window._scan_target_label(SCAN_TARGET_SANDBOX_MODS),
+    )
+    assert window._scan_context_label.text() == "diretório Mods sandbox selecionado"
+
+    window._apply_environment_status(
+        GameEnvironmentStatus(
+            game_path=Path("C:/Stardew"),
+            mods_path=Path("C:/Stardew/Mods"),
+            smapi_path=Path("C:/Stardew/StardewModdingAPI.exe"),
+            state_codes=(GAME_PATH_DETECTED, MODS_PATH_DETECTED, SMAPI_DETECTED),
+            notes=tuple(),
+        )
+    )
+    assert window._environment_status_label.text() == "mods detectados, SMAPI detectado"
+
+    status = AppUpdateStatus(
+        state="up_to_date",
+        current_version="1.4.0",
+        latest_version="1.4.0",
+        update_page_url="https://example.com/releases",
+        message="Cinderleaf is up to date (installed 1.4.0, latest 1.4.0).",
+    )
+    window._apply_app_update_status(status)
+    assert (
+        window._setup_app_update_status_label.text()
+        == "Cinderleaf está atualizado (instalado 1.4.0, mais recente 1.4.0)."
+    )
+
+    window._selected_zip_package_paths = tuple()
+    window._refresh_zip_selection_summary()
+    assert window._zip_selection_summary_label.text() == "Ainda não há pacotes monitorados detectados."
+
+    window._sandbox_mods_path_input.setText("C:/Stardew/Cinderleaf/Sandbox Mods")
+    window._sandbox_archive_path_input.setText("C:/Stardew/Cinderleaf/Sandbox Archive")
+    window._set_current_install_target(INSTALL_TARGET_SANDBOX_MODS)
+    window._refresh_install_destination_preview()
+    assert "Destino dos Mods sandbox selecionado" in window._install_context_label.text()
 
     window.close()
     qapp.processEvents()

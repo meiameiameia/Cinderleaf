@@ -10,22 +10,25 @@ from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
+from sdvmm.app.i18n import UiLocalizer
+
 
 class GlobalStatusStrip(QGroupBox):
-    def __init__(self) -> None:
+    def __init__(self, *, localizer: UiLocalizer) -> None:
         super().__init__("")
+        self._localizer = localizer
         self.setObjectName("global_status_strip_group")
         self.setFlat(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setProperty("shellRole", "workflow_status")
         self.setMinimumHeight(58)
 
-        self.current_status_label = QLabel("Waiting for action.")
+        self.current_status_label = QLabel(localizer.text("status.waiting"))
         self.current_status_label.setObjectName("global_status_current_label")
         self.current_status_label.setWordWrap(True)
         _set_status_label_style(self.current_status_label)
 
-        summary_label = QLabel("Status")
+        summary_label = QLabel(localizer.text("status.summary"))
         summary_label.setObjectName("global_status_summary_label")
         _set_status_label_style(summary_label, bold=True)
         summary_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -39,10 +42,17 @@ class GlobalStatusStrip(QGroupBox):
             _build_status_panel(self.current_status_label),
             1,
         )
+        self.summary_label = summary_label
 
     def current_status_text(self) -> str:
         text = self.current_status_label.text().strip()
-        return text or "Waiting for action."
+        return text or self._localizer.text("status.waiting")
+
+    def retranslate(self, localizer: UiLocalizer) -> None:
+        self._localizer = localizer
+        self.summary_label.setText(localizer.text("status.summary"))
+        if not self.current_status_label.text().strip():
+            self.current_status_label.setText(localizer.text("status.waiting"))
 
 
 def _build_status_panel(value_label: QLabel) -> QWidget:

@@ -16,11 +16,14 @@ from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
+from sdvmm.app.i18n import UiLocalizer
+
 
 class PlanInstallTabSurface(QWidget):
     def __init__(
         self,
         *,
+        localizer: UiLocalizer,
         install_target_combo: QComboBox,
         overwrite_checkbox: QCheckBox,
         install_archive_label: QLabel,
@@ -30,6 +33,7 @@ class PlanInstallTabSurface(QWidget):
         review_output_box: QPlainTextEdit,
     ) -> None:
         super().__init__()
+        self._localizer = localizer
         self.setObjectName("plan_install_tab")
 
         layout = QVBoxLayout(self)
@@ -54,7 +58,7 @@ class PlanInstallTabSurface(QWidget):
 
         content_layout.addWidget(review_state_label)
 
-        destination_group = QGroupBox("Destination")
+        destination_group = QGroupBox(localizer.text("install.destination"))
         destination_group.setObjectName("plan_install_destination_group")
         destination_group.setFlat(True)
         destination_group.setSizePolicy(
@@ -66,12 +70,14 @@ class PlanInstallTabSurface(QWidget):
         destination_layout.setVerticalSpacing(6)
         destination_layout.setColumnStretch(1, 1)
         destination_layout.setColumnStretch(2, 0)
-        destination_layout.addWidget(QLabel("Install destination"), 0, 0)
+        install_destination_label = QLabel(localizer.text("install.install_destination"))
+        destination_layout.addWidget(install_destination_label, 0, 0)
         destination_layout.addWidget(install_target_combo, 0, 1, 1, 2)
-        destination_layout.addWidget(QLabel("Replace existing"), 1, 0)
+        replace_existing_label = QLabel(localizer.text("install.replace_existing"))
+        destination_layout.addWidget(replace_existing_label, 1, 0)
         destination_layout.addWidget(overwrite_checkbox, 1, 1, 1, 2)
         overwrite_help_label = QLabel(
-            "Use archive-aware replace when the target already exists."
+            localizer.text("install.overwrite_help")
         )
         overwrite_help_label.setObjectName("plan_install_overwrite_help_label")
         overwrite_help_label.setWordWrap(True)
@@ -80,7 +86,7 @@ class PlanInstallTabSurface(QWidget):
         destination_layout.addWidget(install_archive_label, 3, 0, 1, 3)
         content_layout.addWidget(destination_group)
 
-        execute_group = QGroupBox("Actions")
+        execute_group = QGroupBox(localizer.text("install.actions"))
         execute_group.setObjectName("plan_install_execute_group")
         execute_group.setFlat(True)
         execute_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
@@ -96,7 +102,7 @@ class PlanInstallTabSurface(QWidget):
         execute_layout.addLayout(plan_actions)
 
         caution_label = QLabel(
-            "Planning is read-only. Apply stays disabled until the plan is ready."
+            localizer.text("install.caution")
         )
         caution_label.setObjectName("plan_install_execute_help_label")
         caution_label.setWordWrap(True)
@@ -105,7 +111,7 @@ class PlanInstallTabSurface(QWidget):
 
         content_layout.addWidget(execute_group)
 
-        review_output_group = QGroupBox("Details")
+        review_output_group = QGroupBox(localizer.text("install.details"))
         review_output_group.setObjectName("plan_install_output_group")
         review_output_group.setFlat(True)
         review_output_group.setSizePolicy(
@@ -127,6 +133,20 @@ class PlanInstallTabSurface(QWidget):
         self.content_widget = content
         self.content_layout = content_layout
         self.state_label = review_state_label
+        self.install_destination_label = install_destination_label
+        self.replace_existing_label = replace_existing_label
+        self.overwrite_help_label = overwrite_help_label
+        self.caution_label = caution_label
+
+    def retranslate(self, localizer: UiLocalizer) -> None:
+        self._localizer = localizer
+        self.destination_group.setTitle(localizer.text("install.destination"))
+        self.execute_group.setTitle(localizer.text("install.actions"))
+        self.review_output_group.setTitle(localizer.text("install.details"))
+        self.install_destination_label.setText(localizer.text("install.install_destination"))
+        self.replace_existing_label.setText(localizer.text("install.replace_existing"))
+        self.overwrite_help_label.setText(localizer.text("install.overwrite_help"))
+        self.caution_label.setText(localizer.text("install.caution"))
 
 
 def _set_label_font_weight(label: QLabel, *, bold: bool = False) -> None:
