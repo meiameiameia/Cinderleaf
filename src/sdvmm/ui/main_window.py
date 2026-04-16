@@ -288,6 +288,13 @@ _COMPARE_FILTER_VERSION_MISMATCH = "version_mismatch"
 _COMPARE_FILTER_AMBIGUOUS = "ambiguous_match"
 _COMPARE_FILTER_SAME_VERSION = "same_version"
 _COMPARE_FILTER_ALL = "all_categories"
+_PACKAGES_QUEUE_STATE_ALL = "all_states"
+_PACKAGES_QUEUE_STATE_UPDATES = "updates"
+_PACKAGES_QUEUE_STATE_NEW_INSTALLS = "new_installs"
+_PACKAGES_QUEUE_STATE_SAME_VERSION = "same_version"
+_PACKAGES_QUEUE_STATE_OLDER = "older_downloads"
+_PACKAGES_QUEUE_STATE_NEEDS_REVIEW = "needs_review"
+_PACKAGES_QUEUE_STATE_NOT_REVIEWABLE = "not_reviewable"
 _SMAPI_TROUBLESHOOTING_DETAILS_MIN_HEIGHT = 74
 _SMAPI_TROUBLESHOOTING_DETAILS_MAX_HEIGHT = 96
 _SMAPI_TROUBLESHOOTING_DETAILS_COMPACT_MIN_HEIGHT = 88
@@ -1842,6 +1849,41 @@ class MainWindow(QMainWindow):
             "packages.queue_filter_placeholder",
         )
         self._package_queue_filter_input.textChanged.connect(self._refresh_package_queue)
+        self._package_queue_state_filter_combo = QComboBox()
+        self._package_queue_state_filter_combo.setObjectName(
+            "packages_queue_state_filter_combo"
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.all"),
+            _PACKAGES_QUEUE_STATE_ALL,
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.updates"),
+            _PACKAGES_QUEUE_STATE_UPDATES,
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.new_installs"),
+            _PACKAGES_QUEUE_STATE_NEW_INSTALLS,
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.same_version"),
+            _PACKAGES_QUEUE_STATE_SAME_VERSION,
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.older"),
+            _PACKAGES_QUEUE_STATE_OLDER,
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.needs_review"),
+            _PACKAGES_QUEUE_STATE_NEEDS_REVIEW,
+        )
+        self._package_queue_state_filter_combo.addItem(
+            self._tr("packages.queue_state.not_reviewable"),
+            _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE,
+        )
+        self._package_queue_state_filter_combo.currentIndexChanged.connect(
+            self._refresh_package_queue
+        )
         self._package_queue_source_filter_combo = QComboBox()
         self._package_queue_source_filter_combo.setObjectName(
             "packages_queue_source_filter_combo"
@@ -1866,6 +1908,9 @@ class MainWindow(QMainWindow):
         self._package_queue_deselect_all_button.clicked.connect(
             self._on_deselect_all_visible_package_queue_items
         )
+        self._package_queue_summary_label = QLabel("")
+        self._package_queue_summary_label.setObjectName("packages_queue_summary_label")
+        _set_auxiliary_label_style(self._package_queue_summary_label)
         self._plan_selected_intake_button = QPushButton(self._tr("packages.open_install"))
         self._plan_selected_intake_button.setObjectName("packages_open_install_button")
         self._plan_selected_intake_button.setProperty("translationKey", "packages.open_install")
@@ -3426,12 +3471,17 @@ class MainWindow(QMainWindow):
         queue_controls_layout.addWidget(self._packages_compare_target_label, 0, 0)
         queue_controls_layout.addWidget(self._packages_compare_target_combo, 0, 1)
         self._packages_compare_target_summary_label.setVisible(False)
+        queue_show_label = QLabel(self._tr("packages.show"))
+        queue_show_label.setObjectName("packages_queue_state_filter_label")
+        queue_show_label.setProperty("translationKey", "packages.show")
+        queue_controls_layout.addWidget(queue_show_label, 0, 2)
+        queue_controls_layout.addWidget(self._package_queue_state_filter_combo, 0, 3)
         queue_filter_label = QLabel(self._tr("packages.queue_filter"))
         queue_filter_label.setObjectName("packages_queue_filter_label")
         queue_filter_label.setProperty("translationKey", "packages.queue_filter")
         queue_controls_layout.addWidget(queue_filter_label, 1, 0)
         queue_controls_layout.addWidget(self._package_queue_filter_input, 1, 1)
-        queue_controls_layout.addWidget(self._package_queue_source_filter_combo, 1, 2)
+        queue_controls_layout.addWidget(self._package_queue_source_filter_combo, 1, 2, 1, 2)
         detected_controls_layout.addWidget(intake_controls_widget, 1)
         detected_controls_layout.addWidget(queue_controls_widget, 1)
         detected_layout.addWidget(detected_controls_widget, 2, 0, 1, 4)
@@ -3452,6 +3502,7 @@ class MainWindow(QMainWindow):
         queue_label.setObjectName("packages_intake_queue_label")
         queue_label.setProperty("translationKey", "packages.watched_package_queue")
         queue_header_layout.addWidget(queue_label)
+        queue_header_layout.addWidget(self._package_queue_summary_label)
         queue_header_layout.addStretch(1)
         queue_header_layout.addWidget(queue_bulk_actions)
         detected_layout.addWidget(queue_header_widget, 3, 0, 1, 4)
@@ -4241,6 +4292,30 @@ class MainWindow(QMainWindow):
             (
                 (self._tr("packages.real_mods"), SCAN_TARGET_CONFIGURED_REAL_MODS),
                 (self._tr("packages.sandbox_mods"), SCAN_TARGET_SANDBOX_MODS),
+            ),
+        )
+        self._repopulate_combo_items(
+            self._package_queue_state_filter_combo,
+            (
+                (self._tr("packages.queue_state.all"), _PACKAGES_QUEUE_STATE_ALL),
+                (self._tr("packages.queue_state.updates"), _PACKAGES_QUEUE_STATE_UPDATES),
+                (
+                    self._tr("packages.queue_state.new_installs"),
+                    _PACKAGES_QUEUE_STATE_NEW_INSTALLS,
+                ),
+                (
+                    self._tr("packages.queue_state.same_version"),
+                    _PACKAGES_QUEUE_STATE_SAME_VERSION,
+                ),
+                (self._tr("packages.queue_state.older"), _PACKAGES_QUEUE_STATE_OLDER),
+                (
+                    self._tr("packages.queue_state.needs_review"),
+                    _PACKAGES_QUEUE_STATE_NEEDS_REVIEW,
+                ),
+                (
+                    self._tr("packages.queue_state.not_reviewable"),
+                    _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE,
+                ),
             ),
         )
         self._repopulate_combo_items(
@@ -10719,11 +10794,14 @@ class MainWindow(QMainWindow):
         }
         intake_filter_text = self._intake_filter_input.text()
         queue_filter_text = self._package_queue_filter_input.text()
+        state_filter = self._selected_package_queue_state_filter()
         source_filter = self._selected_package_queue_source_filter()
+        visible_bucket_counts: dict[str, int] = {}
 
         self._package_queue_list.blockSignals(True)
         self._package_queue_list.clear()
         if not self._detected_intakes:
+            self._package_queue_summary_label.clear()
             empty_item = QListWidgetItem(self._tr("archive.empty_queue"))
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._package_queue_list.addItem(empty_item)
@@ -10750,6 +10828,8 @@ class MainWindow(QMainWindow):
             ):
                 continue
             if not self._package_queue_matches_source_filter(intake, source_filter):
+                continue
+            if not self._package_queue_matches_state_filter(intake, correlation, state_filter):
                 continue
             queue_status_values = (
                 _packages_review_target_label(intake, correlation),
@@ -10785,9 +10865,12 @@ class MainWindow(QMainWindow):
                 else Qt.CheckState.Unchecked
             )
             self._package_queue_list.addItem(item)
+            bucket = _packages_queue_state_bucket(intake, correlation)
+            visible_bucket_counts[bucket] = visible_bucket_counts.get(bucket, 0) + 1
             visible_count += 1
 
         if visible_count == 0:
+            self._package_queue_summary_label.clear()
             empty_item = QListWidgetItem(
                 "Nenhum pacote detectado combina com o filtro atual."
                 if self._localizer.effective_language == "pt-BR"
@@ -10795,9 +10878,17 @@ class MainWindow(QMainWindow):
             )
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._package_queue_list.addItem(empty_item)
+        else:
+            self._package_queue_summary_label.setText(
+                _packages_queue_summary_text(visible_bucket_counts)
+            )
 
         self._package_queue_list.blockSignals(False)
         self._refresh_package_queue_bulk_action_state()
+
+    def _selected_package_queue_state_filter(self) -> str:
+        selected = self._package_queue_state_filter_combo.currentData()
+        return selected if isinstance(selected, str) else _PACKAGES_QUEUE_STATE_ALL
 
     def _selected_package_queue_source_filter(self) -> str:
         selected = self._package_queue_source_filter_combo.currentData()
@@ -10811,6 +10902,16 @@ class MainWindow(QMainWindow):
         if source_filter == "all":
             return True
         return self._package_queue_source_bucket(intake) == source_filter
+
+    def _package_queue_matches_state_filter(
+        self,
+        intake: DownloadsIntakeResult,
+        correlation: IntakeUpdateCorrelation | None,
+        state_filter: str,
+    ) -> bool:
+        if state_filter == _PACKAGES_QUEUE_STATE_ALL:
+            return True
+        return _packages_queue_state_bucket(intake, correlation) == state_filter
 
     def _package_queue_source_bucket(self, intake: DownloadsIntakeResult) -> str | None:
         watch_roots = self._configured_watch_root_paths()
@@ -15249,6 +15350,62 @@ def _packages_comparison_badge_text(correlation: IntakeUpdateCorrelation) -> str
     )
 
 
+def _packages_queue_state_bucket(
+    intake: DownloadsIntakeResult,
+    correlation: IntakeUpdateCorrelation | None,
+) -> str:
+    del intake
+    if correlation is None or not correlation.actionable:
+        return _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE
+    if correlation.comparison_state == "newer_than_installed":
+        return _PACKAGES_QUEUE_STATE_UPDATES
+    if correlation.comparison_state == "not_installed_in_target":
+        return _PACKAGES_QUEUE_STATE_NEW_INSTALLS
+    if correlation.comparison_state == "same_version_installed":
+        return _PACKAGES_QUEUE_STATE_SAME_VERSION
+    if correlation.comparison_state == "older_than_installed":
+        return _PACKAGES_QUEUE_STATE_OLDER
+    return _PACKAGES_QUEUE_STATE_NEEDS_REVIEW
+
+
+def _packages_queue_summary_text(bucket_counts: dict[str, int]) -> str:
+    localizer = get_active_ui_localizer()
+    labels = {
+        _PACKAGES_QUEUE_STATE_UPDATES: "atualizações"
+        if localizer.effective_language == "pt-BR"
+        else "updates",
+        _PACKAGES_QUEUE_STATE_NEW_INSTALLS: "novos"
+        if localizer.effective_language == "pt-BR"
+        else "new",
+        _PACKAGES_QUEUE_STATE_SAME_VERSION: "mesma versão"
+        if localizer.effective_language == "pt-BR"
+        else "same version",
+        _PACKAGES_QUEUE_STATE_OLDER: "mais antigos"
+        if localizer.effective_language == "pt-BR"
+        else "older",
+        _PACKAGES_QUEUE_STATE_NEEDS_REVIEW: "revisão"
+        if localizer.effective_language == "pt-BR"
+        else "review",
+        _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE: "não revisáveis"
+        if localizer.effective_language == "pt-BR"
+        else "not reviewable",
+    }
+    ordered_buckets = (
+        _PACKAGES_QUEUE_STATE_UPDATES,
+        _PACKAGES_QUEUE_STATE_NEW_INSTALLS,
+        _PACKAGES_QUEUE_STATE_SAME_VERSION,
+        _PACKAGES_QUEUE_STATE_OLDER,
+        _PACKAGES_QUEUE_STATE_NEEDS_REVIEW,
+        _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE,
+    )
+    parts = [
+        f"{bucket_counts[bucket]} {labels[bucket]}"
+        for bucket in ordered_buckets
+        if bucket_counts.get(bucket, 0) > 0
+    ]
+    return " | ".join(parts)
+
+
 def _packages_review_target_label(
     intake: DownloadsIntakeResult,
     correlation: IntakeUpdateCorrelation | None,
@@ -15259,6 +15416,20 @@ def _packages_review_target_label(
     if not correlation.actionable:
         return f"{package_name} [not reviewable]"
     return f"{package_name} [{_packages_comparison_badge_text(correlation)}]"
+
+
+def _install_destination_label(destination_kind: str) -> str:
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
+    labels = {
+        INSTALL_TARGET_CONFIGURED_REAL_MODS: (
+            "Destino Mods do jogo (real)" if pt_br else "Game Mods destination (real)"
+        ),
+        INSTALL_TARGET_SANDBOX_MODS: (
+            "Destino Mods sandbox" if pt_br else "Sandbox Mods destination"
+        ),
+    }
+    return labels.get(destination_kind, destination_kind.replace("_", " ").title())
 
 
 def _smapi_log_context_details(
