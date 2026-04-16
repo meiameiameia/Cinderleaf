@@ -7354,6 +7354,7 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
     assert isinstance(queue_layout, QGridLayout)
     assert queue_layout.itemAtPosition(0, 1).widget() is main_window._packages_compare_target_combo
     assert main_window._packages_compare_target_summary_label.isVisible() is False
+    assert queue_layout.itemAtPosition(0, 3).widget() is main_window._package_queue_state_filter_combo
     assert queue_layout.itemAtPosition(1, 1).widget() is main_window._package_queue_filter_input
     assert queue_layout.itemAtPosition(1, 2).widget() is main_window._package_queue_source_filter_combo
 
@@ -7366,6 +7367,90 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
     assert review_button_texts == {"Add package", "Open Install", "Open as update"}
     assert queue_button_texts == {"Select all", "Deselect all"}
     assert main_window._package_queue_list.maximumHeight() > 1000
+
+
+def test_main_window_package_queue_state_filter_limits_visible_rows(
+    main_window: MainWindow,
+) -> None:
+    update_intake = _intake_result(
+        "UpdatePack.zip",
+        "update_replace_candidate",
+        "Update Mod",
+        "Sample.Update",
+    )
+    new_intake = _intake_result(
+        "FreshPack.zip",
+        "new_install_candidate",
+        "Fresh Mod",
+        "Sample.Fresh",
+    )
+    same_intake = _intake_result(
+        "SamePack.zip",
+        "update_replace_candidate",
+        "Same Mod",
+        "Sample.Same",
+    )
+    blocked_intake = _intake_result(
+        "BlockedPack.zip",
+        "invalid_manifest",
+        "Blocked Mod",
+        "Sample.Blocked",
+    )
+    main_window._detected_intakes = (
+        update_intake,
+        new_intake,
+        same_intake,
+        blocked_intake,
+    )
+    main_window._intake_correlations = (
+        _intake_correlation(
+            update_intake,
+            next_step="Open as update.",
+            comparison_state="newer_than_installed",
+        ),
+        _intake_correlation(
+            new_intake,
+            next_step="Open Install.",
+            comparison_state="not_installed_in_target",
+        ),
+        _intake_correlation(
+            same_intake,
+            next_step="Inspect only.",
+            comparison_state="same_version_installed",
+            actionable_as_update=False,
+        ),
+        _intake_correlation(
+            blocked_intake,
+            next_step="Choose another zip.",
+            actionable=False,
+            comparison_state="version_comparison_unavailable",
+            actionable_as_update=False,
+        ),
+    )
+
+    status_filter = main_window.findChild(QComboBox, "packages_queue_state_filter_combo")
+
+    assert status_filter is not None
+
+    main_window._refresh_package_queue()
+    assert "1 updates" in main_window._package_queue_summary_label.text()
+    assert "1 new" in main_window._package_queue_summary_label.text()
+    assert "1 same version" in main_window._package_queue_summary_label.text()
+    assert "1 not reviewable" in main_window._package_queue_summary_label.text()
+
+    status_filter.setCurrentIndex(status_filter.findData("updates"))
+    visible_rows = [
+        main_window._package_queue_list.item(index).text()
+        for index in range(main_window._package_queue_list.count())
+    ]
+    assert visible_rows == ["UpdatePack.zip [update for Real Mods]"]
+
+    status_filter.setCurrentIndex(status_filter.findData("not_reviewable"))
+    visible_rows = [
+        main_window._package_queue_list.item(index).text()
+        for index in range(main_window._package_queue_list.count())
+    ]
+    assert visible_rows == ["BlockedPack.zip [not reviewable]"]
 
 
 def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
