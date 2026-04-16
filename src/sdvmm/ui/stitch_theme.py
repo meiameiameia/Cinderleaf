@@ -862,6 +862,10 @@ QTableWidget {
     outline: 0;
 }
 
+QHeaderView {
+    background: #20262b;
+}
+
 QHeaderView::section {
     background: #20262b;
     color: #c5b3a0;
@@ -878,6 +882,11 @@ QTableCornerButton::section {
     border: none;
     border-bottom: 1px solid rgba(224, 216, 203, 0.09);
     border-right: 1px solid rgba(224, 216, 203, 0.03);
+}
+
+QAbstractScrollArea::corner {
+    background: #20262b;
+    border: none;
 }
 
 QTableWidget::item {
@@ -897,6 +906,35 @@ QTableWidget::item:selected {
 }
 
 QTableWidget::item:selected:hover {
+    background: rgba(97, 140, 79, 0.84);
+}
+
+QListWidget {
+    background: #171c20;
+    alternate-background-color: #1b2025;
+    border: 1px solid rgba(224, 216, 203, 0.06);
+    border-radius: 11px;
+    color: #ece7df;
+    selection-background-color: rgba(85, 125, 69, 0.78);
+    selection-color: #f8f4ed;
+    outline: 0;
+}
+
+QListWidget::item {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(224, 216, 203, 0.045);
+}
+
+QListWidget::item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+QListWidget::item:selected {
+    background: rgba(85, 125, 69, 0.78);
+    color: #f8f4ed;
+}
+
+QListWidget::item:selected:hover {
     background: rgba(97, 140, 79, 0.84);
 }
 

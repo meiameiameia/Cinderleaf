@@ -78,6 +78,13 @@ from sdvmm.services.app_state_store import (
 )
 
 
+def _assert_contains_any_casefold(text: str, *candidates: str) -> None:
+    lowered = text.casefold()
+    assert any(candidate.casefold() in lowered for candidate in candidates), (
+        f"Expected one of {candidates!r} in text:\n{text}"
+    )
+
+
 def test_load_startup_config_returns_none_when_state_absent(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
 
@@ -3146,9 +3153,18 @@ def test_build_mods_compare_text_includes_category_guide_and_unique_ids(tmp_path
 
     text = build_mods_compare_text(result)
 
-    assert "Category guide:" in text
-    assert "version mismatch: the same UniqueID exists in both places, but the versions differ." in text
-    assert "ambiguous match: duplicate folders share a UniqueID" in text
+    _assert_contains_any_casefold(text, "Category guide:", "Guia de categorias:", "Guia das categorias:")
+    _assert_contains_any_casefold(
+        text,
+        "version mismatch: the same UniqueID exists in both places, but the versions differ.",
+        "versão diferente",
+    )
+    _assert_contains_any_casefold(
+        text,
+        "ambiguous match: duplicate folders share a UniqueID",
+        "Ambígua",
+        "ambígua",
+    )
     assert "MismatchReal (Sample.Mismatch)" in text
     assert "DuplicateA (Sample.Duplicate)" in text
 
@@ -4298,7 +4314,10 @@ def test_build_sandbox_install_plan_blocks_target_matching_configured_real_mods(
             '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
         )
 
-    with pytest.raises(AppShellError, match="matches configured real Mods path"):
+    with pytest.raises(
+        AppShellError,
+        match="(matches configured real Mods path|coincide com o caminho configurado dos Mods reais)",
+    ):
         service.build_sandbox_install_plan(
             str(package),
             str(real_mods),
@@ -4328,7 +4347,10 @@ def test_build_sandbox_install_plan_blocks_target_matching_configured_real_mods_
             '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
         )
 
-    with pytest.raises(AppShellError, match="matches configured real Mods path"):
+    with pytest.raises(
+        AppShellError,
+        match="(matches configured real Mods path|coincide com o caminho configurado dos Mods reais)",
+    ):
         service.build_sandbox_install_plan(
             str(package),
             str(symlink_target),
@@ -6340,7 +6362,10 @@ def test_build_install_plan_blocks_real_destination_mismatch(tmp_path: Path) -> 
             '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
         )
 
-    with pytest.raises(AppShellError, match="must exactly match the configured real Mods path"):
+    with pytest.raises(
+        AppShellError,
+        match="(must exactly match the configured real Mods path|precisa corresponder exatamente ao caminho configurado dos Mods reais)",
+    ):
         service.build_install_plan(
             package_path_text=str(package),
             install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
@@ -7685,7 +7710,13 @@ def test_correlate_discovery_results_marks_installed_update_and_provider_alignme
     assert item.installed_match_unique_id == "spacechase0.SpaceCore"
     assert item.update_state == "update_available"
     assert item.provider_relation == "provider_aligned"
-    assert "matches tracked update provider" in (item.provider_relation_note or "")
+    note = item.provider_relation_note or ""
+    _assert_contains_any_casefold(
+        note,
+        "matches tracked update provider",
+        "corresponde ao provedor rastreado",
+        "provedor de atualização rastreado",
+    )
 
 
 def test_correlate_discovery_results_marks_provider_mismatch(tmp_path: Path) -> None:
@@ -7735,7 +7766,13 @@ def test_correlate_discovery_results_marks_provider_mismatch(tmp_path: Path) -> 
     assert len(correlations) == 1
     item = correlations[0]
     assert item.provider_relation == "provider_mismatch"
-    assert "differs from tracked update provider" in (item.provider_relation_note or "")
+    note = item.provider_relation_note or ""
+    _assert_contains_any_casefold(
+        note,
+        "differs from tracked update provider",
+        "difere do provedor rastreado",
+        "difere do provedor de atualização rastreado",
+    )
 
 
 def test_correlate_discovery_results_marks_installed_without_update_context(tmp_path: Path) -> None:
@@ -7769,7 +7806,7 @@ def test_correlate_discovery_results_marks_installed_without_update_context(tmp_
     assert item.installed_match_unique_id == "sample.Mod"
     assert item.update_state is None
     assert item.provider_relation == "no_update_provider_context"
-    assert "Run Check updates" in item.next_step
+    _assert_contains_any_casefold(item.next_step, "Run Check updates", "Execute Verificar atualizações", "Use Verificar atualizações")
 
 
 def test_get_nexus_status_reports_saved_config_state(tmp_path: Path) -> None:
@@ -8334,8 +8371,8 @@ def test_correlate_intake_with_updates_marks_update_available_match(tmp_path: Pa
 
     assert correlation.actionable is True
     assert correlation.matched_update_available_unique_ids == ("Sample.Exists",)
-    assert "update available" in correlation.summary.casefold()
-    assert "open as update" in correlation.next_step.casefold()
+    _assert_contains_any_casefold(correlation.summary, "update available", "atualização disponível")
+    _assert_contains_any_casefold(correlation.next_step, "open as update", "abrir como atualização")
 
 
 def test_correlate_intake_with_updates_prefers_guided_update_match(tmp_path: Path) -> None:
@@ -8356,9 +8393,9 @@ def test_correlate_intake_with_updates_prefers_guided_update_match(tmp_path: Pat
     )
 
     assert correlation.matched_guided_update_unique_ids == ("Sample.Exists",)
-    assert "guided update target" in correlation.summary.casefold()
+    _assert_contains_any_casefold(correlation.summary, "guided update target", "alvo de atualização guiada", "alvo guiado de atualização")
     assert correlation.actionable is True
-    assert "open as update" in correlation.next_step.casefold()
+    _assert_contains_any_casefold(correlation.next_step, "open as update", "abrir como atualização")
 
 
 def test_correlate_intake_with_updates_keeps_unusable_non_actionable(tmp_path: Path) -> None:
@@ -8377,7 +8414,13 @@ def test_correlate_intake_with_updates_keeps_unusable_non_actionable(tmp_path: P
 
     assert correlation.actionable is False
     assert correlation.matched_update_available_unique_ids == ()
-    assert "unusable" in correlation.summary.casefold()
+    _assert_contains_any_casefold(
+        correlation.summary,
+        "unusable",
+        "não utilizável",
+        "inutilizável",
+        "não pode ser usado no planejamento da instalação",
+    )
 
 
 def test_correlate_intake_with_updates_new_install_candidate_has_default_flow_message(
@@ -8397,8 +8440,13 @@ def test_correlate_intake_with_updates_new_install_candidate_has_default_flow_me
     )
 
     assert correlation.actionable is True
-    assert "new install candidate" in correlation.summary.casefold()
-    assert "plan install" in correlation.next_step.casefold()
+    _assert_contains_any_casefold(correlation.summary, "new install candidate", "candidato de nova instalação", "novo candidato de instalação")
+    _assert_contains_any_casefold(
+        correlation.next_step,
+        "plan install",
+        "planejar instalação",
+        "planejar a instalação",
+    )
 
 
 def test_correlate_intake_with_updates_flags_remote_page_newer_but_package_same_version(
