@@ -59,22 +59,33 @@ def main() -> int:
     subprocess.run(command, cwd=repo_root, check=True)
 
     packaged_binary = dist_path / PUBLIC_BINARY_NAME
-    platforms_dir = dist_path / "_internal" / "PySide6" / "plugins" / "platforms"
-    platform_plugins = sorted(path.name for path in platforms_dir.glob("libq*.so"))
+    platforms_dir_candidates = (
+        dist_path / "_internal" / "PySide6" / "plugins" / "platforms",
+        dist_path / "_internal" / "PySide6" / "Qt" / "plugins" / "platforms",
+    )
+    selected_platforms_dir: Path | None = None
+    platform_plugins: list[str] = []
+    for candidate in platforms_dir_candidates:
+        candidate_plugins = sorted(path.name for path in candidate.glob("libq*.so"))
+        if candidate_plugins:
+            selected_platforms_dir = candidate
+            platform_plugins = candidate_plugins
+            break
 
     if not packaged_binary.exists():
         raise RuntimeError(f"Packaged Linux binary was not found: {packaged_binary}")
-    if not platform_plugins:
+    if selected_platforms_dir is None:
+        searched = ", ".join(str(path) for path in platforms_dir_candidates)
         raise RuntimeError(
-            "Qt Linux platform plugins are missing from packaged output: "
-            f"{platforms_dir}"
+            "Qt Linux platform plugins are missing from packaged output. "
+            f"Searched: {searched}"
         )
 
     archive_path = _archive_dist_folder(dist_path)
     checksum_path = _write_sha256(archive_path)
 
     print(packaged_binary)
-    print(platforms_dir)
+    print(selected_platforms_dir)
     print(dist_path)
     print(archive_path)
     print(checksum_path)
