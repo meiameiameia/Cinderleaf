@@ -554,8 +554,14 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     assert window._environment_status_label.text() == "mods detected, SMAPI detected"
     assert window._smapi_update_status_label.text() == "Up to date (4.1.0)"
     assert window._smapi_log_status_label.text() == "Log not found"
-    assert window._setup_app_update_status_label.text() == "Cinderleaf is up to date."
-    assert window._workspace_nav_release_status_label.text() == "App up to date (1.1.7)"
+    assert (
+        window._setup_app_update_status_label.text()
+        == "Cinderleaf is up to date (installed 1.1.7, latest 1.1.7)."
+    )
+    assert (
+        window._workspace_nav_release_status_label.text()
+        == "Cinderleaf is up to date (installed 1.1.7, latest 1.1.7)."
+    )
     assert window._status_strip_label.text() == "Cinderleaf is up to date."
     assert window._startup_checks_completed is True
 
@@ -2102,7 +2108,7 @@ def test_main_window_scan_target_updates_top_context_scan_source_label(
 
     scan_target_combo.setCurrentIndex(real_index)
     qapp.processEvents()
-    assert scan_source_label.text() == "REAL Mods selected"
+    assert scan_source_label.text() == "Real Mods selected"
     assert scan_source_label.toolTip() == r"C:\SDV\Mods"
     assert r"C:\SDV\Mods" not in scan_source_label.text()
 
@@ -2130,7 +2136,7 @@ def test_main_window_scan_source_preview_updates_for_active_target_path_changes(
     scan_target_combo.setCurrentIndex(real_index)
     main_window._mods_path_input.setText(r"C:\RealModsA")
     qapp.processEvents()
-    assert scan_source_label.text() == "REAL Mods selected"
+    assert scan_source_label.text() == "Real Mods selected"
     assert scan_source_label.toolTip() == r"C:\RealModsA"
     assert r"C:\RealModsA" not in scan_source_label.text()
 
@@ -12600,7 +12606,7 @@ def test_main_window_recovery_summary_updates_for_selection_and_legacy_state(
     summary_text = main_window._recovery_selection_summary_label.text()
     assert "Selected install: NewestPack.zip" in summary_text
     assert "Recorded at: 2026-03-13T13:00:00Z" in summary_text
-    assert "Destination: REAL Mods" in summary_text
+    assert "Destination: Game Mods destination (real)" in summary_text
     assert "Recovery status: not inspected yet." in summary_text
 
     main_window._install_history_combo.setCurrentIndex(1)
