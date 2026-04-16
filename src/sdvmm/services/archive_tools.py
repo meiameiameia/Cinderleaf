@@ -102,11 +102,7 @@ def _extract_zip_root(
 
 
 def _extract_rar_archive_to_directory(*, archive_path: Path, destination: Path) -> None:
-    seven_zip_path = _bundled_7zip_executable()
-    if not seven_zip_path.exists():
-        raise ArchiveToolError(
-            f"Bundled 7-Zip executable is missing for RAR support: {seven_zip_path}"
-        )
+    seven_zip_path = _resolve_7zip_executable_for_rar()
     destination.mkdir(parents=True, exist_ok=True)
     process = subprocess.run(
         [str(seven_zip_path), "x", str(archive_path), f"-o{destination}", "-y"],
@@ -151,9 +147,35 @@ def _normalize_archive_member(filename: str) -> PurePosixPath | None:
 
 
 def _bundled_7zip_executable() -> Path:
+    candidate_names = ("7z.exe",) if os.name == "nt" else ("7zz", "7z")
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS) / "tools" / "7zip" / "7z.exe"
-    return Path(__file__).resolve().parents[3] / "assets" / "tools" / "7zip" / "7z.exe"
+        base_directory = Path(sys._MEIPASS) / "tools" / "7zip"
+    else:
+        base_directory = Path(__file__).resolve().parents[3] / "assets" / "tools" / "7zip"
+
+    for name in candidate_names:
+        candidate = base_directory / name
+        if candidate.exists():
+            return candidate
+
+    return base_directory / candidate_names[0]
+
+
+def _resolve_7zip_executable_for_rar() -> Path:
+    bundled_path = _bundled_7zip_executable()
+    if bundled_path.exists():
+        return bundled_path
+
+    command_candidates = ("7z.exe", "7z") if os.name == "nt" else ("7zz", "7z")
+    for command_name in command_candidates:
+        command_path = shutil.which(command_name)
+        if command_path:
+            return Path(command_path)
+
+    raise ArchiveToolError(
+        "RAR support needs 7-Zip, but no bundled or system 7-Zip command was found. "
+        f"Missing bundled path: {bundled_path}"
+    )
 
 
 def _hidden_console_subprocess_kwargs() -> dict[str, object]:

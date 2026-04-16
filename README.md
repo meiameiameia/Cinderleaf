@@ -1,6 +1,6 @@
 # Cinderleaf
 
-**Cinderleaf** is a Windows mod manager for **Stardew Valley**.
+**Cinderleaf** is a Windows-first mod manager for **Stardew Valley**.
 
 It is made for players who want modding to feel simpler:
 
@@ -132,6 +132,7 @@ These screenshots reflect the current `1.4.0` app surface.
 - Cinderleaf helps you get to review faster, but it still does not install mods silently
 - save-file export exists in backup bundles, but save restore is still manual
 - Windows is the main supported desktop path today
+- Linux portable builds are now experimental and still need broader runtime validation
 
 ## Public roadmap
 
@@ -153,7 +154,8 @@ Cinderleaf is already usable today, and the next focus is making it easier to us
 ### Later
 
 - add more app languages based on community interest and help
-- explore Linux / Steam Deck support
+- ship an experimental Linux portable package lane
+- explore Steam Deck support after Linux packaging is stable
 - keep reducing friction in install, update, and recovery flows
 
 This roadmap is directional, not a promise or deadline list. I would rather ship careful, solid improvements than rush features out half-finished.
@@ -197,6 +199,24 @@ The build script produces:
 dist\cinderleaf-1.4.0-windows-portable\
 dist\cinderleaf-1.4.0-windows-portable.zip
 dist\cinderleaf-1.4.0-windows-portable.zip.sha256
+```
+
+Linux portable build (experimental):
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -U pip
+./.venv/bin/python -m pip install -e ".[dev,build]"
+./.venv/bin/python -m pytest tests/unit -q
+./.venv/bin/python scripts/build_linux_portable.py
+```
+
+The Linux build script produces:
+
+```text
+dist/cinderleaf-1.4.0-linux-portable/
+dist/cinderleaf-1.4.0-linux-portable.tar.gz
+dist/cinderleaf-1.4.0-linux-portable.tar.gz.sha256
 ```
 
 ## License
