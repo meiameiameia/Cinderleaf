@@ -1120,6 +1120,7 @@ def test_is_process_running_reports_running_and_stopped_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
+    monkeypatch.setattr(shell_service_module.os, "name", "nt", raising=False)
     completed = SimpleNamespace(returncode=0, stdout='"SampleGame.exe","4242","Console","1","10,000 K"\n')
 
     monkeypatch.setattr(shell_service_module.subprocess, "run", lambda *args, **kwargs: completed)
@@ -2026,7 +2027,8 @@ def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
     entries_by_unique_id = {entry.unique_id: entry for entry in result.mod_entries}
     items_by_key = {item.key: item for item in result.items}
     config_entries_by_path = {
-        (entry.bundle_item_key, str(entry.relative_path)): entry for entry in result.config_entries
+        (entry.bundle_item_key, str(entry.relative_path).replace("/", "\\").casefold()): entry
+        for entry in result.config_entries
     }
 
     assert entries_by_unique_id["Sample.RealAlpha"].state == "missing_locally"
@@ -2036,11 +2038,11 @@ def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
     assert items_by_key["real_mod_configs"].state == "safe_to_restore_later"
     assert items_by_key["sandbox_mod_configs"].state == "safe_to_restore_later"
     assert (
-        config_entries_by_path[("real_mod_configs", "RealAlpha\\config.json")].state
+        config_entries_by_path[("real_mod_configs", "RealAlpha\\config.json".casefold())].state
         == "missing_locally"
     )
     assert (
-        config_entries_by_path[("sandbox_mod_configs", "SandboxBeta\\config\\panel.json")].state
+        config_entries_by_path[("sandbox_mod_configs", "SandboxBeta\\config\\panel.json".casefold())].state
         == "same_content"
     )
     assert result.safe_mod_count == 2

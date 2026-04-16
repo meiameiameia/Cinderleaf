@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -121,6 +122,12 @@ from sdvmm.ui.main_window import _smapi_log_context_details
 from sdvmm.services.app_state_store import save_app_config
 from sdvmm.ui.main_window import _ROLE_UPDATE_BLOCK_REASON
 from sdvmm.domain.scan_codes import MULTI_MOD_CONTAINER
+
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="GUI regression baseline is Windows-specific (styling metrics and path semantics).",
+)
 
 
 @pytest.fixture
