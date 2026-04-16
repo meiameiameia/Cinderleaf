@@ -7518,6 +7518,10 @@ def test_main_window_detect_environment_updates_setup_local_output_and_shared_de
     )
 
     main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText("")
+    main_window._sandbox_mods_path_input.setText("")
+    main_window._sandbox_archive_path_input.setText("")
+    main_window._real_archive_path_input.setText("")
     monkeypatch.setattr(
         main_window._shell_service,
         "detect_game_environment",
@@ -7529,6 +7533,17 @@ def test_main_window_detect_environment_updates_setup_local_output_and_shared_de
     assert str(game_path) in main_window._setup_output_box.toPlainText()
     assert main_window._setup_output_box.toPlainText() == main_window._findings_box.toPlainText()
     assert main_window._status_strip_label.text() == "Environment detection complete."
+    assert main_window._mods_path_input.text() == str(game_path / "Mods")
+    assert main_window._sandbox_mods_path_input.text() == str(game_path / "Cinderleaf" / "Sandbox Mods")
+    assert main_window._sandbox_archive_path_input.text() == str(
+        game_path / "Cinderleaf" / "Sandbox Archive"
+    )
+    assert main_window._real_archive_path_input.text() == str(
+        game_path / "Cinderleaf" / "Real Mods Archive"
+    )
+    assert (game_path / "Cinderleaf" / "Sandbox Mods").is_dir() is True
+    assert (game_path / "Cinderleaf" / "Sandbox Archive").is_dir() is True
+    assert (game_path / "Cinderleaf" / "Real Mods Archive").is_dir() is True
 
 
 def test_main_window_export_backup_bundle_runs_service_and_updates_output(

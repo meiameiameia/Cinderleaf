@@ -1856,6 +1856,76 @@ def test_inspect_backup_bundle_reports_missing_expected_copied_content(tmp_path:
     assert any("marked copied" in warning for warning in inspection.warnings)
 
 
+def test_inspect_backup_bundle_accepts_windows_style_relative_paths(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    bundle_path = tmp_path / "Exports" / "cross-os-backup"
+    bundle_path.mkdir(parents=True)
+    (bundle_path / "README.txt").write_text("summary", encoding="utf-8")
+    (bundle_path / "manager-state").mkdir(parents=True, exist_ok=True)
+    (bundle_path / "manager-state" / "app-state.json").write_text("{}", encoding="utf-8")
+    manifest = {
+        "bundle_format": "cinderleaf-local-backup",
+        "format_version": 1,
+        "created_at_utc": "2026-03-18T00:00:00Z",
+        "items": [
+            {
+                "key": "app_state",
+                "label": "App state/config",
+                "kind": "file",
+                "status": "copied",
+                "relative_path": "manager-state\\app-state.json",
+                "source_path": "C:\\State\\app-state.json",
+                "note": "Generated from the current export configuration snapshot.",
+            }
+        ],
+        "intentionally_not_included": [],
+    }
+    (bundle_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    inspection = service.inspect_backup_bundle(bundle_path_text=str(bundle_path))
+
+    assert inspection.structurally_usable is True
+    assert inspection.items[0].structure_state == "present"
+    assert inspection.items[0].relative_path == Path("manager-state") / "app-state.json"
+
+
+def test_export_backup_bundle_manifest_relative_paths_are_posix(tmp_path: Path) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    _create_launchable_game_install(game_path)
+    _create_mod(real_mods, "RealAlpha", "Sample.RealAlpha")
+
+    config = AppConfig(
+        game_path=game_path,
+        mods_path=real_mods,
+        app_data_path=tmp_path / "AppData",
+    )
+    save_app_config(state_file, config)
+
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(game_path),
+        mods_dir_text=str(real_mods),
+        sandbox_mods_path_text="",
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=config,
+    )
+
+    manifest = json.loads(exported.manifest_path.read_text(encoding="utf-8"))
+    manifest_paths = [item["relative_path"] for item in manifest["items"]]
+    assert all("\\" not in path for path in manifest_paths)
+
+
 def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
     tmp_path: Path,
 ) -> None:

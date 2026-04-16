@@ -5489,9 +5489,101 @@ class MainWindow(QMainWindow):
             return
 
         self._apply_environment_status(status)
-        self._set_setup_output_and_details_text(build_environment_status_text(status))
+        auto_setup_notes = self._auto_configure_setup_paths_from_detected_environment(status)
+        details_text = build_environment_status_text(status)
+        if auto_setup_notes:
+            details_text = (
+                f"{details_text}\n\n"
+                "Auto setup:\n"
+                + "\n".join(f"- {note}" for note in auto_setup_notes)
+            )
+        self._set_setup_output_and_details_text(details_text)
+        self._refresh_cinderleaf_managed_paths_surface()
         self._refresh_sandbox_dev_launch_state()
         self._set_status("Environment detection complete.")
+
+    def _auto_configure_setup_paths_from_detected_environment(
+        self,
+        status: GameEnvironmentStatus,
+    ) -> tuple[str, ...]:
+        notes: list[str] = []
+
+        if status.mods_path is not None and not self._mods_path_input.text().strip():
+            self._set_programmatic_line_edit_text(
+                self._mods_path_input,
+                str(status.mods_path),
+            )
+            notes.append(f"Set Real Mods folder: {status.mods_path}")
+
+        if status.game_path is None:
+            return tuple(notes)
+
+        try:
+            managed_paths = self._shell_service.resolve_cinderleaf_managed_paths(
+                game_path_text=str(status.game_path),
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            notes.append(f"Managed-folder setup skipped: {exc}")
+            return tuple(notes)
+
+        managed_field_mappings = (
+            (
+                self._sandbox_mods_path_input,
+                managed_paths.sandbox_mods_path,
+                "Sandbox Mods",
+            ),
+            (
+                self._sandbox_archive_path_input,
+                managed_paths.sandbox_archive_path,
+                "Sandbox Archive",
+            ),
+            (
+                self._real_archive_path_input,
+                managed_paths.real_archive_path,
+                "Real Mods Archive",
+            ),
+        )
+        for line_edit, target_path, label in managed_field_mappings:
+            current_text = line_edit.text().strip()
+            should_replace = not current_text
+            if (
+                line_edit is self._sandbox_archive_path_input
+                and current_text
+                and _paths_match_loose(
+                    Path(current_text),
+                    managed_paths.sandbox_mods_path.parent / ".sdvmm-sandbox-archive",
+                )
+            ):
+                should_replace = True
+
+            if not should_replace:
+                continue
+            self._set_programmatic_line_edit_text(line_edit, str(target_path))
+            notes.append(f"Set {label} folder: {target_path}")
+
+        created_paths: list[str] = []
+        managed_folder_specs = (
+            ("sandbox_mods", managed_paths.sandbox_mods_path),
+            ("sandbox_archive", managed_paths.sandbox_archive_path),
+            ("real_archive", managed_paths.real_archive_path),
+            ("real_logs", managed_paths.real_logs_path),
+            ("sandbox_logs", managed_paths.sandbox_logs_path),
+        )
+        for folder_key, target_path in managed_folder_specs:
+            existed_before = target_path.exists()
+            self._shell_service.prepare_cinderleaf_managed_folder_for_open(
+                game_path_text=str(status.game_path),
+                folder_key=folder_key,
+                existing_config=self._config,
+            )
+            if not existed_before:
+                created_paths.append(str(target_path))
+
+        if created_paths:
+            notes.append(f"Created {len(created_paths)} Cinderleaf-managed folder(s).")
+
+        return tuple(notes)
 
     def _on_export_backup_bundle(self) -> None:
         artifact_selection = self._prompt_for_backup_export_artifacts()
@@ -5564,7 +5656,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(managed_mods_note)
 
         archives_checkbox = QCheckBox("Archives")
-        archives_checkbox.setChecked(True)
+        archives_checkbox.setChecked(False)
         archives_note = QLabel("Includes the real and sandbox archive roots.")
         archives_note.setWordWrap(True)
         _set_auxiliary_label_style(archives_note)
@@ -15956,6 +16048,16 @@ def _compact_path_text(path_text: str, *, max_length: int = 56) -> str:
     if len(path_text) <= max_length:
         return path_text
     return f"...{path_text[-(max_length - 3):]}"
+
+
+def _paths_match_loose(left: Path, right: Path) -> bool:
+    left_resolved = left.expanduser().resolve(strict=False)
+    right_resolved = right.expanduser().resolve(strict=False)
+    if left_resolved == right_resolved:
+        return True
+    if os.name == "nt":
+        return str(left_resolved).casefold() == str(right_resolved).casefold()
+    return False
 
 
 def _package_inspection_entry_label(entry: PackageInspectionBatchEntry) -> str:

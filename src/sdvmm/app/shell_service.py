@@ -7179,7 +7179,7 @@ class AppShellService:
                     "label": item.label,
                     "kind": item.kind,
                     "status": item.status,
-                    "relative_path": str(item.relative_path),
+                    "relative_path": item.relative_path.as_posix(),
                     "source_path": str(item.source_path) if item.source_path is not None else None,
                     "note": item.note,
                 }
@@ -7605,7 +7605,14 @@ def _parse_backup_bundle_inspection_item(
     if note is not None and not isinstance(note, str):
         note = str(note)
 
-    relative_path = Path(relative_path_text)
+    try:
+        relative_path = _parse_backup_bundle_relative_path(relative_path_text)
+    except ValueError as exc:
+        return (
+            None,
+            f"Manifest item '{key}' has an unsafe relative_path ({exc}).",
+            False,
+        )
     bundle_item_path = bundle_content_root / relative_path
     expected_type_matches = (
         bundle_item_path.is_file() if kind == "file" else bundle_item_path.is_dir()
@@ -7695,6 +7702,24 @@ def _parse_backup_bundle_not_included(raw_manifest: dict[str, object]) -> tuple[
     if not isinstance(values, list):
         return tuple()
     return tuple(value for value in values if isinstance(value, str) and value.strip())
+
+
+def _parse_backup_bundle_relative_path(relative_path_text: str) -> Path:
+    normalized = relative_path_text.replace("\\", "/").strip()
+    if not normalized:
+        raise ValueError("empty path")
+
+    raw_path = PurePosixPath(normalized)
+    if raw_path.is_absolute():
+        raise ValueError("absolute path")
+
+    parts = tuple(part for part in raw_path.parts if part)
+    if not parts or any(part in (".", "..") for part in parts):
+        raise ValueError("path traversal")
+    if any(":" in part for part in parts):
+        raise ValueError("invalid drive-style segment")
+
+    return Path(*parts)
 
 
 def _build_restore_import_planning_result(
