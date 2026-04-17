@@ -121,16 +121,16 @@ def _build_package_inspection_result(
 
 
 def _find_zip_manifest_entries(archive: zipfile.ZipFile) -> list[str]:
-    entries: list[str] = []
+    entries: set[str] = set()
     for info in archive.infolist():
         if info.is_dir():
             continue
-        path = PurePosixPath(info.filename)
+        normalized_filename = info.filename.replace("\\", "/").lstrip("/")
+        path = PurePosixPath(normalized_filename)
         if path.name.casefold() != _MANIFEST_FILE_NAME:
             continue
-        entries.append(str(path).lstrip("/"))
-    entries.sort(key=lambda value: value.lower())
-    return entries
+        entries.add(str(path).lstrip("/"))
+    return sorted(entries, key=lambda value: value.lower())
 
 
 def _find_extracted_manifest_entries(extracted_root: Path) -> list[str]:
@@ -166,7 +166,7 @@ def _parse_zip_manifest_entry(
     manifest_entry: str,
 ) -> tuple[PackageModEntry | None, list[PackageWarning]]:
     try:
-        raw_bytes = archive.read(manifest_entry)
+        raw_bytes = _read_zip_entry_bytes(archive=archive, manifest_entry=manifest_entry)
     except KeyError:
         warning = PackageWarning(
             code="manifest_read_error",
@@ -193,6 +193,34 @@ def _parse_zip_manifest_entry(
         return None, [warning]
 
     return _parse_manifest_text_entry(raw_text=raw_text, manifest_entry=manifest_entry)
+
+
+def _read_zip_entry_bytes(*, archive: zipfile.ZipFile, manifest_entry: str) -> bytes:
+    try:
+        return archive.read(manifest_entry)
+    except KeyError:
+        normalized_target = manifest_entry.replace("\\", "/").lstrip("/")
+        candidates = []
+        backslash_variant = normalized_target.replace("/", "\\")
+        if backslash_variant != normalized_target:
+            candidates.append(backslash_variant)
+        candidates.extend(
+            info.filename
+            for info in archive.infolist()
+            if not info.is_dir()
+            and info.filename.replace("\\", "/").lstrip("/") == normalized_target
+        )
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                return archive.read(candidate)
+            except KeyError:
+                continue
+        raise
 
 
 def _parse_extracted_manifest_entry(

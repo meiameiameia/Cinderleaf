@@ -36,6 +36,36 @@ def test_zip_manifest_detection_is_case_insensitive(tmp_path: Path) -> None:
     assert result.findings[0].kind == "direct_single_mod_package"
 
 
+def test_zip_manifest_detection_accepts_backslash_separators(tmp_path: Path) -> None:
+    package = _build_zip(
+        tmp_path / "backslash_manifest.zip",
+        {
+            r"DirectMod\manifest.json": '{"Name":"Direct","UniqueID":"Pkg.Direct","Version":"1.0.0"}',
+        },
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.mods) == 1
+    assert result.mods[0].unique_id == "Pkg.Direct"
+    assert result.findings[0].kind == "direct_single_mod_package"
+
+
+def test_zip_manifest_detection_accepts_backslash_and_case_mix(tmp_path: Path) -> None:
+    package = _build_zip(
+        tmp_path / "backslash_case_manifest.zip",
+        {
+            r"DirectMod\Manifest.json": '{"Name":"Direct","UniqueID":"Pkg.Direct","Version":"1.0.0"}',
+        },
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.mods) == 1
+    assert result.mods[0].unique_id == "Pkg.Direct"
+    assert result.findings[0].kind == "direct_single_mod_package"
+
+
 def test_nested_single_mod_package_is_detected(tmp_path: Path) -> None:
     package = _build_zip(
         tmp_path / "nested.zip",
