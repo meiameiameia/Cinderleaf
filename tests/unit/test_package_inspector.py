@@ -21,6 +21,21 @@ def test_direct_single_mod_package_is_detected(tmp_path: Path) -> None:
     assert result.findings[0].kind == "direct_single_mod_package"
 
 
+def test_zip_manifest_detection_is_case_insensitive(tmp_path: Path) -> None:
+    package = _build_zip(
+        tmp_path / "mixed_case_manifest.zip",
+        {
+            "DirectMod/Manifest.json": '{"Name":"Direct","UniqueID":"Pkg.Direct","Version":"1.0.0"}',
+        },
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.mods) == 1
+    assert result.mods[0].unique_id == "Pkg.Direct"
+    assert result.findings[0].kind == "direct_single_mod_package"
+
+
 def test_nested_single_mod_package_is_detected(tmp_path: Path) -> None:
     package = _build_zip(
         tmp_path / "nested.zip",
@@ -201,6 +216,33 @@ def test_rar_package_is_detected_via_extracted_archive_fallback(
         mod_dir = destination / "RarMod"
         mod_dir.mkdir(parents=True)
         (mod_dir / "manifest.json").write_text(
+            '{"Name":"RAR Mod","UniqueID":"Pkg.Rar","Version":"1.0.0"}',
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "sdvmm.services.package_inspector.extract_archive_to_directory",
+        fake_extract_archive_to_directory,
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.mods) == 1
+    assert result.mods[0].unique_id == "Pkg.Rar"
+
+
+def test_extracted_manifest_detection_is_case_insensitive(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package = tmp_path / "mod.rar"
+    package.write_bytes(b"rar placeholder")
+
+    def fake_extract_archive_to_directory(*, archive_path: Path, destination: Path) -> None:
+        assert archive_path == package
+        mod_dir = destination / "RarMod"
+        mod_dir.mkdir(parents=True)
+        (mod_dir / "Manifest.json").write_text(
             '{"Name":"RAR Mod","UniqueID":"Pkg.Rar","Version":"1.0.0"}',
             encoding="utf-8",
         )

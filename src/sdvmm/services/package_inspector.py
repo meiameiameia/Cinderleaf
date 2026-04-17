@@ -25,6 +25,7 @@ from sdvmm.services.dependency_preflight import evaluate_package_dependencies
 from sdvmm.services.manifest_parser import parse_manifest_text
 
 MAX_PACKAGE_MANIFEST_DEPTH = 3
+_MANIFEST_FILE_NAME = "manifest.json"
 
 
 def inspect_package_archive(package_path: Path) -> PackageInspectionResult:
@@ -125,7 +126,7 @@ def _find_zip_manifest_entries(archive: zipfile.ZipFile) -> list[str]:
         if info.is_dir():
             continue
         path = PurePosixPath(info.filename)
-        if path.name != "manifest.json":
+        if path.name.casefold() != _MANIFEST_FILE_NAME:
             continue
         entries.append(str(path).lstrip("/"))
     entries.sort(key=lambda value: value.lower())
@@ -135,8 +136,8 @@ def _find_zip_manifest_entries(archive: zipfile.ZipFile) -> list[str]:
 def _find_extracted_manifest_entries(extracted_root: Path) -> list[str]:
     entries = [
         str(path.relative_to(extracted_root).as_posix())
-        for path in extracted_root.rglob("manifest.json")
-        if path.is_file()
+        for path in extracted_root.rglob("*")
+        if path.is_file() and path.name.casefold() == _MANIFEST_FILE_NAME
     ]
     entries.sort(key=lambda value: value.lower())
     return entries
