@@ -125,11 +125,11 @@ def _find_zip_manifest_entries(archive: zipfile.ZipFile) -> list[str]:
     for info in archive.infolist():
         if info.is_dir():
             continue
-        normalized_filename = info.filename.replace("\\", "/").lstrip("/")
-        path = PurePosixPath(normalized_filename)
-        if path.name.casefold() != _MANIFEST_FILE_NAME:
+        normalized_filename = info.filename.replace("\\", "/").strip().lstrip("/")
+        lowered = normalized_filename.casefold()
+        if lowered != _MANIFEST_FILE_NAME and not lowered.endswith(f"/{_MANIFEST_FILE_NAME}"):
             continue
-        entries.add(str(path).lstrip("/"))
+        entries.add(normalized_filename)
     return sorted(entries, key=lambda value: value.lower())
 
 
