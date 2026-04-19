@@ -1,6 +1,6 @@
 # Cinderleaf User Guide
 
-This is the easy-to-read guide for the current `1.4.0` release line.
+This is the easy-to-read guide for the current `1.5.0` release line.
 
 If you want the short version first, read the main [README](../README.md).
 

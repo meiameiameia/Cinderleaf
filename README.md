@@ -14,9 +14,9 @@ It is made for players who want modding to feel simpler:
 
 `for Stardew Valley` is just a description, not an official affiliation. Cinderleaf is a community tool and is not endorsed by ConcernedApe.
 
-Current project version: **1.4.0**
+Current project version: **1.5.0**
 
-Latest packaged public release: **1.4.0**
+Latest packaged public release: **1.5.0**
 
 If you want the full walkthrough, start with the [User Guide](docs/USER_GUIDE.md).
 
@@ -49,7 +49,7 @@ The goal is not to bury you in process. The goal is to make the normal flow feel
 - `History`: archived copies and install rollback history in one place
 - `Setup`: folders, backups, restore/import tools, and a few extra configuration options
 
-## Why `1.4.0` matters
+## Why `1.5.0` matters
 
 This release is a usability release.
 
@@ -69,11 +69,11 @@ For the release history, see [CHANGELOG.md](CHANGELOG.md).
 The public build is a Windows portable zip on GitHub Releases.
 
 1. Open the repository [Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Download `cinderleaf-1.4.0-windows-portable.zip`.
+2. Download `cinderleaf-1.5.0-windows-portable.zip`.
 3. Extract it to a normal folder.
 4. Run `Cinderleaf.exe`.
 
-If a checksum file is published with the release, you can verify it against `cinderleaf-1.4.0-windows-portable.zip.sha256`.
+If a checksum file is published with the release, you can verify it against `cinderleaf-1.5.0-windows-portable.zip.sha256`.
 
 Good to know:
 
@@ -107,7 +107,7 @@ That means dependency problems show up earlier, during review, instead of only a
 
 ## Screenshots
 
-These screenshots reflect the current `1.4.0` app surface.
+These screenshots reflect the current `1.5.0` app surface.
 
 ![Setup workspace](media/nexus-screenshots/00-setup-workspace.png)
 
@@ -196,9 +196,9 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.4.0-windows-portable\
-dist\cinderleaf-1.4.0-windows-portable.zip
-dist\cinderleaf-1.4.0-windows-portable.zip.sha256
+dist\cinderleaf-1.5.0-windows-portable\
+dist\cinderleaf-1.5.0-windows-portable.zip
+dist\cinderleaf-1.5.0-windows-portable.zip.sha256
 ```
 
 Linux portable build (experimental):
@@ -214,9 +214,9 @@ python3 -m venv .venv
 The Linux build script produces:
 
 ```text
-dist/cinderleaf-1.4.0-linux-portable/
-dist/cinderleaf-1.4.0-linux-portable.tar.gz
-dist/cinderleaf-1.4.0-linux-portable.tar.gz.sha256
+dist/cinderleaf-1.5.0-linux-portable/
+dist/cinderleaf-1.5.0-linux-portable.tar.gz
+dist/cinderleaf-1.5.0-linux-portable.tar.gz.sha256
 ```
 
 ## License
