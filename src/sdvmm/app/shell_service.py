@@ -9614,14 +9614,16 @@ def _collect_install_execution_review_warnings(
 
 
 def _build_sandbox_install_review_message(summary: InstallExecutionSummary) -> str:
-    message = (
-        f"Sandbox install can proceed for {summary.total_entry_count} "
-        f"{_entry_count_label(summary.total_entry_count)}."
+    localizer = get_active_ui_localizer()
+    message = localizer.text(
+        "install.review.sandbox_can_proceed",
+        count=summary.total_entry_count,
+        entry_label=_entry_count_label(summary.total_entry_count),
     )
     if summary.has_existing_targets_to_replace or summary.has_archive_writes:
-        message += " Inspect archive/replace actions before execution."
+        message += f" {localizer.text('install.review.inspect_archive_replace')}"
     else:
-        message += " No explicit approval is required."
+        message += f" {localizer.text('install.review.no_approval')}"
     return message
 
 
@@ -9637,6 +9639,9 @@ def _build_real_install_review_message(summary: InstallExecutionSummary) -> str:
 
 
 def _entry_count_label(count: int) -> str:
+    localizer = get_active_ui_localizer()
+    if localizer.effective_language == "pt-BR":
+        return "entrada" if count == 1 else "entradas"
     return "entry" if count == 1 else "entries"
 
 

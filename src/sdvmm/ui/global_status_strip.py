@@ -21,7 +21,7 @@ class GlobalStatusStrip(QGroupBox):
         self.setFlat(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setProperty("shellRole", "workflow_status")
-        self.setMinimumHeight(58)
+        self.setMinimumHeight(0)
 
         self.current_status_label = QLabel(localizer.text("status.waiting"))
         self.current_status_label.setObjectName("global_status_current_label")
@@ -35,8 +35,8 @@ class GlobalStatusStrip(QGroupBox):
         summary_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
 
         status_strip_layout = QHBoxLayout(self)
-        status_strip_layout.setContentsMargins(6, 4, 6, 4)
-        status_strip_layout.setSpacing(6)
+        status_strip_layout.setContentsMargins(8, 6, 8, 6)
+        status_strip_layout.setSpacing(8)
         status_strip_layout.addWidget(summary_label, 0)
         status_strip_layout.addWidget(
             _build_status_panel(self.current_status_label),
@@ -60,8 +60,8 @@ def _build_status_panel(value_label: QLabel) -> QWidget:
     panel.setObjectName("global_status_panel")
     panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     layout = QVBoxLayout(panel)
-    layout.setContentsMargins(6, 4, 6, 4)
-    layout.setSpacing(1)
+    layout.setContentsMargins(8, 5, 8, 5)
+    layout.setSpacing(2)
     value_label.setProperty("statusRole", "value")
     value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     value_label.setWordWrap(True)
