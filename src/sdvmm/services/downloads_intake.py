@@ -73,7 +73,10 @@ def inspect_downloads_intake_package(
         source="downloads_intake",
     )
 
-    installed_keys = {canonicalize_unique_id(mod.unique_id): mod.unique_id for mod in inventory.mods}
+    installed_rows = inventory.mods + inventory.disabled_mods
+    installed_keys = {
+        canonicalize_unique_id(mod.unique_id): mod.unique_id for mod in installed_rows
+    }
     matched: list[str] = []
     for mod in inspection.mods:
         key = canonicalize_unique_id(mod.unique_id)

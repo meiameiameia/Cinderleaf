@@ -195,6 +195,30 @@ def test_poll_correlates_package_with_installed_mod_by_unique_id(tmp_path: Path)
     assert intake.matched_installed_unique_ids == ("Sample.Exists",)
 
 
+def test_poll_correlates_package_with_disabled_library_mod_by_unique_id(tmp_path: Path) -> None:
+    watched = tmp_path / "Downloads"
+    watched.mkdir()
+
+    known = initialize_known_zip_paths(watched)
+    _build_zip(
+        watched / "disabled_profile_update.zip",
+        {"Existing/manifest.json": _manifest("Existing", "Sample.Exists", "2.0.0")},
+    )
+
+    inventory = _inventory_with_disabled_mod("Sample.Exists")
+
+    result = poll_watched_directory(
+        watched_path=watched,
+        known_zip_paths=known,
+        inventory=inventory,
+    )
+
+    assert len(result.intakes) == 1
+    intake = result.intakes[0]
+    assert intake.classification == "update_replace_candidate"
+    assert intake.matched_installed_unique_ids == ("Sample.Exists",)
+
+
 def test_poll_exposes_missing_required_dependency_for_detected_package(tmp_path: Path) -> None:
     watched = tmp_path / "Downloads"
     watched.mkdir()
@@ -285,6 +309,27 @@ def _inventory_with_mod(unique_id: str) -> ModsInventory:
     )
     return ModsInventory(
         mods=(mod,),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+
+
+def _inventory_with_disabled_mod(unique_id: str) -> ModsInventory:
+    mod = InstalledMod(
+        unique_id=unique_id,
+        name=unique_id,
+        version="1.0.0",
+        folder_path=Path("/tmp") / unique_id,
+        manifest_path=Path("/tmp") / unique_id / "manifest.json",
+        dependencies=tuple(),
+        update_keys=tuple(),
+    )
+    return ModsInventory(
+        mods=tuple(),
+        disabled_mods=(mod,),
         parse_warnings=tuple(),
         duplicate_unique_ids=tuple(),
         missing_required_dependencies=tuple(),
