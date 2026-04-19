@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Mapping
 
-from sdvmm.app.i18n import get_active_ui_localizer
 from sdvmm.domain.models import AppUpdateStatus
 from sdvmm.services.update_metadata import (
     JsonMetadataFetcher,
@@ -97,25 +96,25 @@ def check_app_update_status(
         )
 
     if comparison < 0:
-        localizer = get_active_ui_localizer()
         return AppUpdateStatus(
             state="update_available",
             current_version=normalized_current_version,
             latest_version=latest_version,
             update_page_url=release_page_url,
             message=(
-                f"{localizer.text('library.update.available')}: installed {normalized_current_version}, latest {latest_version}."
+                f"{_localizer_text('library.update.available', fallback='Update available')}: "
+                f"installed {normalized_current_version}, latest {latest_version}."
             ),
         )
 
-    localizer = get_active_ui_localizer()
     return AppUpdateStatus(
         state="up_to_date",
         current_version=normalized_current_version,
         latest_version=latest_version,
         update_page_url=release_page_url,
-        message=localizer.text(
+        message=_localizer_text(
             "status.app_up_to_date",
+            fallback="Cinderleaf is up to date (installed {installed}, latest {latest}).",
             installed=normalized_current_version,
             latest=latest_version,
         ),
@@ -163,3 +162,14 @@ def _normalize_version(raw_value: str) -> str | None:
     if not parts:
         return None
     return ".".join(parts)
+
+
+def _localizer_text(key: str, *, fallback: str, **kwargs: object) -> str:
+    try:
+        from sdvmm.app.i18n import get_active_ui_localizer
+    except Exception:
+        return fallback.format(**kwargs)
+    try:
+        return get_active_ui_localizer().text(key, **kwargs)
+    except Exception:
+        return fallback.format(**kwargs)

@@ -11,6 +11,7 @@ from typing import Literal
 import pytest
 
 import sdvmm.app.shell_service as shell_service_module
+from sdvmm.app.i18n import get_active_ui_localizer
 import sdvmm.services.sandbox_installer as sandbox_installer_module
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
@@ -4898,7 +4899,9 @@ def test_review_install_execution_allows_sandbox_plan_without_explicit_approval(
     assert review.allowed is True
     assert review.requires_explicit_approval is False
     assert review.decision_code == "sandbox_allowed"
-    assert "Sandbox install can proceed" in review.message
+    localizer = get_active_ui_localizer()
+    assert localizer.text("install.review.no_approval") in review.message
+    assert str(review.summary.total_entry_count) in review.message
     assert review.summary == service.build_install_execution_summary(plan)
 
 
@@ -4974,7 +4977,8 @@ def test_review_install_execution_allows_mixed_action_plan_when_no_entries_block
     assert review.decision_code == "sandbox_allowed"
     assert review.summary.has_existing_targets_to_replace is True
     assert review.summary.has_archive_writes is True
-    assert "archive/replace actions" in review.message
+    localizer = get_active_ui_localizer()
+    assert localizer.text("install.review.inspect_archive_replace") in review.message
 
 
 def test_review_install_execution_aligns_with_existing_summary_fields(tmp_path: Path) -> None:
