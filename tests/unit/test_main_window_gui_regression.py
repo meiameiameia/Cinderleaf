@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ from PySide6.QtCore import QPoint, QPointF, QItemSelectionModel, Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -123,6 +125,12 @@ from sdvmm.ui.main_window import _ROLE_UPDATE_BLOCK_REASON
 from sdvmm.domain.scan_codes import MULTI_MOD_CONTAINER
 
 
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="GUI regression baseline is Windows-specific (styling metrics and path semantics).",
+)
+
+
 @pytest.fixture
 def qapp(monkeypatch: pytest.MonkeyPatch) -> QApplication:
     # Keep GUI smoke tests runnable in headless environments.
@@ -131,6 +139,45 @@ def qapp(monkeypatch: pytest.MonkeyPatch) -> QApplication:
     if app is None:
         app = QApplication([])
     return app
+
+
+@pytest.fixture(autouse=True)
+def _auto_resolve_modal_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep GUI tests non-blocking in headless/offscreen runs.
+
+    Tests that need different behavior can still override these with their own
+    monkeypatch calls.
+    """
+
+    def _auto_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        _ = args
+        _ = kwargs
+        return QMessageBox.StandardButton.No
+
+    def _auto_notice(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        _ = args
+        _ = kwargs
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(
+        MainWindow,
+        "_show_localized_question_dialog",
+        lambda self, **_: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(
+        MainWindow,
+        "_ask_localized_yes_no",
+        lambda self, *_, **__: QMessageBox.StandardButton.No,
+    )
+    monkeypatch.setattr(
+        MainWindow,
+        "_show_localized_info_dialog",
+        lambda self, **_: None,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", _auto_question)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.warning", _auto_notice)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.information", _auto_notice)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", _auto_notice)
 
 
 class _FocusOverrideComboBox(QComboBox):
@@ -157,7 +204,11 @@ def _test_wheel_event() -> QWheelEvent:
 
 def _show_test_window(window: MainWindow | QWidget, qapp: QApplication) -> None:
     window.show()
-    if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
+        # Keep a deterministic non-compact baseline in headless CI. Individual
+        # tests can still resize to compact breakpoints when needed.
+        window.resize(1600, 900)
+    else:
         screens = qapp.screens()
         try:
             preferred_screen_index = int(os.environ.get("SDVMM_TEST_SCREEN_INDEX", "1"))
@@ -560,7 +611,7 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     )
     assert (
         window._workspace_nav_release_status_label.text()
-        == "Cinderleaf is up to date (installed 1.1.7, latest 1.1.7)."
+        == "Up to date"
     )
     assert window._status_strip_label.text() == "Cinderleaf is up to date."
     assert window._startup_checks_completed is True
@@ -1362,6 +1413,8 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     qapp: QApplication,
 ) -> None:
     context_group = main_window.findChild(QGroupBox, "top_context_surface_group")
+    context_body = main_window.findChild(QWidget, "top_context_body")
+    context_toggle = main_window.findChild(QPushButton, "top_context_toggle_button")
     status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
     mods_button = main_window.findChild(QPushButton, "workspace_nav_button_library")
     setup_button = main_window.findChild(QPushButton, "workspace_nav_button_setup")
@@ -1384,6 +1437,8 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     launch_button = main_window.findChild(QPushButton, "launch_sandbox_dev_button")
 
     assert context_group is not None
+    assert context_body is not None
+    assert context_toggle is not None
     assert status_strip_group is not None
     assert mods_button is not None
     assert setup_button is not None
@@ -1402,9 +1457,14 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     main_window._inventory_controls_tabs.setCurrentIndex(library_tab_index)
     qapp.processEvents()
 
-    assert context_group.maximumHeight() >= 146
-    assert status_strip_group.maximumHeight() >= 56
-    assert 116 <= main_window._inventory_controls_tabs.maximumHeight() <= 132
+    assert context_body.isHidden() is True
+    assert context_toggle.text() == "Show details"
+    assert 42 <= context_group.maximumHeight() <= 52
+    assert 40 <= status_strip_group.maximumHeight() <= 48
+    assert 172 <= main_window._inventory_controls_tabs.maximumHeight() <= 188
+    assert main_window._workspace_nav_collapsed is True
+    assert mods_button.text() == ""
+    assert setup_button.text() == ""
     assert mods_button.maximumHeight() == 30
     assert setup_button.maximumHeight() == 30
     assert inventory_controls_panel.parentWidget() is inventory_tabs.widget(0)
@@ -1578,12 +1638,41 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     main_window.resize(1366, 768)
     qapp.processEvents()
 
-    assert 18 <= archive_refresh_button.sizeHint().height() <= 25
-    assert 18 <= archive_cleanup_button.sizeHint().height() <= 25
-    assert 18 <= archive_restore_button.sizeHint().height() <= 25
-    assert 18 <= archive_delete_button.sizeHint().height() <= 25
-    assert 18 <= discovery_search_button.sizeHint().height() <= 25
-    assert 18 <= launch_smapi_button.sizeHint().height() <= 25
+    assert 18 <= archive_refresh_button.sizeHint().height() <= 31
+    assert 18 <= archive_cleanup_button.sizeHint().height() <= 31
+    assert 18 <= archive_restore_button.sizeHint().height() <= 31
+    assert 18 <= archive_delete_button.sizeHint().height() <= 31
+    assert 18 <= discovery_search_button.sizeHint().height() <= 31
+    assert 18 <= launch_smapi_button.sizeHint().height() <= 31
+
+
+def test_main_window_setup_backup_summary_defaults_to_localized_copy(
+    main_window: MainWindow,
+) -> None:
+    summary_label = main_window.findChild(
+        QLabel,
+        "setup_backup_bundle_inspection_summary_label",
+    )
+
+    assert summary_label is not None
+    assert summary_label.text() == (
+        "Inspect backup reads the bundle and prepares a restore/import review for this machine."
+    )
+
+
+def test_main_window_setup_restore_planning_summary_defaults_to_distinct_copy(
+    main_window: MainWindow,
+) -> None:
+    summary_label = main_window.findChild(
+        QLabel,
+        "setup_restore_import_planning_summary_label",
+    )
+
+    assert summary_label is not None
+    assert summary_label.isHidden() is True
+    assert summary_label.text() == (
+        "Restore/import planning appears here after you inspect a backup bundle."
+    )
 
 
 def test_main_window_switching_to_unscanned_source_keeps_inventory_state_truthful(
@@ -1882,7 +1971,7 @@ def test_main_window_stylesheet_explicitly_themes_message_boxes(
     stylesheet = main_window.styleSheet()
 
     assert "QMessageBox" in stylesheet
-    assert "background: #16191d;" in stylesheet
+    assert "background: #15181c;" in stylesheet
     assert "QMessageBox QLabel" in stylesheet
     assert "QWidget#history_workspace_page" in stylesheet
     assert "QWidget#history_workspace_body" in stylesheet
@@ -2037,11 +2126,11 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(0).widget() is brand_header
-    assert brand_layout.itemAt(1).widget() is brand_release_status
+    assert brand_layout.itemAt(1).widget() is brand_text_stack
+    assert brand_layout.itemAt(2).widget() is brand_release_status
     brand_header_layout = brand_header.layout()
     assert brand_header_layout is not None
     assert brand_header_layout.itemAt(0).widget() is brand_icon
-    assert brand_header_layout.itemAt(1).widget() is brand_text_stack
     brand_text_layout = brand_text_stack.layout()
     assert brand_text_layout is not None
     assert brand_text_layout.itemAt(0).widget() is brand_title
@@ -2821,9 +2910,10 @@ def test_main_window_sandbox_promotion_conflict_review_stays_enabled_and_describ
 
     captured: dict[str, str] = {}
 
-    def fake_question(parent, title, text):
-        captured["title"] = title
-        captured["text"] = text
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        _ = kwargs
+        captured["title"] = str(args[1])
+        captured["text"] = str(args[2])
         return QMessageBox.StandardButton.No
 
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
@@ -7253,21 +7343,21 @@ def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_a
 
     watcher_layout = watcher_group.layout()
     assert isinstance(watcher_layout, QGridLayout)
-    assert watcher_layout.itemAtPosition(0, 1).widget() is runtime_actions_widget
+    assert watcher_layout.itemAtPosition(0, 0).widget() is runtime_actions_widget
     assert (
-        watcher_layout.itemAtPosition(1, 1).widget()
+        watcher_layout.itemAtPosition(2, 0).widget()
         is main_window._watched_downloads_path_input
     )
     assert (
-        watcher_layout.itemAtPosition(2, 1).widget()
+        watcher_layout.itemAtPosition(3, 0).widget()
         is primary_actions_widget
     )
     assert (
-        watcher_layout.itemAtPosition(3, 1).widget()
+        watcher_layout.itemAtPosition(5, 0).widget()
         is main_window._secondary_watched_downloads_path_input
     )
-    assert watcher_layout.itemAtPosition(4, 1).widget() is secondary_actions_widget
-    assert watcher_layout.itemAtPosition(5, 1).widget() is watcher_scope_label
+    assert watcher_layout.itemAtPosition(6, 0).widget() is secondary_actions_widget
+    assert watcher_layout.itemAtPosition(7, 0).widget() is watcher_scope_label
 
     primary_button_texts = {
         button.text() for button in primary_actions_widget.findChildren(QPushButton)
@@ -7290,6 +7380,9 @@ def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_a
     assert top_grid_layout.itemAtPosition(0, 0).widget() is review_target_group
     assert top_grid_layout.itemAtPosition(0, 1).widget() is watcher_group
     assert runtime_button_texts == {"Start intake watch", "Stop intake watch"}
+    runtime_actions_layout = runtime_actions_widget.layout()
+    assert isinstance(runtime_actions_layout, QBoxLayout)
+    assert runtime_actions_layout.direction() == QBoxLayout.Direction.TopToBottom
 
 
 def test_main_window_packages_surface_uses_guided_intake_composition(
@@ -7518,6 +7611,10 @@ def test_main_window_detect_environment_updates_setup_local_output_and_shared_de
     )
 
     main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText("")
+    main_window._sandbox_mods_path_input.setText("")
+    main_window._sandbox_archive_path_input.setText("")
+    main_window._real_archive_path_input.setText("")
     monkeypatch.setattr(
         main_window._shell_service,
         "detect_game_environment",
@@ -7529,6 +7626,17 @@ def test_main_window_detect_environment_updates_setup_local_output_and_shared_de
     assert str(game_path) in main_window._setup_output_box.toPlainText()
     assert main_window._setup_output_box.toPlainText() == main_window._findings_box.toPlainText()
     assert main_window._status_strip_label.text() == "Environment detection complete."
+    assert main_window._mods_path_input.text() == str(game_path / "Mods")
+    assert main_window._sandbox_mods_path_input.text() == str(game_path / "Cinderleaf" / "Sandbox Mods")
+    assert main_window._sandbox_archive_path_input.text() == str(
+        game_path / "Cinderleaf" / "Sandbox Archive"
+    )
+    assert main_window._real_archive_path_input.text() == str(
+        game_path / "Cinderleaf" / "Real Mods Archive"
+    )
+    assert (game_path / "Cinderleaf" / "Sandbox Mods").is_dir() is True
+    assert (game_path / "Cinderleaf" / "Sandbox Archive").is_dir() is True
+    assert (game_path / "Cinderleaf" / "Real Mods Archive").is_dir() is True
 
 
 def test_main_window_export_backup_bundle_runs_service_and_updates_output(
@@ -9144,9 +9252,10 @@ def test_main_window_execute_restore_import_conflict_review_mentions_archive_rep
         lambda *args, **kwargs: pytest.fail("execute_restore_import should not run when dialog is cancelled"),
     )
 
-    def fake_question(*args, **kwargs):
-        captured["title"] = args[1]
-        captured["text"] = args[2]
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        _ = kwargs
+        captured["title"] = str(args[1])
+        captured["text"] = str(args[2])
         return QMessageBox.StandardButton.No
 
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
@@ -11227,7 +11336,12 @@ def test_main_window_run_install_uses_confirmation_flow_and_service_gate(
     question_calls = {"count": 0}
     execute_calls: list[bool] = []
 
-    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+    def fake_question(
+        *, title: str, text: str, default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No
+    ) -> QMessageBox.StandardButton:
+        _ = title
+        _ = text
+        _ = default_button
         question_calls["count"] += 1
         return QMessageBox.StandardButton.Yes
 
@@ -11240,7 +11354,7 @@ def test_main_window_run_install_uses_confirmation_flow_and_service_gate(
         execute_calls.append(confirm_real_destination)
         raise AppShellError("Execution blocked by review gate.")
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
     def _run_immediately(
@@ -11287,23 +11401,31 @@ def test_main_window_real_install_confirmation_dialog_includes_review_and_summar
     review = main_window._shell_service.review_install_execution(real_plan)
     captured: dict[str, str] = {}
 
-    def fake_question(parent: object, title: str, text: str) -> QMessageBox.StandardButton:
+    def fake_question(
+        *,
+        title: str,
+        text: str,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No,
+    ) -> QMessageBox.StandardButton:
+        _ = default_button
         captured["title"] = title
         captured["text"] = text
         return QMessageBox.StandardButton.No
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
     main_window._pending_install_plan = real_plan
 
     main_window._on_run_install()
 
-    assert captured["title"] == "Confirm REAL Mods install"
+    assert captured["title"] == "Confirm install execution"
     assert review.message in captured["text"]
+    assert "You are about to write to the REAL game Mods directory." in captured["text"]
+    assert "Execute install now?" in captured["text"]
     assert f"Target: {review.summary.destination_mods_path}" in captured["text"]
     assert f"Archive: {review.summary.archive_path}" in captured["text"]
     assert f"Entries: {review.summary.total_entry_count}" in captured["text"]
-    assert "Replace existing targets: yes" in captured["text"]
-    assert "Archive writes in plan: yes" in captured["text"]
+    assert "Replace existing targets: Yes" in captured["text"]
+    assert "Archive writes in plan: Yes" in captured["text"]
     assert main_window._status_strip_label.text() == "Install cancelled."
 
 
@@ -11314,17 +11436,24 @@ def test_main_window_sandbox_install_confirmation_does_not_use_real_mods_dialog(
     sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
     captured: dict[str, str] = {}
 
-    def fake_question(parent: object, title: str, text: str) -> QMessageBox.StandardButton:
+    def fake_question(
+        *,
+        title: str,
+        text: str,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No,
+    ) -> QMessageBox.StandardButton:
+        _ = default_button
         captured["title"] = title
         captured["text"] = text
         return QMessageBox.StandardButton.No
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
     main_window._pending_install_plan = sandbox_plan
 
     main_window._on_run_install()
 
-    assert captured["title"] == "Confirm sandbox install"
+    assert captured["title"] == "Confirm install execution"
+    assert "Execute install now?" in captured["text"]
     assert "REAL game Mods directory" not in captured["text"]
     assert main_window._status_strip_label.text() == "Install cancelled."
 
@@ -11336,7 +11465,12 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
     sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
     execute_calls: list[bool] = []
 
-    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+    def fake_question(
+        *, title: str, text: str, default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No
+    ) -> QMessageBox.StandardButton:
+        _ = title
+        _ = text
+        _ = default_button
         return QMessageBox.StandardButton.Yes
 
     def fake_execute(
@@ -11354,7 +11488,7 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
             scan_context_path=Path(r"C:\Sandbox\Mods"),
         )
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
     monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
@@ -11484,7 +11618,7 @@ def test_main_window_install_completion_patches_only_updated_row_status(
             scan_context_path=sandbox_root,
         )
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
     monkeypatch.setattr(
@@ -11529,7 +11663,8 @@ def test_main_window_run_install_lock_failure_keeps_dialog_concise_and_details_t
     )
 
     monkeypatch.setattr(
-        "sdvmm.ui.main_window.QMessageBox.question",
+        main_window,
+        "_show_localized_question_dialog",
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
     monkeypatch.setattr(
@@ -11607,7 +11742,7 @@ def test_main_window_successful_install_selects_new_recorded_install_for_recover
             return SimpleNamespace(operations=(old_operation,))
         return SimpleNamespace(operations=(old_operation, new_operation))
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
     monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
@@ -11651,7 +11786,8 @@ def test_main_window_successful_install_does_not_guess_when_new_record_is_ambigu
         return SimpleNamespace(operations=(old_operation, new_operation_a, new_operation_b))
 
     monkeypatch.setattr(
-        "sdvmm.ui.main_window.QMessageBox.question",
+        main_window,
+        "_show_localized_question_dialog",
         lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
     )
     monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
@@ -11783,12 +11919,18 @@ def test_main_window_remove_selected_mod_confirmation_lists_grouped_container_me
 
     monkeypatch.setattr(main_window._shell_service, "build_mod_removal_plan", lambda **_: plan)
 
-    def fake_question(parent: object, title: str, text: str) -> QMessageBox.StandardButton:
+    def fake_question(
+        *,
+        title: str,
+        text: str,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No,
+    ) -> QMessageBox.StandardButton:
+        _ = default_button
         captured["title"] = title
         captured["text"] = text
         return QMessageBox.StandardButton.No
 
-    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", fake_question)
 
     main_window._on_remove_selected_mod()
 

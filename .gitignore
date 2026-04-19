@@ -32,6 +32,7 @@ core.*
 # Local app data and fixtures
 .local/
 tmp/
+.tmp/
 artifacts/
 *.log
 

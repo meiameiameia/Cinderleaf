@@ -7179,7 +7179,7 @@ class AppShellService:
                     "label": item.label,
                     "kind": item.kind,
                     "status": item.status,
-                    "relative_path": str(item.relative_path),
+                    "relative_path": item.relative_path.as_posix(),
                     "source_path": str(item.source_path) if item.source_path is not None else None,
                     "note": item.note,
                 }
@@ -7605,7 +7605,14 @@ def _parse_backup_bundle_inspection_item(
     if note is not None and not isinstance(note, str):
         note = str(note)
 
-    relative_path = Path(relative_path_text)
+    try:
+        relative_path = _parse_backup_bundle_relative_path(relative_path_text)
+    except ValueError as exc:
+        return (
+            None,
+            f"Manifest item '{key}' has an unsafe relative_path ({exc}).",
+            False,
+        )
     bundle_item_path = bundle_content_root / relative_path
     expected_type_matches = (
         bundle_item_path.is_file() if kind == "file" else bundle_item_path.is_dir()
@@ -7695,6 +7702,24 @@ def _parse_backup_bundle_not_included(raw_manifest: dict[str, object]) -> tuple[
     if not isinstance(values, list):
         return tuple()
     return tuple(value for value in values if isinstance(value, str) and value.strip())
+
+
+def _parse_backup_bundle_relative_path(relative_path_text: str) -> Path:
+    normalized = relative_path_text.replace("\\", "/").strip()
+    if not normalized:
+        raise ValueError("empty path")
+
+    raw_path = PurePosixPath(normalized)
+    if raw_path.is_absolute():
+        raise ValueError("absolute path")
+
+    parts = tuple(part for part in raw_path.parts if part)
+    if not parts or any(part in (".", "..") for part in parts):
+        raise ValueError("path traversal")
+    if any(":" in part for part in parts):
+        raise ValueError("invalid drive-style segment")
+
+    return Path(*parts)
 
 
 def _build_restore_import_planning_result(
@@ -9589,14 +9614,16 @@ def _collect_install_execution_review_warnings(
 
 
 def _build_sandbox_install_review_message(summary: InstallExecutionSummary) -> str:
-    message = (
-        f"Sandbox install can proceed for {summary.total_entry_count} "
-        f"{_entry_count_label(summary.total_entry_count)}."
+    localizer = get_active_ui_localizer()
+    message = localizer.text(
+        "install.review.sandbox_can_proceed",
+        count=summary.total_entry_count,
+        entry_label=_entry_count_label(summary.total_entry_count),
     )
     if summary.has_existing_targets_to_replace or summary.has_archive_writes:
-        message += " Inspect archive/replace actions before execution."
+        message += f" {localizer.text('install.review.inspect_archive_replace')}"
     else:
-        message += " No explicit approval is required."
+        message += f" {localizer.text('install.review.no_approval')}"
     return message
 
 
@@ -9612,6 +9639,9 @@ def _build_real_install_review_message(summary: InstallExecutionSummary) -> str:
 
 
 def _entry_count_label(count: int) -> str:
+    localizer = get_active_ui_localizer()
+    if localizer.effective_language == "pt-BR":
+        return "entrada" if count == 1 else "entradas"
     return "entry" if count == 1 else "entries"
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame
+from PySide6.QtWidgets import QBoxLayout
 from PySide6.QtWidgets import QGridLayout
 from PySide6.QtWidgets import QGroupBox
 from PySide6.QtWidgets import QHBoxLayout
@@ -71,6 +72,9 @@ class SetupConfigurationSurface(QScrollArea):
     ) -> None:
         super().__init__()
         self._localizer = localizer
+        self._compact_field_rows: list[tuple[QBoxLayout, tuple[QPushButton, ...]]] = []
+        self._compact_read_only_rows: list[tuple[QBoxLayout, tuple[QPushButton, ...]]] = []
+        self._compact_action_grids: list[tuple[QGridLayout, tuple[QPushButton, ...]]] = []
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -89,7 +93,7 @@ class SetupConfigurationSurface(QScrollArea):
             row_widget.setObjectName(object_name)
             row_layout = QVBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(4)
+            row_layout.setSpacing(6)
 
             row_label = QLabel(localizer.text(label_key))
             row_label.setProperty("translationKey", label_key)
@@ -98,12 +102,15 @@ class SetupConfigurationSurface(QScrollArea):
 
             field_row = QHBoxLayout()
             field_row.setContentsMargins(0, 0, 0, 0)
-            field_row.setSpacing(8)
+            field_row.setSpacing(9)
             field_row.addWidget(field_widget, 1)
             field_row.addWidget(primary_button)
+            buttons: list[QPushButton] = [primary_button]
             if secondary_button is not None:
                 field_row.addWidget(secondary_button)
+                buttons.append(secondary_button)
             row_layout.addLayout(field_row)
+            self._compact_field_rows.append((field_row, tuple(buttons)))
             return row_widget
 
         def _build_read_only_path_row(
@@ -117,7 +124,7 @@ class SetupConfigurationSurface(QScrollArea):
             row_widget.setObjectName(object_name)
             row_layout = QVBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(4)
+            row_layout.setSpacing(6)
 
             row_label = QLabel(localizer.text(label_key))
             row_label.setProperty("translationKey", label_key)
@@ -126,18 +133,19 @@ class SetupConfigurationSurface(QScrollArea):
 
             value_row = QHBoxLayout()
             value_row.setContentsMargins(0, 0, 0, 0)
-            value_row.setSpacing(8)
+            value_row.setSpacing(9)
             value_label.setWordWrap(True)
             value_row.addWidget(value_label, 1)
             value_row.addWidget(open_button)
             row_layout.addLayout(value_row)
+            self._compact_read_only_rows.append((value_row, (open_button,)))
             return row_widget
 
         primary_actions_widget = QWidget()
         primary_actions_widget.setObjectName("setup_surface_primary_actions")
         primary_actions_layout = QHBoxLayout(primary_actions_widget)
         primary_actions_layout.setContentsMargins(0, 0, 0, 0)
-        primary_actions_layout.setSpacing(8)
+        primary_actions_layout.setSpacing(10)
         primary_actions_layout.addWidget(save_button)
         primary_actions_layout.addWidget(detect_environment_button)
         primary_actions_layout.addStretch(1)
@@ -150,8 +158,8 @@ class SetupConfigurationSurface(QScrollArea):
         quickstart_panel = QFrame()
         quickstart_panel.setObjectName("setup_quickstart_panel")
         quickstart_layout = QVBoxLayout(quickstart_panel)
-        quickstart_layout.setContentsMargins(12, 12, 12, 12)
-        quickstart_layout.setSpacing(6)
+        quickstart_layout.setContentsMargins(14, 14, 14, 14)
+        quickstart_layout.setSpacing(8)
         quickstart_label = QLabel(localizer.text("setup.quickstart"))
         quickstart_label.setObjectName("setup_quickstart_label")
         quickstart_intro_label = QLabel(localizer.text("setup.quickstart.intro"))
@@ -166,8 +174,8 @@ class SetupConfigurationSurface(QScrollArea):
         setup_group.setObjectName("setup_surface_group")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QVBoxLayout(setup_group)
-        setup_layout.setContentsMargins(12, 12, 12, 12)
-        setup_layout.setSpacing(10)
+        setup_layout.setContentsMargins(14, 14, 14, 14)
+        setup_layout.setSpacing(12)
         setup_intro_label = QLabel(localizer.text("setup.folders.intro"))
         setup_intro_label.setObjectName("setup_local_setup_intro_label")
         setup_intro_label.setWordWrap(True)
@@ -205,8 +213,8 @@ class SetupConfigurationSurface(QScrollArea):
         advanced_group.setObjectName("setup_advanced_group")
         advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         advanced_layout = QVBoxLayout(advanced_group)
-        advanced_layout.setContentsMargins(12, 12, 12, 12)
-        advanced_layout.setSpacing(10)
+        advanced_layout.setContentsMargins(14, 14, 14, 14)
+        advanced_layout.setSpacing(12)
         advanced_intro_label = QLabel(localizer.text("setup.extras.intro"))
         advanced_intro_label.setObjectName("setup_advanced_intro_label")
         advanced_intro_label.setWordWrap(True)
@@ -235,14 +243,14 @@ class SetupConfigurationSurface(QScrollArea):
         nexus_row.setObjectName("setup_nexus_api_key_row")
         nexus_row_layout = QVBoxLayout(nexus_row)
         nexus_row_layout.setContentsMargins(0, 0, 0, 0)
-        nexus_row_layout.setSpacing(4)
+        nexus_row_layout.setSpacing(6)
         nexus_label = QLabel(localizer.text("setup.nexus_api_key"))
         nexus_label.setProperty("translationKey", "setup.nexus_api_key")
         nexus_label.setProperty("setupFieldLabel", True)
         nexus_row_layout.addWidget(nexus_label)
         nexus_field_row = QHBoxLayout()
         nexus_field_row.setContentsMargins(0, 0, 0, 0)
-        nexus_field_row.setSpacing(8)
+        nexus_field_row.setSpacing(9)
         nexus_field_row.addWidget(nexus_api_key_input, 1)
         nexus_field_row.addWidget(check_nexus_button)
         nexus_row_layout.addLayout(nexus_field_row)
@@ -252,7 +260,7 @@ class SetupConfigurationSurface(QScrollArea):
         language_row.setObjectName("setup_language_preference_row")
         language_row_layout = QVBoxLayout(language_row)
         language_row_layout.setContentsMargins(0, 0, 0, 0)
-        language_row_layout.setSpacing(4)
+        language_row_layout.setSpacing(6)
         language_label = QLabel(localizer.text("setup.language"))
         language_label.setProperty("translationKey", "setup.language")
         language_label.setProperty("setupFieldLabel", True)
@@ -264,14 +272,14 @@ class SetupConfigurationSurface(QScrollArea):
         app_updates_row.setObjectName("setup_app_updates_row")
         app_updates_layout = QVBoxLayout(app_updates_row)
         app_updates_layout.setContentsMargins(0, 0, 0, 0)
-        app_updates_layout.setSpacing(4)
+        app_updates_layout.setSpacing(6)
         app_updates_label = QLabel(localizer.text("setup.release"))
         app_updates_label.setProperty("translationKey", "setup.release")
         app_updates_label.setProperty("setupFieldLabel", True)
         app_updates_layout.addWidget(app_updates_label)
         app_updates_button_row = QHBoxLayout()
         app_updates_button_row.setContentsMargins(0, 0, 0, 0)
-        app_updates_button_row.setSpacing(8)
+        app_updates_button_row.setSpacing(9)
         app_updates_button_row.addWidget(check_app_update_button)
         app_updates_button_row.addWidget(open_app_release_page_button)
         app_updates_button_row.addStretch(1)
@@ -285,8 +293,8 @@ class SetupConfigurationSurface(QScrollArea):
         setup_actions_widget.setObjectName("setup_actions_widget")
         setup_actions_layout = QGridLayout(setup_actions_widget)
         setup_actions_layout.setContentsMargins(0, 0, 0, 0)
-        setup_actions_layout.setHorizontalSpacing(8)
-        setup_actions_layout.setVerticalSpacing(6)
+        setup_actions_layout.setHorizontalSpacing(9)
+        setup_actions_layout.setVerticalSpacing(8)
         action_buttons = tuple(
             button
             for button in (
@@ -301,13 +309,14 @@ class SetupConfigurationSurface(QScrollArea):
             setup_actions_layout.addWidget(button, index // 2, index % 2)
         for column in range(2):
             setup_actions_layout.setColumnStretch(column, 1)
+        self._compact_action_grids.append((setup_actions_layout, action_buttons))
 
         backup_group = QGroupBox(localizer.text("setup.backup"))
         backup_group.setObjectName("setup_backup_restore_group")
         backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         backup_layout = QVBoxLayout(backup_group)
-        backup_layout.setContentsMargins(12, 12, 12, 12)
-        backup_layout.setSpacing(8)
+        backup_layout.setContentsMargins(14, 14, 14, 14)
+        backup_layout.setSpacing(10)
 
         backup_intro_label = QLabel(localizer.text("setup.backup.intro"))
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")
@@ -323,13 +332,13 @@ class SetupConfigurationSurface(QScrollArea):
         managed_group.setObjectName("setup_managed_folders_group")
         managed_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         managed_layout = QVBoxLayout(managed_group)
-        managed_layout.setContentsMargins(12, 12, 12, 12)
-        managed_layout.setSpacing(8)
+        managed_layout.setContentsMargins(14, 14, 14, 14)
+        managed_layout.setSpacing(10)
         managed_action_row = QWidget()
         managed_action_row.setObjectName("setup_managed_folders_action_row")
         managed_action_layout = QHBoxLayout(managed_action_row)
         managed_action_layout.setContentsMargins(0, 0, 0, 0)
-        managed_action_layout.setSpacing(8)
+        managed_action_layout.setSpacing(9)
         migrate_managed_folders_button.setSizePolicy(
             QSizePolicy.Policy.Maximum,
             QSizePolicy.Policy.Fixed,
@@ -386,8 +395,8 @@ class SetupConfigurationSurface(QScrollArea):
             QSizePolicy.Policy.Maximum,
         )
         setup_output_layout = QVBoxLayout(setup_output_group)
-        setup_output_layout.setContentsMargins(12, 12, 12, 12)
-        setup_output_layout.setSpacing(6)
+        setup_output_layout.setContentsMargins(14, 14, 14, 14)
+        setup_output_layout.setSpacing(8)
         setup_output_layout.addWidget(setup_output_box)
 
         content_widget = QWidget()
@@ -405,14 +414,14 @@ class SetupConfigurationSurface(QScrollArea):
         workspace_band.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         workspace_layout = QHBoxLayout(workspace_band)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
-        workspace_layout.setSpacing(14)
+        workspace_layout.setSpacing(16)
 
         main_column = QWidget()
         main_column.setObjectName("setup_surface_main_column")
-        main_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        main_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         main_layout = QVBoxLayout(main_column)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(12)
+        main_layout.setSpacing(14)
         main_layout.addWidget(main_intro_label)
         main_layout.addWidget(quickstart_panel)
         main_layout.addWidget(setup_group)
@@ -421,18 +430,18 @@ class SetupConfigurationSurface(QScrollArea):
 
         secondary_column = QWidget()
         secondary_column.setObjectName("setup_surface_secondary_column")
-        secondary_column.setMinimumWidth(292)
+        secondary_column.setMinimumWidth(286)
         secondary_column.setMaximumWidth(360)
-        secondary_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        secondary_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         secondary_layout = QVBoxLayout(secondary_column)
         secondary_layout.setContentsMargins(0, 0, 0, 0)
-        secondary_layout.setSpacing(10)
+        secondary_layout.setSpacing(12)
 
         secondary_panel = QFrame()
         secondary_panel.setObjectName("setup_secondary_panel")
         secondary_panel_layout = QVBoxLayout(secondary_panel)
-        secondary_panel_layout.setContentsMargins(12, 12, 12, 12)
-        secondary_panel_layout.setSpacing(10)
+        secondary_panel_layout.setContentsMargins(14, 14, 14, 14)
+        secondary_panel_layout.setSpacing(12)
         secondary_section_label = QLabel(localizer.text("setup.support"))
         secondary_section_label.setObjectName("setup_secondary_section_label")
         secondary_section_label.setVisible(False)
@@ -469,6 +478,13 @@ class SetupConfigurationSurface(QScrollArea):
         self.nexus_label = nexus_label
         self.language_label = language_label
         self.app_updates_label = app_updates_label
+        self.workspace_layout = workspace_layout
+        self.main_layout = main_layout
+        self.secondary_layout = secondary_layout
+        self.secondary_panel_layout = secondary_panel_layout
+        self.backup_layout = backup_layout
+        self.managed_layout = managed_layout
+        self.setup_output_layout = setup_output_layout
         self.backup_intro_label = backup_intro_label
         self.secondary_section_label = secondary_section_label
         self.secondary_intro_label = secondary_intro_label
@@ -480,6 +496,77 @@ class SetupConfigurationSurface(QScrollArea):
         self.managed_group = managed_group
         self.backup_group = backup_group
         self.setup_output_group = setup_output_group
+
+    def set_compact_mode(self, compact: bool) -> None:
+        self.workspace_layout.setSpacing(10 if compact else 16)
+        self.workspace_layout.setStretch(0, 10 if compact else 8)
+        self.workspace_layout.setStretch(1, 3 if compact else 3)
+        self.main_layout.setSpacing(8 if compact else 14)
+        self.secondary_column.setMinimumWidth(246 if compact else 286)
+        self.secondary_column.setMaximumWidth(296 if compact else 360)
+        self.secondary_layout.setSpacing(8 if compact else 12)
+        self.secondary_panel_layout.setContentsMargins(
+            10 if compact else 14,
+            10 if compact else 14,
+            10 if compact else 14,
+            10 if compact else 14,
+        )
+        self.secondary_panel_layout.setSpacing(8 if compact else 12)
+        for layout in (
+            self.backup_layout,
+            self.managed_layout,
+            self.setup_output_layout,
+        ):
+            layout.setContentsMargins(
+                10 if compact else 14,
+                10 if compact else 14,
+                10 if compact else 14,
+                10 if compact else 14,
+            )
+            layout.setSpacing(6 if compact else 10)
+
+        for field_row, buttons in self._compact_field_rows:
+            field_row.setDirection(QBoxLayout.Direction.LeftToRight)
+            field_row.setSpacing(6 if compact else 9)
+            for button in buttons:
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Fixed,
+                )
+
+        for value_row, buttons in self._compact_read_only_rows:
+            value_row.setDirection(
+                QBoxLayout.Direction.TopToBottom
+                if compact
+                else QBoxLayout.Direction.LeftToRight
+            )
+            value_row.setSpacing(6 if compact else 9)
+            for button in buttons:
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Fixed,
+                )
+
+        for grid_layout, buttons in self._compact_action_grids:
+            while grid_layout.count():
+                item = grid_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.setParent(None)
+
+            columns = 1 if compact else 2
+            for index, button in enumerate(buttons):
+                row = index // columns
+                column = index % columns
+                grid_layout.addWidget(button, row, column)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Expanding if compact else QSizePolicy.Policy.Preferred,
+                    QSizePolicy.Policy.Fixed,
+                )
+            grid_layout.setHorizontalSpacing(8 if compact else 9)
+            grid_layout.setVerticalSpacing(6 if compact else 8)
+            grid_layout.setColumnStretch(0, 1)
+            grid_layout.setColumnStretch(1, 1 if not compact else 0)
 
     def retranslate(self, localizer: UiLocalizer) -> None:
         self._localizer = localizer

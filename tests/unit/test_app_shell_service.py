@@ -11,6 +11,7 @@ from typing import Literal
 import pytest
 
 import sdvmm.app.shell_service as shell_service_module
+from sdvmm.app.i18n import get_active_ui_localizer
 import sdvmm.services.sandbox_installer as sandbox_installer_module
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
@@ -76,6 +77,13 @@ from sdvmm.services.app_state_store import (
     save_update_source_intent_overlay,
     update_source_intent_overlay_file,
 )
+
+
+def _assert_contains_any_casefold(text: str, *candidates: str) -> None:
+    lowered = text.casefold()
+    assert any(candidate.casefold() in lowered for candidate in candidates), (
+        f"Expected one of {candidates!r} in text:\n{text}"
+    )
 
 
 def test_load_startup_config_returns_none_when_state_absent(tmp_path: Path) -> None:
@@ -1113,6 +1121,7 @@ def test_is_process_running_reports_running_and_stopped_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
+    monkeypatch.setattr(shell_service_module.os, "name", "nt", raising=False)
     completed = SimpleNamespace(returncode=0, stdout='"SampleGame.exe","4242","Console","1","10,000 K"\n')
 
     monkeypatch.setattr(shell_service_module.subprocess, "run", lambda *args, **kwargs: completed)
@@ -1856,6 +1865,76 @@ def test_inspect_backup_bundle_reports_missing_expected_copied_content(tmp_path:
     assert any("marked copied" in warning for warning in inspection.warnings)
 
 
+def test_inspect_backup_bundle_accepts_windows_style_relative_paths(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    bundle_path = tmp_path / "Exports" / "cross-os-backup"
+    bundle_path.mkdir(parents=True)
+    (bundle_path / "README.txt").write_text("summary", encoding="utf-8")
+    (bundle_path / "manager-state").mkdir(parents=True, exist_ok=True)
+    (bundle_path / "manager-state" / "app-state.json").write_text("{}", encoding="utf-8")
+    manifest = {
+        "bundle_format": "cinderleaf-local-backup",
+        "format_version": 1,
+        "created_at_utc": "2026-03-18T00:00:00Z",
+        "items": [
+            {
+                "key": "app_state",
+                "label": "App state/config",
+                "kind": "file",
+                "status": "copied",
+                "relative_path": "manager-state\\app-state.json",
+                "source_path": "C:\\State\\app-state.json",
+                "note": "Generated from the current export configuration snapshot.",
+            }
+        ],
+        "intentionally_not_included": [],
+    }
+    (bundle_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    inspection = service.inspect_backup_bundle(bundle_path_text=str(bundle_path))
+
+    assert inspection.structurally_usable is True
+    assert inspection.items[0].structure_state == "present"
+    assert inspection.items[0].relative_path == Path("manager-state") / "app-state.json"
+
+
+def test_export_backup_bundle_manifest_relative_paths_are_posix(tmp_path: Path) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    _create_launchable_game_install(game_path)
+    _create_mod(real_mods, "RealAlpha", "Sample.RealAlpha")
+
+    config = AppConfig(
+        game_path=game_path,
+        mods_path=real_mods,
+        app_data_path=tmp_path / "AppData",
+    )
+    save_app_config(state_file, config)
+
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(game_path),
+        mods_dir_text=str(real_mods),
+        sandbox_mods_path_text="",
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=config,
+    )
+
+    manifest = json.loads(exported.manifest_path.read_text(encoding="utf-8"))
+    manifest_paths = [item["relative_path"] for item in manifest["items"]]
+    assert all("\\" not in path for path in manifest_paths)
+
+
 def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
     tmp_path: Path,
 ) -> None:
@@ -1949,7 +2028,8 @@ def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
     entries_by_unique_id = {entry.unique_id: entry for entry in result.mod_entries}
     items_by_key = {item.key: item for item in result.items}
     config_entries_by_path = {
-        (entry.bundle_item_key, str(entry.relative_path)): entry for entry in result.config_entries
+        (entry.bundle_item_key, str(entry.relative_path).replace("/", "\\").casefold()): entry
+        for entry in result.config_entries
     }
 
     assert entries_by_unique_id["Sample.RealAlpha"].state == "missing_locally"
@@ -1959,11 +2039,11 @@ def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
     assert items_by_key["real_mod_configs"].state == "safe_to_restore_later"
     assert items_by_key["sandbox_mod_configs"].state == "safe_to_restore_later"
     assert (
-        config_entries_by_path[("real_mod_configs", "RealAlpha\\config.json")].state
+        config_entries_by_path[("real_mod_configs", "RealAlpha\\config.json".casefold())].state
         == "missing_locally"
     )
     assert (
-        config_entries_by_path[("sandbox_mod_configs", "SandboxBeta\\config\\panel.json")].state
+        config_entries_by_path[("sandbox_mod_configs", "SandboxBeta\\config\\panel.json".casefold())].state
         == "same_content"
     )
     assert result.safe_mod_count == 2
@@ -3076,9 +3156,18 @@ def test_build_mods_compare_text_includes_category_guide_and_unique_ids(tmp_path
 
     text = build_mods_compare_text(result)
 
-    assert "Category guide:" in text
-    assert "version mismatch: the same UniqueID exists in both places, but the versions differ." in text
-    assert "ambiguous match: duplicate folders share a UniqueID" in text
+    _assert_contains_any_casefold(text, "Category guide:", "Guia de categorias:", "Guia das categorias:")
+    _assert_contains_any_casefold(
+        text,
+        "version mismatch: the same UniqueID exists in both places, but the versions differ.",
+        "versão diferente",
+    )
+    _assert_contains_any_casefold(
+        text,
+        "ambiguous match: duplicate folders share a UniqueID",
+        "Ambígua",
+        "ambígua",
+    )
     assert "MismatchReal (Sample.Mismatch)" in text
     assert "DuplicateA (Sample.Duplicate)" in text
 
@@ -4228,7 +4317,10 @@ def test_build_sandbox_install_plan_blocks_target_matching_configured_real_mods(
             '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
         )
 
-    with pytest.raises(AppShellError, match="matches configured real Mods path"):
+    with pytest.raises(
+        AppShellError,
+        match="(matches configured real Mods path|coincide com o caminho configurado dos Mods reais)",
+    ):
         service.build_sandbox_install_plan(
             str(package),
             str(real_mods),
@@ -4258,7 +4350,10 @@ def test_build_sandbox_install_plan_blocks_target_matching_configured_real_mods_
             '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
         )
 
-    with pytest.raises(AppShellError, match="matches configured real Mods path"):
+    with pytest.raises(
+        AppShellError,
+        match="(matches configured real Mods path|coincide com o caminho configurado dos Mods reais)",
+    ):
         service.build_sandbox_install_plan(
             str(package),
             str(symlink_target),
@@ -4804,7 +4899,9 @@ def test_review_install_execution_allows_sandbox_plan_without_explicit_approval(
     assert review.allowed is True
     assert review.requires_explicit_approval is False
     assert review.decision_code == "sandbox_allowed"
-    assert "Sandbox install can proceed" in review.message
+    localizer = get_active_ui_localizer()
+    assert localizer.text("install.review.no_approval") in review.message
+    assert str(review.summary.total_entry_count) in review.message
     assert review.summary == service.build_install_execution_summary(plan)
 
 
@@ -4880,7 +4977,8 @@ def test_review_install_execution_allows_mixed_action_plan_when_no_entries_block
     assert review.decision_code == "sandbox_allowed"
     assert review.summary.has_existing_targets_to_replace is True
     assert review.summary.has_archive_writes is True
-    assert "archive/replace actions" in review.message
+    localizer = get_active_ui_localizer()
+    assert localizer.text("install.review.inspect_archive_replace") in review.message
 
 
 def test_review_install_execution_aligns_with_existing_summary_fields(tmp_path: Path) -> None:
@@ -6270,7 +6368,10 @@ def test_build_install_plan_blocks_real_destination_mismatch(tmp_path: Path) -> 
             '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
         )
 
-    with pytest.raises(AppShellError, match="must exactly match the configured real Mods path"):
+    with pytest.raises(
+        AppShellError,
+        match="(must exactly match the configured real Mods path|precisa corresponder exatamente ao caminho configurado dos Mods reais)",
+    ):
         service.build_install_plan(
             package_path_text=str(package),
             install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
@@ -7615,7 +7716,13 @@ def test_correlate_discovery_results_marks_installed_update_and_provider_alignme
     assert item.installed_match_unique_id == "spacechase0.SpaceCore"
     assert item.update_state == "update_available"
     assert item.provider_relation == "provider_aligned"
-    assert "matches tracked update provider" in (item.provider_relation_note or "")
+    note = item.provider_relation_note or ""
+    _assert_contains_any_casefold(
+        note,
+        "matches tracked update provider",
+        "corresponde ao provedor rastreado",
+        "provedor de atualização rastreado",
+    )
 
 
 def test_correlate_discovery_results_marks_provider_mismatch(tmp_path: Path) -> None:
@@ -7665,7 +7772,13 @@ def test_correlate_discovery_results_marks_provider_mismatch(tmp_path: Path) -> 
     assert len(correlations) == 1
     item = correlations[0]
     assert item.provider_relation == "provider_mismatch"
-    assert "differs from tracked update provider" in (item.provider_relation_note or "")
+    note = item.provider_relation_note or ""
+    _assert_contains_any_casefold(
+        note,
+        "differs from tracked update provider",
+        "difere do provedor rastreado",
+        "difere do provedor de atualização rastreado",
+    )
 
 
 def test_correlate_discovery_results_marks_installed_without_update_context(tmp_path: Path) -> None:
@@ -7699,7 +7812,7 @@ def test_correlate_discovery_results_marks_installed_without_update_context(tmp_
     assert item.installed_match_unique_id == "sample.Mod"
     assert item.update_state is None
     assert item.provider_relation == "no_update_provider_context"
-    assert "Run Check updates" in item.next_step
+    _assert_contains_any_casefold(item.next_step, "Run Check updates", "Execute Verificar atualizações", "Use Verificar atualizações")
 
 
 def test_get_nexus_status_reports_saved_config_state(tmp_path: Path) -> None:
@@ -8264,8 +8377,8 @@ def test_correlate_intake_with_updates_marks_update_available_match(tmp_path: Pa
 
     assert correlation.actionable is True
     assert correlation.matched_update_available_unique_ids == ("Sample.Exists",)
-    assert "update available" in correlation.summary.casefold()
-    assert "open as update" in correlation.next_step.casefold()
+    _assert_contains_any_casefold(correlation.summary, "update available", "atualização disponível")
+    _assert_contains_any_casefold(correlation.next_step, "open as update", "abrir como atualização")
 
 
 def test_correlate_intake_with_updates_prefers_guided_update_match(tmp_path: Path) -> None:
@@ -8286,9 +8399,9 @@ def test_correlate_intake_with_updates_prefers_guided_update_match(tmp_path: Pat
     )
 
     assert correlation.matched_guided_update_unique_ids == ("Sample.Exists",)
-    assert "guided update target" in correlation.summary.casefold()
+    _assert_contains_any_casefold(correlation.summary, "guided update target", "alvo de atualização guiada", "alvo guiado de atualização")
     assert correlation.actionable is True
-    assert "open as update" in correlation.next_step.casefold()
+    _assert_contains_any_casefold(correlation.next_step, "open as update", "abrir como atualização")
 
 
 def test_correlate_intake_with_updates_keeps_unusable_non_actionable(tmp_path: Path) -> None:
@@ -8307,7 +8420,13 @@ def test_correlate_intake_with_updates_keeps_unusable_non_actionable(tmp_path: P
 
     assert correlation.actionable is False
     assert correlation.matched_update_available_unique_ids == ()
-    assert "unusable" in correlation.summary.casefold()
+    _assert_contains_any_casefold(
+        correlation.summary,
+        "unusable",
+        "não utilizável",
+        "inutilizável",
+        "não pode ser usado no planejamento da instalação",
+    )
 
 
 def test_correlate_intake_with_updates_new_install_candidate_has_default_flow_message(
@@ -8327,8 +8446,13 @@ def test_correlate_intake_with_updates_new_install_candidate_has_default_flow_me
     )
 
     assert correlation.actionable is True
-    assert "new install candidate" in correlation.summary.casefold()
-    assert "plan install" in correlation.next_step.casefold()
+    _assert_contains_any_casefold(correlation.summary, "new install candidate", "candidato de nova instalação", "novo candidato de instalação")
+    _assert_contains_any_casefold(
+        correlation.next_step,
+        "plan install",
+        "planejar instalação",
+        "planejar a instalação",
+    )
 
 
 def test_correlate_intake_with_updates_flags_remote_page_newer_but_package_same_version(

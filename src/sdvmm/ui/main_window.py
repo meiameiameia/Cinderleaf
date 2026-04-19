@@ -19,20 +19,24 @@ from PySide6.QtCore import QTimer
 from PySide6.QtCore import QThreadPool
 from PySide6.QtCore import QUrl
 from PySide6.QtCore import QRectF
+from PySide6.QtCore import QSize
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QBrush
 from PySide6.QtGui import QColor
 from PySide6.QtGui import QFont
+from PySide6.QtGui import QIcon
 from PySide6.QtGui import QPainter
 from PySide6.QtGui import QImage
 from PySide6.QtGui import QPalette
+from PySide6.QtGui import QPen
 from PySide6.QtGui import QPixmap
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -55,6 +59,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QScrollArea,
     QSplitter,
+    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -202,7 +207,6 @@ from sdvmm.ui.top_context_surface import TopContextSurface
 
 _APP_PACKAGE_NAME = "stardew-mod-manager"
 _APP_BRAND_NAME = "Cinderleaf"
-_APP_BRAND_DESCRIPTOR = "for Stardew Valley"
 _APP_RUNTIME_ICON_NAMES = (
     "cinderleaf-icon.svg",
     "app-icon.png",
@@ -251,7 +255,7 @@ def _no_plan_facts_text() -> str:
         "Blocked entries: -"
     )
 def _no_restore_import_planning_summary_text() -> str:
-    return get_active_ui_localizer().text("setup.backup.inspect_summary")
+    return get_active_ui_localizer().text("setup.backup.plan_summary")
 
 
 def _no_active_backup_bundle_text() -> str:
@@ -300,6 +304,7 @@ _SMAPI_TROUBLESHOOTING_DETAILS_MAX_HEIGHT = 96
 _SMAPI_TROUBLESHOOTING_DETAILS_COMPACT_MIN_HEIGHT = 88
 _SMAPI_TROUBLESHOOTING_DETAILS_COMPACT_MAX_HEIGHT = 136
 _SMAPI_LAUNCH_EXIT_REFRESH_ATTEMPTS = 20
+_WORKSPACE_ICON_SIZE = 18
 
 
 @dataclass(frozen=True, slots=True)
@@ -1339,6 +1344,10 @@ class MainWindow(QMainWindow):
         self._pending_post_operation_callback: Callable[[], None] | None = None
         self._background_action_buttons: tuple[QPushButton, ...] = tuple()
         self._packages_watch_controls: tuple[QWidget, ...] = tuple()
+        self._top_context_manual_override = False
+        self._workspace_nav_manual_override = False
+        self._workspace_nav_collapsed = False
+        self._workspace_nav_release_status_requested_visible = False
         self._startup_checks_scheduled = False
         self._startup_checks_completed = False
         self._startup_auto_scan_started = False
@@ -1837,7 +1846,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._package_queue_list.setMinimumHeight(220)
+        self._package_queue_list.setMinimumHeight(248)
         self._package_queue_list.setMaximumHeight(16777215)
         self._package_queue_filter_input = QLineEdit()
         self._package_queue_filter_input.setObjectName("packages_queue_filter_input")
@@ -2188,6 +2197,10 @@ class MainWindow(QMainWindow):
         self._backup_bundle_inspection_summary_label.setObjectName(
             "setup_backup_bundle_inspection_summary_label"
         )
+        self._backup_bundle_inspection_summary_label.setProperty(
+            "translationKey",
+            "setup.inspect_backup_summary",
+        )
         self._backup_bundle_inspection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._backup_bundle_inspection_summary_label)
         self._restore_import_planning_summary_label = QLabel(
@@ -2197,6 +2210,7 @@ class MainWindow(QMainWindow):
             "setup_restore_import_planning_summary_label"
         )
         self._restore_import_planning_summary_label.setWordWrap(True)
+        self._restore_import_planning_summary_label.setVisible(False)
         _set_auxiliary_label_style(self._restore_import_planning_summary_label)
         self._active_backup_bundle_label = QLabel(_no_active_backup_bundle_text())
         self._active_backup_bundle_label.setObjectName("setup_active_backup_bundle_label")
@@ -2412,12 +2426,12 @@ class MainWindow(QMainWindow):
         header = QFrame()
         header.setObjectName("workspace_page_header")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(2, 2, 2, 6)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(0, 0, 0, 2)
+        header_layout.setSpacing(6)
 
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(2)
+        text_layout.setSpacing(1)
 
         eyebrow_label = QLabel(eyebrow)
         eyebrow_label.setObjectName("workspace_page_eyebrow")
@@ -2445,30 +2459,30 @@ class MainWindow(QMainWindow):
         rail = QFrame()
         rail.setObjectName("workspace_nav_rail")
         rail.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        rail.setMinimumWidth(214)
-        rail.setMaximumWidth(228)
+        rail.setMinimumWidth(194)
+        rail.setMaximumWidth(212)
 
         rail_layout = QVBoxLayout(rail)
-        rail_layout.setContentsMargins(10, 10, 10, 10)
-        rail_layout.setSpacing(8)
+        rail_layout.setContentsMargins(8, 8, 8, 8)
+        rail_layout.setSpacing(6)
 
         brand_panel = QFrame()
         brand_panel.setObjectName("workspace_nav_brand_panel")
         brand_layout = QVBoxLayout(brand_panel)
-        brand_layout.setContentsMargins(10, 10, 10, 10)
-        brand_layout.setSpacing(6)
+        brand_layout.setContentsMargins(8, 8, 8, 8)
+        brand_layout.setSpacing(4)
 
         brand_header = QWidget()
         brand_header.setObjectName("workspace_nav_brand_header")
         brand_header_layout = QHBoxLayout(brand_header)
         brand_header_layout.setContentsMargins(0, 0, 0, 0)
-        brand_header_layout.setSpacing(10)
+        brand_header_layout.setSpacing(6)
 
         brand_icon = QLabel()
         brand_icon.setObjectName("workspace_nav_brand_icon")
-        brand_icon.setFixedSize(46, 46)
+        brand_icon.setFixedSize(38, 38)
         brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand_icon_pixmap = _resolve_brand_icon_pixmap(40)
+        brand_icon_pixmap = _resolve_brand_icon_pixmap(32)
         if brand_icon_pixmap is not None:
             brand_icon.setPixmap(brand_icon_pixmap)
 
@@ -2486,22 +2500,40 @@ class MainWindow(QMainWindow):
         brand_release_status.setObjectName("workspace_nav_brand_release_status")
         brand_release_status.setWordWrap(True)
         brand_release_status.setVisible(False)
-        brand_subtitle = QLabel(_APP_BRAND_DESCRIPTOR)
+        brand_subtitle = QLabel(self._tr("shell.brand_subtitle"))
         brand_subtitle.setObjectName("workspace_nav_brand_subtitle")
         brand_subtitle.setWordWrap(True)
+
+        rail_toggle_button = QPushButton()
+        rail_toggle_button.setObjectName("workspace_nav_toggle_button")
+        rail_toggle_button.setFixedSize(24, 24)
+        rail_toggle_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        rail_toggle_button.setProperty("buttonRole", "nav-toggle")
+        rail_toggle_button.clicked.connect(self._toggle_workspace_nav_rail)
+        rail_toggle_button.style().unpolish(rail_toggle_button)
+        rail_toggle_button.style().polish(rail_toggle_button)
 
         brand_text_layout.addWidget(brand_title)
         brand_text_layout.addWidget(brand_subtitle)
         brand_text_layout.addWidget(brand_version)
 
         brand_header_layout.addWidget(brand_icon)
-        brand_header_layout.addWidget(brand_text_stack, 1)
+        brand_header_layout.addStretch(1)
+        brand_header_layout.addWidget(rail_toggle_button)
 
         brand_layout.addWidget(brand_header)
+        brand_layout.addWidget(brand_text_stack)
         brand_layout.addWidget(brand_release_status)
         rail_layout.addWidget(brand_panel)
         self._workspace_nav_brand_version_label = brand_version
         self._workspace_nav_release_status_label = brand_release_status
+        self._workspace_nav_brand_text_stack = brand_text_stack
+        self._workspace_nav_brand_header_layout = brand_header_layout
+        self._workspace_nav_brand_layout = brand_layout
+        self._workspace_nav_toggle_button = rail_toggle_button
+        self._workspace_nav_brand_panel = brand_panel
+        self._workspace_nav_brand_icon_label = brand_icon
+        self._workspace_nav_brand_subtitle_label = brand_subtitle
 
         section_label = QLabel(self._tr("shell.workspaces"))
         section_label.setObjectName("workspace_nav_section_label")
@@ -2512,7 +2544,7 @@ class MainWindow(QMainWindow):
         nav_buttons_widget.setObjectName("workspace_nav_buttons_widget")
         nav_buttons_layout = QVBoxLayout(nav_buttons_widget)
         nav_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        nav_buttons_layout.setSpacing(6)
+        nav_buttons_layout.setSpacing(3)
 
         self._workspace_nav_buttons: dict[QWidget, QPushButton] = {}
         for index in range(context_tabs.count()):
@@ -2525,7 +2557,11 @@ class MainWindow(QMainWindow):
             button.setProperty("navRole", "workspace")
             nav_key = str(page.property("workspaceNavKey") or label.lower())
             button.setObjectName(f"workspace_nav_button_{nav_key}")
-            button.setFixedHeight(30)
+            button.setProperty("workspaceLabel", label)
+            button.setToolTip(label)
+            button.setIcon(_workspace_nav_icon(nav_key))
+            button.setIconSize(QSize(16, 16))
+            button.setFixedHeight(26)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(
                 lambda checked=False, target=page: self._context_tabs.setCurrentWidget(target)
@@ -2537,6 +2573,8 @@ class MainWindow(QMainWindow):
 
         _apply_surface_shadow(rail, blur_radius=22, y_offset=2, alpha=72)
         _apply_surface_shadow(brand_panel, blur_radius=16, y_offset=1, alpha=52)
+        self._workspace_nav_rail = rail
+        self._apply_workspace_nav_state()
         return rail
 
     def _build_page_shell(
@@ -2553,8 +2591,8 @@ class MainWindow(QMainWindow):
         page = QWidget()
         page.setObjectName(object_name)
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(10, 10, 10, 10)
-        page_layout.setSpacing(8)
+        page_layout.setContentsMargins(4, 4, 4, 4)
+        page_layout.setSpacing(4)
         page_layout.addWidget(
             self._build_page_header(
                 eyebrow=eyebrow,
@@ -2599,6 +2637,29 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(body_widget)
         scroll_area.setWidget(content)
         return scroll_area
+
+    @staticmethod
+    def _set_compact_button_row_direction(
+        layout: QBoxLayout | None,
+        *,
+        compact: bool,
+        compact_direction: QBoxLayout.Direction = QBoxLayout.Direction.TopToBottom,
+        compact_button_policy: QSizePolicy.Policy = QSizePolicy.Policy.Expanding,
+    ) -> None:
+        if layout is None:
+            return
+        layout.setDirection(
+            compact_direction if compact else QBoxLayout.Direction.LeftToRight
+        )
+        layout.setSpacing(6 if compact else 8)
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            widget = item.widget()
+            if isinstance(widget, QPushButton):
+                widget.setSizePolicy(
+                    compact_button_policy if compact else QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Fixed,
+                )
 
     def _build_inventory_source_intent_actions_widget(self) -> QFrame:
         widget = QFrame()
@@ -2654,6 +2715,7 @@ class MainWindow(QMainWindow):
         actions_row.addWidget(self._delete_real_profile_button)
         actions_row.addStretch(1)
         layout.addLayout(actions_row)
+        self._inventory_real_profile_actions_row = actions_row
         widget.setVisible(False)
         return widget
 
@@ -2672,6 +2734,7 @@ class MainWindow(QMainWindow):
         actions_row.addWidget(self._delete_sandbox_profile_button)
         actions_row.addStretch(1)
         layout.addLayout(actions_row)
+        self._inventory_sandbox_profile_actions_row = actions_row
         widget.setVisible(False)
         return widget
 
@@ -2684,8 +2747,8 @@ class MainWindow(QMainWindow):
         page = QWidget()
         page.setObjectName("mods_workspace_page")
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(12, 12, 12, 12)
-        page_layout.setSpacing(10)
+        page_layout.setContentsMargins(4, 4, 4, 4)
+        page_layout.setSpacing(4)
 
         page_layout.addWidget(
             self._build_page_header(
@@ -2705,7 +2768,7 @@ class MainWindow(QMainWindow):
         workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
         workspace_splitter.setObjectName("mods_workspace_splitter")
         workspace_splitter.setChildrenCollapsible(False)
-        workspace_splitter.setHandleWidth(6)
+        workspace_splitter.setHandleWidth(4)
         workspace_splitter.setOpaqueResize(True)
 
         table_panel = QGroupBox(self._tr("library.table"))
@@ -2808,6 +2871,7 @@ class MainWindow(QMainWindow):
         selected_actions_row.addWidget(self._rollback_mod_button)
         selected_actions_row.addStretch(1)
         selected_actions_layout.addLayout(selected_actions_row)
+        self._mods_selected_actions_row = selected_actions_row
         inspector_content_layout.addWidget(selected_actions_card)
         inspector_content_layout.addWidget(selection_summary_card)
         inspector_content_layout.addWidget(self._inventory_real_profile_actions_widget)
@@ -2844,6 +2908,7 @@ class MainWindow(QMainWindow):
 
         page_layout.addWidget(workspace_splitter, 1)
 
+        self._mods_page_layout = page_layout
         self._mods_workspace_splitter = workspace_splitter
         self._mods_table_group = table_panel
         self._mods_selection_context_group = inspector_panel
@@ -3083,16 +3148,21 @@ class MainWindow(QMainWindow):
         inventory_controls_panel = QFrame()
         inventory_controls_panel.setObjectName("mods_inventory_controls_panel")
         inventory_controls_panel_layout = QVBoxLayout(inventory_controls_panel)
-        inventory_controls_panel_layout.setContentsMargins(10, 9, 10, 10)
-        inventory_controls_panel_layout.setSpacing(8)
+        inventory_controls_panel_layout.setContentsMargins(12, 11, 12, 12)
+        inventory_controls_panel_layout.setSpacing(10)
+        self._inventory_controls_panel_layout = inventory_controls_panel_layout
         inventory_action_band = QWidget()
         inventory_action_band.setObjectName("mods_inventory_action_band")
         inventory_action_band_layout = QVBoxLayout(inventory_action_band)
         inventory_action_band_layout.setContentsMargins(0, 0, 0, 0)
-        inventory_action_band_layout.setSpacing(5)
-        source_row = QHBoxLayout()
+        inventory_action_band_layout.setSpacing(8)
+        self._inventory_action_band_layout = inventory_action_band_layout
+        source_row_widget = QWidget()
+        source_row_widget.setObjectName("mods_inventory_source_actions_widget")
+        source_row = QHBoxLayout(source_row_widget)
         source_row.setContentsMargins(0, 0, 0, 0)
-        source_row.setSpacing(8)
+        source_row.setSpacing(10)
+        self._inventory_source_row_layout = source_row
         scan_source_label = QLabel(self._tr("library.scan_source"))
         scan_source_label.setProperty("translationKey", "library.scan_source")
         _set_auxiliary_label_style(scan_source_label)
@@ -3117,7 +3187,7 @@ class MainWindow(QMainWindow):
         self._use_suggested_source_button.clicked.connect(self._on_use_selected_mod_suggested_source)
         _set_utility_button_style(self._use_suggested_source_button)
         source_row.addWidget(self._use_suggested_source_button)
-        inventory_action_band_layout.addLayout(source_row)
+        inventory_action_band_layout.addWidget(source_row_widget)
         self._remove_mod_button = QPushButton(self._tr("library.archive_selected_mod"))
         self._remove_mod_button.clicked.connect(self._on_remove_selected_mod)
         self._remove_mod_button.setProperty("translationKey", "library.archive_selected_mod")
@@ -3130,7 +3200,7 @@ class MainWindow(QMainWindow):
         self._launch_vanilla_button.clicked.connect(self._on_launch_vanilla)
         self._launch_vanilla_button.setProperty("translationKey", "library.launch_stardew")
         _set_secondary_button_style(self._launch_vanilla_button)
-        self._launch_vanilla_button.setFixedHeight(26)
+        self._launch_vanilla_button.setFixedHeight(28)
         self._launch_vanilla_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3139,7 +3209,7 @@ class MainWindow(QMainWindow):
         self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
         self._launch_smapi_button.setProperty("translationKey", "library.launch_smapi")
         _set_primary_button_style(self._launch_smapi_button)
-        self._launch_smapi_button.setFixedHeight(27)
+        self._launch_smapi_button.setFixedHeight(29)
         self._launch_smapi_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3149,7 +3219,7 @@ class MainWindow(QMainWindow):
         self._launch_sandbox_dev_button.setProperty("translationKey", "library.launch_sandbox")
         self._launch_sandbox_dev_button.clicked.connect(self._on_launch_sandbox_dev)
         _set_secondary_button_style(self._launch_sandbox_dev_button)
-        self._launch_sandbox_dev_button.setFixedHeight(26)
+        self._launch_sandbox_dev_button.setFixedHeight(28)
         self._launch_sandbox_dev_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3158,7 +3228,8 @@ class MainWindow(QMainWindow):
         launch_actions_widget.setObjectName("mods_inventory_launch_actions_widget")
         launch_actions_layout = QHBoxLayout(launch_actions_widget)
         launch_actions_layout.setContentsMargins(0, 0, 0, 0)
-        launch_actions_layout.setSpacing(8)
+        launch_actions_layout.setSpacing(10)
+        self._launch_actions_layout = launch_actions_layout
         launch_actions_layout.addWidget(self._launch_vanilla_button)
         launch_actions_layout.addWidget(self._launch_smapi_button)
         launch_actions_layout.addWidget(self._launch_sandbox_dev_button)
@@ -3176,8 +3247,9 @@ class MainWindow(QMainWindow):
         game_smapi_panel = QFrame()
         game_smapi_panel.setObjectName("mods_smapi_controls_panel")
         game_smapi_panel_layout = QVBoxLayout(game_smapi_panel)
-        game_smapi_panel_layout.setContentsMargins(10, 10, 10, 10)
-        game_smapi_panel_layout.setSpacing(8)
+        game_smapi_panel_layout.setContentsMargins(12, 11, 12, 12)
+        game_smapi_panel_layout.setSpacing(10)
+        self._game_smapi_panel_layout = game_smapi_panel_layout
         self._check_smapi_update_button = QPushButton(self._tr("library.check_smapi_version"))
         self._check_smapi_update_button.clicked.connect(self._on_check_smapi_update)
         self._check_smapi_update_button.setProperty("translationKey", "library.check_smapi_version")
@@ -3218,14 +3290,14 @@ class MainWindow(QMainWindow):
         smapi_primary_row.setObjectName("mods_smapi_primary_row")
         smapi_primary_row_layout = QHBoxLayout(smapi_primary_row)
         smapi_primary_row_layout.setContentsMargins(0, 0, 0, 0)
-        smapi_primary_row_layout.setSpacing(8)
+        smapi_primary_row_layout.setSpacing(10)
         smapi_primary_row_layout.addWidget(self._check_smapi_update_button)
         smapi_primary_row_layout.addWidget(self._check_smapi_log_button)
         smapi_secondary_row = QWidget()
         smapi_secondary_row.setObjectName("mods_smapi_secondary_row")
         smapi_secondary_row_layout = QHBoxLayout(smapi_secondary_row)
         smapi_secondary_row_layout.setContentsMargins(0, 0, 0, 0)
-        smapi_secondary_row_layout.setSpacing(8)
+        smapi_secondary_row_layout.setSpacing(10)
         smapi_secondary_row_layout.addWidget(self._load_smapi_log_button)
         smapi_secondary_row_layout.addWidget(self._open_smapi_page_button)
         game_smapi_panel_layout.addWidget(smapi_primary_row)
@@ -3253,13 +3325,13 @@ class MainWindow(QMainWindow):
         intake_tab = QWidget()
         intake_layout = QVBoxLayout(intake_tab)
         intake_layout.setContentsMargins(0, 0, 0, 0)
-        intake_layout.setSpacing(12)
+        intake_layout.setSpacing(14)
         packages_top_grid = QWidget()
         packages_top_grid.setObjectName("packages_top_grid")
         packages_top_grid_layout = QGridLayout(packages_top_grid)
         packages_top_grid_layout.setContentsMargins(0, 0, 0, 0)
-        packages_top_grid_layout.setHorizontalSpacing(8)
-        packages_top_grid_layout.setVerticalSpacing(8)
+        packages_top_grid_layout.setHorizontalSpacing(12)
+        packages_top_grid_layout.setVerticalSpacing(12)
         inspect_group = QGroupBox(self._tr("packages.added_package"))
         inspect_group.setObjectName("packages_import_group")
         inspect_group.setProperty("translationKey", "packages.added_package")
@@ -3269,9 +3341,9 @@ class MainWindow(QMainWindow):
         inspect_group.setParent(packages_top_grid)
         self._package_inspection_group = inspect_group
         inspect_layout = QGridLayout(inspect_group)
-        inspect_layout.setContentsMargins(8, 6, 8, 6)
-        inspect_layout.setHorizontalSpacing(8)
-        inspect_layout.setVerticalSpacing(4)
+        inspect_layout.setContentsMargins(12, 10, 12, 12)
+        inspect_layout.setHorizontalSpacing(10)
+        inspect_layout.setVerticalSpacing(6)
         inspect_layout.setColumnStretch(1, 1)
         downloaded_zip_label = QLabel(self._tr("packages.downloaded_zip_files"))
         downloaded_zip_label.setProperty("translationKey", "packages.downloaded_zip_files")
@@ -3286,11 +3358,13 @@ class MainWindow(QMainWindow):
         watcher_group.setFlat(True)
         watcher_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         watcher_layout = QGridLayout(watcher_group)
-        watcher_layout.setContentsMargins(6, 4, 6, 4)
-        watcher_layout.setHorizontalSpacing(8)
-        watcher_layout.setVerticalSpacing(3)
-        watcher_layout.setColumnStretch(1, 1)
+        watcher_layout.setContentsMargins(12, 10, 12, 12)
+        watcher_layout.setHorizontalSpacing(10)
+        watcher_layout.setVerticalSpacing(6)
+        watcher_layout.setColumnStretch(0, 1)
         watch_actions = QHBoxLayout()
+        watch_actions.setContentsMargins(0, 0, 0, 0)
+        watch_actions.setSpacing(10)
         browse_downloads_button = QPushButton(self._tr("packages.choose_folder"))
         browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
         browse_downloads_button.setProperty("translationKey", "packages.choose_folder")
@@ -3304,10 +3378,11 @@ class MainWindow(QMainWindow):
         primary_path_actions_widget.setObjectName("packages_watcher_primary_actions_widget")
         primary_path_actions_layout = QHBoxLayout(primary_path_actions_widget)
         primary_path_actions_layout.setContentsMargins(0, 0, 0, 0)
-        primary_path_actions_layout.setSpacing(8)
+        primary_path_actions_layout.setSpacing(10)
         primary_path_actions_layout.addWidget(browse_downloads_button)
         primary_path_actions_layout.addWidget(open_downloads_button)
         primary_path_actions_layout.addStretch(1)
+        self._packages_primary_path_actions_layout = primary_path_actions_layout
         browse_secondary_downloads_button = QPushButton(self._tr("packages.choose_folder_2"))
         browse_secondary_downloads_button.clicked.connect(
             self._on_browse_secondary_watched_downloads
@@ -3329,10 +3404,11 @@ class MainWindow(QMainWindow):
         )
         secondary_path_actions_layout = QHBoxLayout(secondary_path_actions_widget)
         secondary_path_actions_layout.setContentsMargins(0, 0, 0, 0)
-        secondary_path_actions_layout.setSpacing(8)
+        secondary_path_actions_layout.setSpacing(10)
         secondary_path_actions_layout.addWidget(browse_secondary_downloads_button)
         secondary_path_actions_layout.addWidget(open_secondary_downloads_button)
         secondary_path_actions_layout.addStretch(1)
+        self._packages_secondary_path_actions_layout = secondary_path_actions_layout
         watcher_scope_label = QLabel(self._tr("packages.scope"))
         watcher_scope_label.setWordWrap(True)
         watcher_scope_label.setProperty("translationKey", "packages.scope")
@@ -3349,23 +3425,24 @@ class MainWindow(QMainWindow):
         _set_secondary_button_style(stop_watch_button)
         watch_actions.addWidget(stop_watch_button)
         watch_actions.addStretch(1)
+        self._packages_runtime_actions_layout = watch_actions
         watcher_runtime_actions_widget = QWidget()
         watcher_runtime_actions_widget.setObjectName(
             "packages_watcher_runtime_actions_widget"
         )
         watcher_runtime_actions_widget.setLayout(watch_actions)
-        watcher_layout.addWidget(watcher_runtime_actions_widget, 0, 1, 1, 4)
+        watcher_layout.addWidget(watcher_runtime_actions_widget, 0, 0)
         watched_downloads_label = QLabel(self._tr("packages.watched_path_1"))
         watched_downloads_label.setProperty("translationKey", "packages.watched_path_1")
         watcher_layout.addWidget(watched_downloads_label, 1, 0)
-        watcher_layout.addWidget(self._watched_downloads_path_input, 1, 1, 1, 4)
-        watcher_layout.addWidget(primary_path_actions_widget, 2, 1, 1, 4)
+        watcher_layout.addWidget(self._watched_downloads_path_input, 2, 0)
+        watcher_layout.addWidget(primary_path_actions_widget, 3, 0)
         secondary_downloads_label = QLabel(self._tr("packages.watched_path_2"))
         secondary_downloads_label.setProperty("translationKey", "packages.watched_path_2")
-        watcher_layout.addWidget(secondary_downloads_label, 3, 0)
-        watcher_layout.addWidget(self._secondary_watched_downloads_path_input, 3, 1, 1, 4)
-        watcher_layout.addWidget(secondary_path_actions_widget, 4, 1, 1, 4)
-        watcher_layout.addWidget(watcher_scope_label, 5, 1, 1, 4)
+        watcher_layout.addWidget(secondary_downloads_label, 4, 0)
+        watcher_layout.addWidget(self._secondary_watched_downloads_path_input, 5, 0)
+        watcher_layout.addWidget(secondary_path_actions_widget, 6, 0)
+        watcher_layout.addWidget(watcher_scope_label, 7, 0)
         self._start_watch_button = start_watch_button
         self._packages_watch_controls = (
             watcher_group,
@@ -3379,9 +3456,9 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
         )
         inspection_result_layout = QGridLayout(inspection_result_group)
-        inspection_result_layout.setContentsMargins(8, 6, 8, 6)
-        inspection_result_layout.setHorizontalSpacing(8)
-        inspection_result_layout.setVerticalSpacing(4)
+        inspection_result_layout.setContentsMargins(12, 10, 12, 12)
+        inspection_result_layout.setHorizontalSpacing(10)
+        inspection_result_layout.setVerticalSpacing(6)
         inspection_result_layout.addWidget(self._package_inspection_summary_label, 0, 0, 1, 2)
         inspection_selector_label = QLabel(self._tr("packages.inspected_package"))
         inspection_selector_label.setObjectName("packages_intake_inspection_selector_label")
@@ -3403,14 +3480,17 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
         )
         packages_output_layout = QVBoxLayout(packages_output_group)
-        packages_output_layout.setContentsMargins(8, 6, 8, 6)
-        packages_output_layout.setSpacing(4)
+        packages_output_layout.setContentsMargins(12, 10, 12, 12)
+        packages_output_layout.setSpacing(6)
         packages_output_layout.addWidget(self._packages_output_box)
         packages_top_grid_layout.addWidget(packages_output_group, 2, 1)
         self._packages_output_group = packages_output_group
         packages_output_group.setVisible(False)
-        packages_top_grid_layout.setColumnStretch(0, 3)
-        packages_top_grid_layout.setColumnStretch(1, 2)
+        packages_top_grid_layout.setColumnStretch(0, 8)
+        packages_top_grid_layout.setColumnStretch(1, 3)
+        packages_top_grid_layout.setRowStretch(2, 1)
+        self._packages_top_grid_layout = packages_top_grid_layout
+        self._packages_watcher_group = watcher_group
 
         detected_group = QGroupBox(self._tr("packages.install_target"))
         detected_group.setObjectName("packages_review_target_group")
@@ -3418,9 +3498,9 @@ class MainWindow(QMainWindow):
         detected_group.setFlat(True)
         detected_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         detected_layout = QGridLayout(detected_group)
-        detected_layout.setContentsMargins(8, 10, 8, 6)
-        detected_layout.setHorizontalSpacing(8)
-        detected_layout.setVerticalSpacing(6)
+        detected_layout.setContentsMargins(12, 12, 12, 10)
+        detected_layout.setHorizontalSpacing(10)
+        detected_layout.setVerticalSpacing(8)
         detected_layout.setColumnStretch(1, 1)
         detected_layout.setRowStretch(4, 1)
         self._browse_package_button.clicked.connect(self._on_browse_zip)
@@ -3431,7 +3511,7 @@ class MainWindow(QMainWindow):
         detected_actions_widget.setObjectName("packages_review_actions_widget")
         detected_actions_layout = QHBoxLayout(detected_actions_widget)
         detected_actions_layout.setContentsMargins(0, 0, 0, 0)
-        detected_actions_layout.setSpacing(8)
+        detected_actions_layout.setSpacing(10)
         detected_actions_layout.addStretch(1)
         detected_actions_layout.addWidget(self._browse_package_button)
         detected_actions_layout.addWidget(self._plan_selected_intake_button)
@@ -3442,14 +3522,14 @@ class MainWindow(QMainWindow):
         detected_controls_widget.setObjectName("packages_review_controls_widget")
         detected_controls_layout = QHBoxLayout(detected_controls_widget)
         detected_controls_layout.setContentsMargins(0, 0, 0, 0)
-        detected_controls_layout.setSpacing(12)
+        detected_controls_layout.setSpacing(14)
 
         intake_controls_widget = QWidget()
         intake_controls_widget.setObjectName("packages_intake_controls_widget")
         intake_controls_layout = QGridLayout(intake_controls_widget)
         intake_controls_layout.setContentsMargins(0, 0, 0, 0)
-        intake_controls_layout.setHorizontalSpacing(8)
-        intake_controls_layout.setVerticalSpacing(4)
+        intake_controls_layout.setHorizontalSpacing(10)
+        intake_controls_layout.setVerticalSpacing(6)
         intake_controls_layout.setColumnStretch(1, 1)
         intake_filter_label = QLabel(self._tr("packages.filter"))
         intake_filter_label.setProperty("translationKey", "packages.filter")
@@ -3465,8 +3545,8 @@ class MainWindow(QMainWindow):
         queue_controls_widget.setObjectName("packages_queue_controls_widget")
         queue_controls_layout = QGridLayout(queue_controls_widget)
         queue_controls_layout.setContentsMargins(0, 0, 0, 0)
-        queue_controls_layout.setHorizontalSpacing(8)
-        queue_controls_layout.setVerticalSpacing(4)
+        queue_controls_layout.setHorizontalSpacing(10)
+        queue_controls_layout.setVerticalSpacing(6)
         queue_controls_layout.setColumnStretch(1, 1)
         queue_controls_layout.addWidget(self._packages_compare_target_label, 0, 0)
         queue_controls_layout.addWidget(self._packages_compare_target_combo, 0, 1)
@@ -3489,7 +3569,7 @@ class MainWindow(QMainWindow):
         queue_bulk_actions.setObjectName("packages_queue_bulk_actions_widget")
         queue_bulk_actions_layout = QHBoxLayout(queue_bulk_actions)
         queue_bulk_actions_layout.setContentsMargins(0, 0, 0, 0)
-        queue_bulk_actions_layout.setSpacing(8)
+        queue_bulk_actions_layout.setSpacing(10)
         queue_bulk_actions_layout.addWidget(self._package_queue_select_all_button)
         queue_bulk_actions_layout.addWidget(self._package_queue_deselect_all_button)
         queue_bulk_actions_layout.addStretch(1)
@@ -3497,7 +3577,7 @@ class MainWindow(QMainWindow):
         queue_header_widget.setObjectName("packages_queue_header_widget")
         queue_header_layout = QHBoxLayout(queue_header_widget)
         queue_header_layout.setContentsMargins(0, 0, 0, 0)
-        queue_header_layout.setSpacing(8)
+        queue_header_layout.setSpacing(10)
         queue_label = QLabel(self._tr("packages.watched_package_queue"))
         queue_label.setObjectName("packages_intake_queue_label")
         queue_label.setProperty("translationKey", "packages.watched_package_queue")
@@ -3995,37 +4075,187 @@ class MainWindow(QMainWindow):
             collapse_toggle_button=self._top_context_toggle_button,
         )
         self._context_group = context_group
-        self._set_top_context_surface_expanded(expanded=self._top_context_expanded)
+        self._apply_top_context_surface_state()
         _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
         return context_group
 
-    def _set_top_context_surface_expanded(self, *, expanded: bool) -> None:
-        self._top_context_expanded = expanded
+    def _apply_top_context_surface_state(self) -> None:
         if hasattr(self, "_context_group"):
-            self._context_group.set_details_expanded(expanded)
+            self._context_group.set_details_expanded(self._top_context_expanded)
         self._top_context_toggle_button.setText(
             self._tr("top_context.hide_details")
-            if expanded
+            if self._top_context_expanded
             else self._tr("top_context.show_details")
         )
         self._top_context_toggle_button.setToolTip(
             self._tr("top_context.hide_details_tooltip")
-            if expanded
+            if self._top_context_expanded
             else self._tr("top_context.show_details_tooltip")
         )
+
+    def _show_localized_question_dialog(
+        self,
+        *,
+        title: str,
+        text: str,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No,
+    ) -> QMessageBox.StandardButton:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle(title)
+        dialog.setText(text)
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        dialog.setDefaultButton(default_button)
+        yes_button = dialog.button(QMessageBox.StandardButton.Yes)
+        no_button = dialog.button(QMessageBox.StandardButton.No)
+        if yes_button is not None:
+            yes_button.setText(self._tr("dialog.yes"))
+        if no_button is not None:
+            no_button.setText(self._tr("dialog.no"))
+        return QMessageBox.StandardButton(dialog.exec())
+
+    def _show_localized_info_dialog(self, *, title: str, text: str) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Information)
+        dialog.setWindowTitle(title)
+        dialog.setText(text)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        ok_button = dialog.button(QMessageBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setText(self._tr("dialog.ok"))
+        dialog.exec()
+
+    def _apply_workspace_nav_state(self) -> None:
+        if not hasattr(self, "_workspace_nav_rail"):
+            return
+
+        compact_small_desktop = bool(getattr(self, "_workspace_nav_compact_small_desktop", False))
+        compact_viewport = bool(getattr(self, "_workspace_nav_compact_viewport", False))
+        collapsed = self._workspace_nav_collapsed
+
+        if collapsed:
+            rail_minimum_width = 52 if compact_small_desktop else 58 if compact_viewport else 68
+            rail_maximum_width = 58 if compact_small_desktop else 66 if compact_viewport else 78
+        else:
+            rail_minimum_width = 202 if compact_small_desktop else 182 if compact_viewport else 194
+            rail_maximum_width = 218 if compact_small_desktop else 194 if compact_viewport else 212
+
+        self._workspace_nav_rail.setMinimumWidth(rail_minimum_width)
+        self._workspace_nav_rail.setMaximumWidth(rail_maximum_width)
+
+        if hasattr(self, "_workspace_shell_layout"):
+            self._workspace_shell_layout.setSpacing(6 if collapsed else 10 if compact_small_desktop else 12)
+
+        if hasattr(self, "_workspace_nav_brand_panel"):
+            self._workspace_nav_brand_panel.setProperty("navCollapsed", collapsed)
+        if hasattr(self, "_workspace_nav_brand_icon_label"):
+            icon_size = 24 if collapsed else 28 if compact_small_desktop else 32
+            box_size = 30 if collapsed else 34 if compact_small_desktop else 38
+            self._workspace_nav_brand_icon_label.setFixedSize(box_size, box_size)
+            brand_icon_pixmap = _resolve_brand_icon_pixmap(icon_size)
+            if brand_icon_pixmap is not None:
+                self._workspace_nav_brand_icon_label.setPixmap(brand_icon_pixmap)
+        if hasattr(self, "_workspace_nav_brand_header_layout"):
+            self._workspace_nav_brand_header_layout.setDirection(
+                QBoxLayout.Direction.TopToBottom
+                if collapsed
+                else QBoxLayout.Direction.LeftToRight
+            )
+            self._workspace_nav_brand_header_layout.setSpacing(5 if collapsed else 6)
+        if hasattr(self, "_workspace_nav_brand_layout"):
+            self._workspace_nav_brand_layout.setContentsMargins(
+                6 if collapsed else 8,
+                6 if collapsed else 8,
+                6 if collapsed else 8,
+                6 if collapsed else 8,
+            )
+            self._workspace_nav_brand_layout.setSpacing(4 if collapsed else 6)
+
+        if hasattr(self, "_workspace_nav_brand_text_stack"):
+            self._workspace_nav_brand_text_stack.setVisible(not collapsed)
+        if hasattr(self, "_workspace_nav_brand_subtitle_label"):
+            self._workspace_nav_brand_subtitle_label.setVisible(
+                not collapsed and not compact_small_desktop
+            )
+        if hasattr(self, "_workspace_nav_section_label"):
+            self._workspace_nav_section_label.setVisible(not collapsed)
+        if hasattr(self, "_workspace_nav_release_status_label"):
+            self._workspace_nav_release_status_label.setVisible(
+                self._workspace_nav_release_status_requested_visible and not collapsed
+            )
+        if hasattr(self, "_workspace_nav_toggle_button"):
+            toggle_icon = _workspace_nav_toggle_icon(collapsed)
+            self._workspace_nav_toggle_button.setIcon(toggle_icon)
+            self._workspace_nav_toggle_button.setIconSize(QSize(12, 12))
+            self._workspace_nav_toggle_button.setText("")
+            self._workspace_nav_toggle_button.setFixedSize(24, 24)
+            self._workspace_nav_toggle_button.setToolTip(
+                self._tr("shell.expand_nav_tooltip")
+                if collapsed
+                else self._tr("shell.collapse_nav_tooltip")
+            )
+
+        for page, button in getattr(self, "_workspace_nav_buttons", {}).items():
+            label = str(button.property("workspaceLabel") or "")
+            button.setProperty("navCollapsed", collapsed)
+            button.setText("" if collapsed else label)
+            button.setToolTip(label)
+            button.setFixedHeight(30 if collapsed else 26)
+            button.setIconSize(QSize(18 if collapsed else 16, 18 if collapsed else 16))
+            button.setMinimumWidth(0)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+        self._workspace_nav_rail.style().unpolish(self._workspace_nav_rail)
+        self._workspace_nav_rail.style().polish(self._workspace_nav_rail)
+
+    def _set_workspace_nav_collapsed(
+        self,
+        *,
+        collapsed: bool,
+        manual_override: bool | None = None,
+    ) -> None:
+        self._workspace_nav_collapsed = collapsed
+        if manual_override is not None:
+            self._workspace_nav_manual_override = manual_override
+        self._apply_workspace_nav_state()
+        self._refresh_responsive_panel_bounds()
+
+    def _toggle_workspace_nav_rail(self) -> None:
+        self._set_workspace_nav_collapsed(
+            collapsed=not self._workspace_nav_collapsed,
+            manual_override=True,
+        )
+
+    def _set_top_context_surface_expanded(
+        self,
+        *,
+        expanded: bool,
+        manual_override: bool | None = None,
+    ) -> None:
+        self._top_context_expanded = expanded
+        if manual_override is not None:
+            self._top_context_manual_override = manual_override
+        self._apply_top_context_surface_state()
         self._refresh_responsive_panel_bounds()
 
     def _toggle_top_context_surface(self) -> None:
-        self._set_top_context_surface_expanded(expanded=not self._top_context_expanded)
+        self._set_top_context_surface_expanded(
+            expanded=not self._top_context_expanded,
+            manual_override=True,
+        )
 
     def _build_workspace_shell(self, *, context_tabs: QTabWidget) -> QFrame:
         workspace_shell = QFrame()
         workspace_shell.setObjectName("workspace_shell_frame")
         workspace_shell_layout = QHBoxLayout(workspace_shell)
         workspace_shell_layout.setContentsMargins(0, 0, 0, 0)
-        workspace_shell_layout.setSpacing(10)
+        workspace_shell_layout.setSpacing(12)
         workspace_shell_layout.addWidget(self._build_workspace_rail(context_tabs=context_tabs))
         workspace_shell_layout.addWidget(context_tabs, 1)
+        self._workspace_shell_layout = workspace_shell_layout
         return workspace_shell
 
     def _initialize_background_action_buttons(self) -> None:
@@ -4117,6 +4347,40 @@ class MainWindow(QMainWindow):
 
     def _tr(self, key: str, **kwargs: object) -> str:
         return self._localizer.text(key, **kwargs)
+
+    def _ask_localized_yes_no(
+        self,
+        title: str,
+        text: str,
+        *,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.No,
+        icon: QMessageBox.Icon = QMessageBox.Icon.Question,
+    ) -> QMessageBox.StandardButton:
+        box = QMessageBox(self)
+        box.setIcon(icon)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(default_button)
+        yes_button = box.button(QMessageBox.StandardButton.Yes)
+        if yes_button is not None:
+            yes_button.setText(self._tr("dialog.yes"))
+        no_button = box.button(QMessageBox.StandardButton.No)
+        if no_button is not None:
+            no_button.setText(self._tr("dialog.no"))
+        box.exec()
+        return box.standardButton(box.clickedButton())
+
+    def _show_localized_info_dialog(self, title: str, text: str) -> None:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        ok_button = box.button(QMessageBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setText(self._tr("dialog.ok"))
+        box.exec()
 
     def _apply_translation_properties(self, root: QWidget) -> None:
         widgets: list[QWidget] = [root]
@@ -4225,7 +4489,8 @@ class MainWindow(QMainWindow):
             self._context_tabs.setTabText(index, label)
             button = self._workspace_nav_buttons.get(page)
             if button is not None:
-                button.setText(label)
+                button.setProperty("workspaceLabel", label)
+        self._apply_workspace_nav_state()
 
     def _apply_shell_setup_localizer(
         self,
@@ -4240,7 +4505,8 @@ class MainWindow(QMainWindow):
         self._workspace_nav_brand_version_label.setText(
             self._tr("shell.version", version=self._app_version_text)
         )
-        if not self._workspace_nav_release_status_label.isVisible():
+        self._workspace_nav_brand_subtitle_label.setText(self._tr("shell.brand_subtitle"))
+        if not self._workspace_nav_release_status_requested_visible:
             self._workspace_nav_release_status_label.setText(
                 self._tr("shell.release_check_available")
             )
@@ -5489,9 +5755,101 @@ class MainWindow(QMainWindow):
             return
 
         self._apply_environment_status(status)
-        self._set_setup_output_and_details_text(build_environment_status_text(status))
+        auto_setup_notes = self._auto_configure_setup_paths_from_detected_environment(status)
+        details_text = build_environment_status_text(status)
+        if auto_setup_notes:
+            details_text = (
+                f"{details_text}\n\n"
+                "Auto setup:\n"
+                + "\n".join(f"- {note}" for note in auto_setup_notes)
+            )
+        self._set_setup_output_and_details_text(details_text)
+        self._refresh_cinderleaf_managed_paths_surface()
         self._refresh_sandbox_dev_launch_state()
         self._set_status("Environment detection complete.")
+
+    def _auto_configure_setup_paths_from_detected_environment(
+        self,
+        status: GameEnvironmentStatus,
+    ) -> tuple[str, ...]:
+        notes: list[str] = []
+
+        if status.mods_path is not None and not self._mods_path_input.text().strip():
+            self._set_programmatic_line_edit_text(
+                self._mods_path_input,
+                str(status.mods_path),
+            )
+            notes.append(f"Set Real Mods folder: {status.mods_path}")
+
+        if status.game_path is None:
+            return tuple(notes)
+
+        try:
+            managed_paths = self._shell_service.resolve_cinderleaf_managed_paths(
+                game_path_text=str(status.game_path),
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            notes.append(f"Managed-folder setup skipped: {exc}")
+            return tuple(notes)
+
+        managed_field_mappings = (
+            (
+                self._sandbox_mods_path_input,
+                managed_paths.sandbox_mods_path,
+                "Sandbox Mods",
+            ),
+            (
+                self._sandbox_archive_path_input,
+                managed_paths.sandbox_archive_path,
+                "Sandbox Archive",
+            ),
+            (
+                self._real_archive_path_input,
+                managed_paths.real_archive_path,
+                "Real Mods Archive",
+            ),
+        )
+        for line_edit, target_path, label in managed_field_mappings:
+            current_text = line_edit.text().strip()
+            should_replace = not current_text
+            if (
+                line_edit is self._sandbox_archive_path_input
+                and current_text
+                and _paths_match_loose(
+                    Path(current_text),
+                    managed_paths.sandbox_mods_path.parent / ".sdvmm-sandbox-archive",
+                )
+            ):
+                should_replace = True
+
+            if not should_replace:
+                continue
+            self._set_programmatic_line_edit_text(line_edit, str(target_path))
+            notes.append(f"Set {label} folder: {target_path}")
+
+        created_paths: list[str] = []
+        managed_folder_specs = (
+            ("sandbox_mods", managed_paths.sandbox_mods_path),
+            ("sandbox_archive", managed_paths.sandbox_archive_path),
+            ("real_archive", managed_paths.real_archive_path),
+            ("real_logs", managed_paths.real_logs_path),
+            ("sandbox_logs", managed_paths.sandbox_logs_path),
+        )
+        for folder_key, target_path in managed_folder_specs:
+            existed_before = target_path.exists()
+            self._shell_service.prepare_cinderleaf_managed_folder_for_open(
+                game_path_text=str(status.game_path),
+                folder_key=folder_key,
+                existing_config=self._config,
+            )
+            if not existed_before:
+                created_paths.append(str(target_path))
+
+        if created_paths:
+            notes.append(f"Created {len(created_paths)} Cinderleaf-managed folder(s).")
+
+        return tuple(notes)
 
     def _on_export_backup_bundle(self) -> None:
         artifact_selection = self._prompt_for_backup_export_artifacts()
@@ -5564,7 +5922,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(managed_mods_note)
 
         archives_checkbox = QCheckBox("Archives")
-        archives_checkbox.setChecked(True)
+        archives_checkbox.setChecked(False)
         archives_note = QLabel("Includes the real and sandbox archive roots.")
         archives_note.setWordWrap(True)
         _set_auxiliary_label_style(archives_note)
@@ -5634,8 +5992,10 @@ class MainWindow(QMainWindow):
         )
         self._backup_bundle_inspection_summary_label.setText(result.message)
         self._backup_bundle_inspection_summary_label.setToolTip(inspection_text)
+        self._backup_bundle_inspection_summary_label.setVisible(True)
         self._set_setup_output_and_details_text(inspection_text)
         if not result.structurally_usable:
+            self._sync_setup_backup_summary_visibility()
             self._set_status(result.message)
             return
 
@@ -5644,6 +6004,8 @@ class MainWindow(QMainWindow):
         )
         self._restore_import_planning_summary_label.setText(planning_started_text)
         self._restore_import_planning_summary_label.setToolTip(planning_started_text)
+        self._restore_import_planning_summary_label.setVisible(True)
+        self._sync_setup_backup_summary_visibility()
         self._set_status(planning_started_text)
         self._queue_restore_import_planning_after_inspection(
             result,
@@ -5705,6 +6067,8 @@ class MainWindow(QMainWindow):
         )
         self._restore_import_planning_summary_label.setText(payload.summary_text)
         self._restore_import_planning_summary_label.setToolTip(payload.combined_text)
+        self._restore_import_planning_summary_label.setVisible(True)
+        self._sync_setup_backup_summary_visibility()
         self._set_setup_output_and_details_text(payload.combined_text)
         self._refresh_restore_import_execution_state()
         self._set_status(payload.summary_text)
@@ -5734,6 +6098,8 @@ class MainWindow(QMainWindow):
             else "Automatic restore/import planning could not run."
         )
         self._restore_import_planning_summary_label.setToolTip(message)
+        self._restore_import_planning_summary_label.setVisible(True)
+        self._sync_setup_backup_summary_visibility()
         self._set_setup_output_and_details_text(combined_text)
         self._refresh_restore_import_execution_state()
 
@@ -5832,10 +6198,12 @@ class MainWindow(QMainWindow):
         result: RestoreImportExecutionResult,
     ) -> None:
         execution_text = build_restore_import_execution_result_text(result)
+        self._clear_restore_import_plan_state(reset_summary=False)
         self._restore_import_planning_summary_label.setText(result.message)
         self._restore_import_planning_summary_label.setToolTip(execution_text)
+        self._restore_import_planning_summary_label.setVisible(True)
+        self._sync_setup_backup_summary_visibility()
         self._set_setup_output_and_details_text(execution_text)
-        self._clear_restore_import_plan_state(reset_summary=False)
         self._set_active_backup_bundle_context(
             result.bundle_path,
             label_text="executed",
@@ -6228,10 +6596,12 @@ class MainWindow(QMainWindow):
             self._pending_install_plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
         )
 
-        yes = QMessageBox.question(
-            self,
-            ("Confirm REAL Mods install" if is_real_destination else "Confirm sandbox install"),
-            self._build_install_confirmation_message(review, is_real_destination=is_real_destination),
+        yes = self._show_localized_question_dialog(
+            title=self._tr("install.confirm.title"),
+            text=self._build_install_confirmation_message(
+                review,
+                is_real_destination=is_real_destination,
+            ),
         )
         if yes != QMessageBox.StandardButton.Yes:
             self._set_status("Install cancelled.")
@@ -6651,25 +7021,24 @@ class MainWindow(QMainWindow):
         if is_real_destination:
             summary = review.summary
             return (
-                "You are about to write to the REAL game Mods directory.\n\n"
+                f"{self._tr('install.confirm.real_intro')}\n\n"
                 f"{review.message}\n\n"
-                "Execute install now?\n"
-                f"Target: {summary.destination_mods_path}\n"
-                f"Archive: {summary.archive_path}\n"
-                f"Entries: {summary.total_entry_count}\n"
-                f"Replace existing targets: {'yes' if summary.has_existing_targets_to_replace else 'no'}\n"
-                f"Archive writes in plan: {'yes' if summary.has_archive_writes else 'no'}"
+                f"{self._tr('install.confirm.execute_now')}\n"
+                f"{self._tr('install.confirm.target', path=summary.destination_mods_path)}\n"
+                f"{self._tr('install.confirm.archive', path=summary.archive_path)}\n"
+                f"{self._tr('install.confirm.entries', count=summary.total_entry_count)}\n"
+                f"{self._tr('install.confirm.replace_existing', value=_localized_yes_no_label(summary.has_existing_targets_to_replace))}\n"
+                f"{self._tr('install.confirm.archive_writes', value=_localized_yes_no_label(summary.has_archive_writes))}"
             )
 
         plan = self._pending_install_plan
         assert plan is not None
         return (
-            "Execute install now?\n"
-            f"Target: {plan.sandbox_mods_path}\n"
-            f"Archive: {plan.sandbox_archive_path}\n"
-            "Overwrite operations in plan: "
-            f"{'yes' if any(entry.action == 'overwrite_with_archive' for entry in plan.entries) else 'no'}\n"
-            f"Entries: {len(plan.entries)}"
+            f"{self._tr('install.confirm.execute_now')}\n"
+            f"{self._tr('install.confirm.target', path=plan.sandbox_mods_path)}\n"
+            f"{self._tr('install.confirm.archive', path=plan.sandbox_archive_path)}\n"
+            f"{self._tr('install.confirm.overwrite_operations', value=_localized_yes_no_label(any(entry.action == 'overwrite_with_archive' for entry in plan.entries)))}\n"
+            f"{self._tr('install.confirm.entries', count=len(plan.entries))}"
         )
 
     def _on_check_updates(self) -> None:
@@ -6767,7 +7136,7 @@ class MainWindow(QMainWindow):
                 else f"{summary}\nRelease page: {self._shell_service.resolve_app_update_page_url(status)}"
             )
         )
-        self._set_status(summary)
+        self._set_status(_app_update_status_strip_label(status))
 
     def _apply_app_update_status(self, status: AppUpdateStatus) -> None:
         self._last_app_update_status = status
@@ -6777,12 +7146,13 @@ class MainWindow(QMainWindow):
             _app_update_feedback_tone(status),
             summary,
         )
-        self._workspace_nav_release_status_label.setVisible(True)
+        self._workspace_nav_release_status_requested_visible = True
         _set_feedback_label_state(
             self._workspace_nav_release_status_label,
             _app_update_feedback_tone(status),
-            summary,
+            _app_update_nav_label(status),
         )
+        self._apply_workspace_nav_state()
 
     def _on_open_app_release_page(self) -> None:
         url = self._shell_service.resolve_app_update_page_url(self._last_app_update_status)
@@ -7038,7 +7408,12 @@ class MainWindow(QMainWindow):
         saved_provider, _, _ = saved_association
         self._refresh_selected_mod_update_guidance()
         self._set_status(
-            f"Saved manual source association for {mod_name} ({selected_unique_id}) from Discover guidance (provider: {saved_provider})."
+            self._tr(
+                "library.source_intent.saved_manual_discover",
+                mod_name=mod_name,
+                unique_id=selected_unique_id,
+                provider=saved_provider,
+            )
         )
 
     def _on_test_selected_mod_source(self) -> None:
@@ -7520,25 +7895,24 @@ class MainWindow(QMainWindow):
             return
 
         destination_label = (
-            "REAL game Mods destination"
+            _install_destination_label(INSTALL_TARGET_CONFIGURED_REAL_MODS)
             if plan.destination_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
-            else "Sandbox Mods destination"
+            else _install_destination_label(INSTALL_TARGET_SANDBOX_MODS)
         )
         included_folders_text = ""
         if plan.included_mod_paths and len(plan.included_mod_paths) > 1:
             included_lines = "\n".join(f"- {path}" for path in plan.included_mod_paths)
             included_folders_text = f"\nIncluded installed folders:\n{included_lines}\n"
-        yes = QMessageBox.question(
-            self,
-            "Confirm removal to archive",
-            (
-                "Move selected mod folder to archive?\n\n"
-                f"Mod: {mod_name}\n"
-                f"Destination: {destination_label}\n"
-                f"Target folder: {plan.target_mod_path}\n"
+        yes = self._show_localized_question_dialog(
+            title=self._tr("archive.move_confirm.title"),
+            text=(
+                f"{self._tr('archive.move_confirm.prompt')}\n\n"
+                f"{self._tr('archive.move_confirm.mod', name=mod_name)}\n"
+                f"{self._tr('archive.move_confirm.destination', destination=destination_label)}\n"
+                f"{self._tr('archive.move_confirm.target', path=plan.target_mod_path)}\n"
                 f"{included_folders_text}"
-                f"Archive root: {plan.archive_path}\n\n"
-                "This stage performs archive move only (no permanent delete)."
+                f"{self._tr('archive.move_confirm.archive_root', path=plan.archive_path)}\n\n"
+                f"{self._tr('archive.move_confirm.note')}"
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
@@ -7642,11 +8016,11 @@ class MainWindow(QMainWindow):
             return
 
         if not candidates:
-            message = (
-                "No safe rollback candidates found for selected mod. "
-                "Rollback requires matching archived entries by UniqueID and folder."
+            message = self._tr("archive.rollback.none_message")
+            self._show_localized_info_dialog(
+                title=self._tr("archive.rollback.none_title"),
+                text=message,
             )
-            QMessageBox.information(self, "No rollback candidates", message)
             self._set_status(message)
             return
 
@@ -9683,7 +10057,7 @@ class MainWindow(QMainWindow):
     ) -> str:
         pt_br = get_active_ui_localizer().effective_language == "pt-BR"
         if status is not None:
-            return status.message or _app_update_summary_label(status)
+            return _app_update_status_strip_label(status)
         if failure_message:
             return failure_message
         return (
@@ -10471,6 +10845,13 @@ class MainWindow(QMainWindow):
             self._restore_import_planning_summary_label.setToolTip(
                 _no_restore_import_planning_summary_text()
             )
+        self._restore_import_planning_summary_label.setVisible(False)
+        self._sync_setup_backup_summary_visibility()
+
+    def _sync_setup_backup_summary_visibility(self) -> None:
+        self._backup_bundle_inspection_summary_label.setVisible(
+            not self._restore_import_planning_summary_label.isVisible()
+        )
 
     def _prompt_for_backup_bundle_path(self) -> Path | None:
         bundle_storage_kind = self._prompt_for_backup_bundle_storage_kind(
@@ -10588,6 +10969,8 @@ class MainWindow(QMainWindow):
         if self._active_backup_bundle_path is None:
             self._active_backup_bundle_label.setText(_no_active_backup_bundle_text())
             self._active_backup_bundle_label.setToolTip(_no_active_backup_bundle_text())
+            self._restore_import_planning_summary_label.setVisible(False)
+            self._sync_setup_backup_summary_visibility()
             return
 
         path_text = str(self._active_backup_bundle_path)
@@ -12782,7 +13165,7 @@ class MainWindow(QMainWindow):
     def _set_selected_mod_update_source_intent(self, intent_state: str) -> None:
         selected_context = self._selected_inventory_source_intent_context()
         if selected_context is None:
-            self._set_status("Select a blocked installed mod row to manage saved source intent.")
+            self._set_status(self._tr("library.source_intent.select_row"))
             return
         selected_unique_id, _ = selected_context
         try:
@@ -12791,7 +13174,13 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
         self._refresh_inventory_update_report_view()
-        self._set_status(f"Saved update-source intent for {selected_unique_id}: {intent_state}.")
+        self._set_status(
+            self._tr(
+                "library.source_intent.saved",
+                unique_id=selected_unique_id,
+                intent_state=_localized_source_intent_label(intent_state),
+            )
+        )
 
     def _on_mark_selected_mod_local_private(self) -> None:
         self._set_selected_mod_update_source_intent("local_private_mod")
@@ -12836,7 +13225,7 @@ class MainWindow(QMainWindow):
         source_key = source_key.strip()
         normalized_page_url = page_url.strip() if isinstance(page_url, str) else ""
         if not provider or not source_key:
-            self._set_status("Manual source association requires provider and source key.")
+            self._set_status(self._tr("library.source_intent.manual_required"))
             return None
         try:
             self._shell_service.set_update_source_intent(
@@ -12854,7 +13243,7 @@ class MainWindow(QMainWindow):
     def _on_set_selected_mod_manual_source_intent(self) -> None:
         selected_context = self._selected_inventory_source_intent_context()
         if selected_context is None:
-            self._set_status("Select a blocked installed mod row to manage saved source intent.")
+            self._set_status(self._tr("library.source_intent.select_row"))
             return
         selected_unique_id, mod_name = selected_context
         existing_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
@@ -12874,13 +13263,17 @@ class MainWindow(QMainWindow):
         provider, _, _ = saved_association
         self._refresh_inventory_update_report_view()
         self._set_status(
-            f"Saved manual source association for {selected_unique_id} (provider: {provider})."
+            self._tr(
+                "library.source_intent.saved_manual",
+                unique_id=selected_unique_id,
+                provider=provider,
+            )
         )
 
     def _on_clear_selected_mod_source_intent(self) -> None:
         selected_context = self._selected_inventory_source_intent_context()
         if selected_context is None:
-            self._set_status("Select a blocked installed mod row to manage saved source intent.")
+            self._set_status(self._tr("library.source_intent.select_row"))
             return
         selected_unique_id, _ = selected_context
         existing_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
@@ -12896,12 +13289,16 @@ class MainWindow(QMainWindow):
                 )
             ):
                 self._shell_service.set_update_source_intent(selected_unique_id, "no_tracking")
-                status_message = (
-                    f"Cleared manual source and disabled standalone tracking for {selected_unique_id}."
+                status_message = self._tr(
+                    "library.source_intent.cleared_manual_no_tracking",
+                    unique_id=selected_unique_id,
                 )
             else:
                 self._shell_service.clear_update_source_intent(selected_unique_id)
-                status_message = f"Cleared saved update-source intent for {selected_unique_id}."
+                status_message = self._tr(
+                    "library.source_intent.cleared",
+                    unique_id=selected_unique_id,
+                )
         except AppShellError as exc:
             self._set_status(str(exc))
             return
@@ -14006,22 +14403,162 @@ class MainWindow(QMainWindow):
 
     def _refresh_responsive_panel_bounds(self) -> None:
         window_height = max(self.height(), self.minimumHeight())
+        window_width = max(self.width(), self.minimumWidth())
+        compact_viewport = window_width <= 1366 or window_height <= 768
+        compact_small_desktop = window_width <= 1366 and window_height <= 768
+        self._workspace_nav_compact_viewport = compact_viewport
+        self._workspace_nav_compact_small_desktop = compact_small_desktop
 
-        context_cap = max(146, min(188, int(window_height * 0.205)))
-        inventory_controls_cap = max(116, min(132, int(window_height * 0.162)))
+        context_cap_expanded = (
+            max(180, min(222, int(window_height * 0.29)))
+            if compact_small_desktop
+            else max(160, min(196, int(window_height * 0.25)))
+            if compact_viewport
+            else max(188, min(264, int(window_height * 0.285)))
+        )
+        context_cap_collapsed = (
+            max(42, min(52, int(window_height * 0.07)))
+            if compact_small_desktop
+            else max(48, min(60, int(window_height * 0.08)))
+            if compact_viewport
+            else max(62, min(96, int(window_height * 0.115)))
+        )
+        inventory_controls_cap = (
+            max(172, min(188, int(window_height * 0.245)))
+            if compact_small_desktop
+            else max(154, min(170, int(window_height * 0.215)))
+            if compact_viewport
+            else max(116, min(132, int(window_height * 0.162)))
+        )
         flow_hint_cap = max(32, min(60, int(window_height * 0.074)))
         intake_result_cap = max(92, min(140, int(window_height * 0.18)))
-        status_strip_cap = max(56, min(74, int(window_height * 0.082)))
+        status_strip_cap = (
+            max(40, min(48, int(window_height * 0.064)))
+            if compact_small_desktop
+            else max(44, min(54, int(window_height * 0.072)))
+            if compact_viewport
+            else max(56, min(92, int(window_height * 0.105)))
+        )
         details_cap = max(64, min(108, int(window_height * 0.12)))
 
+        if not self._top_context_manual_override:
+            auto_expanded = not compact_small_desktop
+            if self._top_context_expanded != auto_expanded:
+                self._top_context_expanded = auto_expanded
+                self._apply_top_context_surface_state()
+
+        if not self._workspace_nav_manual_override:
+            auto_collapsed = compact_small_desktop
+            if self._workspace_nav_collapsed != auto_collapsed:
+                self._workspace_nav_collapsed = auto_collapsed
+
+        self._apply_workspace_nav_state()
+
         if hasattr(self, "_context_group"):
-            self._context_group.setMaximumHeight(context_cap)
+            self._context_group.set_compact_mode(compact_viewport)
+            self._context_group.setMaximumHeight(
+                context_cap_expanded if self._top_context_expanded else context_cap_collapsed
+            )
 
         if hasattr(self, "_status_strip_group"):
             self._status_strip_group.setMaximumHeight(status_strip_cap)
 
+        if hasattr(self, "_setup_scroll"):
+            self._setup_scroll.set_compact_mode(compact_viewport)
+
+        if hasattr(self, "_mods_page_layout"):
+            self._mods_page_layout.setContentsMargins(
+                2 if compact_small_desktop else 4,
+                2 if compact_small_desktop else 4,
+                2 if compact_small_desktop else 4,
+                2 if compact_small_desktop else 4,
+            )
+            self._mods_page_layout.setSpacing(3 if compact_small_desktop else 4)
+
         if hasattr(self, "_inventory_controls_tabs"):
             self._inventory_controls_tabs.setMaximumHeight(inventory_controls_cap)
+
+        if hasattr(self, "_inventory_controls_panel_layout"):
+            self._inventory_controls_panel_layout.setContentsMargins(
+                10 if compact_viewport else 12,
+                9 if compact_viewport else 11,
+                10 if compact_viewport else 12,
+                10 if compact_viewport else 12,
+            )
+            self._inventory_controls_panel_layout.setSpacing(8 if compact_viewport else 10)
+        if hasattr(self, "_inventory_action_band_layout"):
+            self._inventory_action_band_layout.setSpacing(6 if compact_viewport else 8)
+        if hasattr(self, "_inventory_source_row_layout"):
+            self._inventory_source_row_layout.setSpacing(8 if compact_viewport else 10)
+        if hasattr(self, "_launch_actions_layout"):
+            self._launch_actions_layout.setSpacing(8 if compact_viewport else 10)
+        if hasattr(self, "_game_smapi_panel_layout"):
+            self._game_smapi_panel_layout.setContentsMargins(
+                10 if compact_viewport else 12,
+                9 if compact_viewport else 11,
+                10 if compact_viewport else 12,
+                10 if compact_viewport else 12,
+            )
+            self._game_smapi_panel_layout.setSpacing(8 if compact_viewport else 10)
+
+        if hasattr(self, "_launch_vanilla_button"):
+            self._launch_vanilla_button.setFixedHeight(26 if compact_small_desktop else 28)
+        if hasattr(self, "_launch_smapi_button"):
+            self._launch_smapi_button.setFixedHeight(27 if compact_small_desktop else 29)
+        if hasattr(self, "_launch_sandbox_dev_button"):
+            self._launch_sandbox_dev_button.setFixedHeight(26 if compact_small_desktop else 28)
+
+        if hasattr(self, "_mods_selection_context_group"):
+            self._mods_selection_context_group.setMaximumWidth(
+                224 if compact_small_desktop else 248 if compact_viewport else 16777215
+            )
+        if hasattr(self, "_mods_workspace_splitter") and compact_viewport:
+            self._mods_workspace_splitter.setHandleWidth(4 if compact_small_desktop else 5)
+            self._mods_workspace_splitter.setSizes(
+                [max(772, window_width - 348), 220 if compact_small_desktop else 236]
+            )
+        self._set_compact_button_row_direction(
+            getattr(self, "_mods_selected_actions_row", None),
+            compact=compact_small_desktop,
+        )
+        self._set_compact_button_row_direction(
+            getattr(self, "_inventory_real_profile_actions_row", None),
+            compact=compact_small_desktop,
+        )
+        self._set_compact_button_row_direction(
+            getattr(self, "_inventory_sandbox_profile_actions_row", None),
+            compact=compact_small_desktop,
+        )
+
+        if hasattr(self, "_packages_top_grid_layout"):
+            if compact_small_desktop:
+                self._packages_top_grid_layout.setColumnStretch(0, 9)
+                self._packages_top_grid_layout.setColumnStretch(1, 5)
+            elif compact_viewport:
+                self._packages_top_grid_layout.setColumnStretch(0, 10)
+                self._packages_top_grid_layout.setColumnStretch(1, 3)
+            else:
+                self._packages_top_grid_layout.setColumnStretch(0, 8)
+                self._packages_top_grid_layout.setColumnStretch(1, 3)
+        if hasattr(self, "_packages_watcher_group"):
+            self._packages_watcher_group.setMaximumWidth(
+                388 if compact_small_desktop else 292 if compact_viewport else 360
+            )
+        self._set_compact_button_row_direction(
+            getattr(self, "_packages_primary_path_actions_layout", None),
+            compact=compact_small_desktop,
+            compact_button_policy=QSizePolicy.Policy.Expanding,
+        )
+        self._set_compact_button_row_direction(
+            getattr(self, "_packages_secondary_path_actions_layout", None),
+            compact=compact_small_desktop,
+            compact_button_policy=QSizePolicy.Policy.Expanding,
+        )
+        self._set_compact_button_row_direction(
+            getattr(self, "_packages_runtime_actions_layout", None),
+            compact=True,
+            compact_button_policy=QSizePolicy.Policy.Expanding,
+        )
 
         if hasattr(self, "_inventory_flow_hint_label"):
             self._inventory_flow_hint_label.setMaximumHeight(flow_hint_cap)
@@ -14206,15 +14743,20 @@ def _prompt_manual_source_association(
     initial_source_key: str | None,
     initial_page_url: str | None,
 ) -> tuple[str, str, str | None] | None:
+    localizer = get_active_ui_localizer()
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Manual source association")
+    dialog.setWindowTitle(localizer.text("library.manual_source.dialog_title"))
     dialog.setModal(True)
     dialog_layout = QVBoxLayout(dialog)
     dialog_layout.setContentsMargins(12, 10, 12, 10)
     dialog_layout.setSpacing(8)
 
     intro_label = QLabel(
-        f"Record a manual source association for {mod_name} ({unique_id})."
+        localizer.text(
+            "library.manual_source.dialog_intro",
+            mod_name=mod_name,
+            unique_id=unique_id,
+        )
     )
     intro_label.setWordWrap(True)
     dialog_layout.addWidget(intro_label)
@@ -14236,19 +14778,26 @@ def _prompt_manual_source_association(
             provider_input.setCurrentIndex(existing_index)
         else:
             provider_input.setEditText(initial_provider)
+    provider_input.lineEdit().setPlaceholderText(
+        localizer.text("library.manual_source.provider")
+    )
 
     source_key_input = QLineEdit(initial_source_key or "")
     source_key_input.setObjectName("inventory_manual_source_key_input")
-    source_key_input.setPlaceholderText("Provider-specific source key")
+    source_key_input.setPlaceholderText(
+        localizer.text("library.manual_source.provider_placeholder")
+    )
     page_url_input = QLineEdit(initial_page_url or "")
     page_url_input.setObjectName("inventory_manual_source_page_url_input")
-    page_url_input.setPlaceholderText("Optional page URL")
+    page_url_input.setPlaceholderText(
+        localizer.text("library.manual_source.page_url_placeholder")
+    )
 
-    form_layout.addWidget(QLabel("Provider"), 0, 0)
+    form_layout.addWidget(QLabel(localizer.text("library.manual_source.provider")), 0, 0)
     form_layout.addWidget(provider_input, 0, 1)
-    form_layout.addWidget(QLabel("Source key"), 1, 0)
+    form_layout.addWidget(QLabel(localizer.text("library.manual_source.source_key")), 1, 0)
     form_layout.addWidget(source_key_input, 1, 1)
-    form_layout.addWidget(QLabel("Page URL"), 2, 0)
+    form_layout.addWidget(QLabel(localizer.text("library.manual_source.page_url")), 2, 0)
     form_layout.addWidget(page_url_input, 2, 1)
 
     validation_label = QLabel("")
@@ -14261,6 +14810,12 @@ def _prompt_manual_source_association(
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
+    save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+    cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+    if save_button is not None:
+        save_button.setText(localizer.text("dialog.save"))
+    if cancel_button is not None:
+        cancel_button.setText(localizer.text("dialog.cancel"))
     dialog_layout.addWidget(buttons)
 
     def _validate_before_accept() -> None:
@@ -14271,7 +14826,7 @@ def _prompt_manual_source_association(
             validation_label.setVisible(False)
             dialog.accept()
             return
-        validation_label.setText("Provider and source key are required.")
+        validation_label.setText(localizer.text("library.manual_source.validation_required"))
         validation_label.setVisible(True)
 
     save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -15122,6 +15677,24 @@ def _app_update_summary_label(status: AppUpdateStatus) -> str:
     )
 
 
+def _app_update_nav_label(status: AppUpdateStatus) -> str:
+    localizer = get_active_ui_localizer()
+    if status.state == "update_available":
+        return localizer.text("library.update.available")
+    if status.state == "up_to_date":
+        return localizer.text("library.update.up_to_date")
+    return _app_update_summary_label(status)
+
+
+def _app_update_status_strip_label(status: AppUpdateStatus) -> str:
+    localizer = get_active_ui_localizer()
+    if status.state == "update_available":
+        return localizer.text("status.app_update_available_short")
+    if status.state == "up_to_date":
+        return localizer.text("status.app_up_to_date_short")
+    return status.message or _app_update_summary_label(status)
+
+
 def _app_update_feedback_tone(status: AppUpdateStatus) -> str:
     if status.state == "update_available":
         return "ready"
@@ -15430,6 +16003,19 @@ def _install_destination_label(destination_kind: str) -> str:
         ),
     }
     return labels.get(destination_kind, destination_kind.replace("_", " ").title())
+
+
+def _localized_yes_no_label(value: bool) -> str:
+    localizer = get_active_ui_localizer()
+    return localizer.text("dialog.yes") if value else localizer.text("dialog.no")
+
+
+def _localized_source_intent_label(intent_state: str) -> str:
+    localizer = get_active_ui_localizer()
+    text = localizer.text(f"library.source_intent.{intent_state}")
+    if text == f"library.source_intent.{intent_state}":
+        return intent_state.replace("_", " ")
+    return text
 
 
 def _smapi_log_context_details(
@@ -15898,6 +16484,142 @@ def _resolve_brand_icon_pixmap(size: int) -> QPixmap | None:
     return pixmap
 
 
+def _workspace_nav_icon(nav_key: str) -> QIcon:
+    size = _WORKSPACE_ICON_SIZE
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    stroke_width = max(1.55, size * 0.1)
+    outline_pen = QPen(
+        QColor("#e4dacd"),
+        stroke_width,
+        Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap,
+        Qt.PenJoinStyle.RoundJoin,
+    )
+    moss_pen = QPen(
+        QColor("#8ebb80"),
+        max(1.3, size * 0.085),
+        Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap,
+        Qt.PenJoinStyle.RoundJoin,
+    )
+    amber_pen = QPen(
+        QColor("#d6ab53"),
+        max(1.2, size * 0.08),
+        Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap,
+        Qt.PenJoinStyle.RoundJoin,
+    )
+
+    def _rounded_rect(x: float, y: float, w: float, h: float, radius: float) -> None:
+        painter.drawRoundedRect(QRectF(x, y, w, h), radius, radius)
+
+    if nav_key == "library":
+        painter.setPen(outline_pen)
+        _rounded_rect(2.4, 3.0, 13.2, 10.6, 2.2)
+        painter.drawLine(6.1, 5.8, 6.1, 13.2)
+        painter.setPen(moss_pen)
+        painter.drawLine(8.7, 6.2, 13.0, 6.2)
+        painter.drawLine(8.7, 8.9, 13.0, 8.9)
+        painter.drawLine(8.7, 11.6, 11.8, 11.6)
+    elif nav_key == "setup":
+        painter.setPen(outline_pen)
+        painter.drawLine(3.0, 5.0, 15.0, 5.0)
+        painter.drawLine(3.0, 9.0, 15.0, 9.0)
+        painter.drawLine(3.0, 13.0, 15.0, 13.0)
+        painter.setPen(moss_pen)
+        painter.drawEllipse(QRectF(5.0, 3.2, 3.6, 3.6))
+        painter.setPen(amber_pen)
+        painter.drawEllipse(QRectF(10.1, 7.2, 3.6, 3.6))
+        painter.setPen(moss_pen)
+        painter.drawEllipse(QRectF(7.6, 11.2, 3.6, 3.6))
+    elif nav_key == "packages":
+        painter.setPen(outline_pen)
+        painter.drawLine(4.0, 6.2, 9.0, 3.4)
+        painter.drawLine(9.0, 3.4, 14.0, 6.2)
+        painter.drawLine(4.0, 6.2, 4.0, 13.8)
+        painter.drawLine(14.0, 6.2, 14.0, 13.8)
+        painter.drawLine(4.0, 13.8, 14.0, 13.8)
+        painter.drawLine(4.0, 6.2, 14.0, 6.2)
+        painter.drawLine(9.0, 3.4, 9.0, 9.2)
+        painter.setPen(moss_pen)
+        painter.drawLine(6.2, 9.1, 11.8, 9.1)
+    elif nav_key == "install":
+        painter.setPen(outline_pen)
+        painter.drawLine(4.0, 12.4, 14.0, 12.4)
+        painter.drawLine(5.1, 12.4, 5.1, 14.7)
+        painter.drawLine(12.9, 12.4, 12.9, 14.7)
+        painter.drawLine(5.1, 14.7, 12.9, 14.7)
+        painter.drawLine(9.0, 3.5, 9.0, 10.4)
+        painter.drawLine(6.5, 7.9, 9.0, 10.4)
+        painter.drawLine(11.5, 7.9, 9.0, 10.4)
+        painter.setPen(amber_pen)
+        painter.drawLine(6.3, 12.4, 11.7, 12.4)
+    elif nav_key == "discover":
+        painter.setPen(outline_pen)
+        painter.drawEllipse(QRectF(3.4, 3.5, 7.4, 7.4))
+        painter.drawLine(9.4, 9.4, 14.3, 14.3)
+        painter.setPen(moss_pen)
+        painter.drawLine(12.2, 3.8, 12.2, 6.7)
+        painter.drawLine(10.8, 5.2, 13.7, 5.2)
+    elif nav_key == "compare":
+        painter.setPen(outline_pen)
+        _rounded_rect(2.9, 3.3, 4.1, 11.4, 1.4)
+        _rounded_rect(11.0, 3.3, 4.1, 11.4, 1.4)
+        painter.drawLine(7.8, 6.1, 10.2, 6.1)
+        painter.drawLine(9.0, 4.9, 10.2, 6.1)
+        painter.drawLine(9.0, 7.3, 10.2, 6.1)
+        painter.setPen(moss_pen)
+        painter.drawLine(10.2, 11.9, 7.8, 11.9)
+        painter.drawLine(9.0, 10.7, 7.8, 11.9)
+        painter.drawLine(9.0, 13.1, 7.8, 11.9)
+    elif nav_key == "history":
+        painter.setPen(outline_pen)
+        painter.drawArc(QRectF(3.2, 3.2, 10.6, 10.6), 28 * 16, 286 * 16)
+        painter.drawLine(11.7, 4.1, 13.9, 4.8)
+        painter.drawLine(11.7, 4.1, 11.0, 6.3)
+        painter.setPen(amber_pen)
+        painter.drawLine(8.5, 6.0, 8.5, 9.4)
+        painter.drawLine(8.5, 9.4, 11.0, 10.9)
+    else:
+        painter.setPen(outline_pen)
+        _rounded_rect(3.0, 3.0, 12.0, 12.0, 2.4)
+
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _workspace_nav_toggle_icon(collapsed: bool) -> QIcon:
+    size = 14
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(
+        QColor("#e3d8ca"),
+        1.8,
+        Qt.PenStyle.SolidLine,
+        Qt.PenCapStyle.RoundCap,
+        Qt.PenJoinStyle.RoundJoin,
+    )
+    painter.setPen(pen)
+
+    if collapsed:
+        painter.drawLine(4.8, 3.2, 9.2, 7.0)
+        painter.drawLine(4.8, 10.8, 9.2, 7.0)
+    else:
+        painter.drawLine(9.2, 3.2, 4.8, 7.0)
+        painter.drawLine(9.2, 10.8, 4.8, 7.0)
+
+    painter.end()
+    return QIcon(pixmap)
+
+
 def _apply_surface_shadow(
     widget: QWidget,
     *,
@@ -15956,6 +16678,16 @@ def _compact_path_text(path_text: str, *, max_length: int = 56) -> str:
     if len(path_text) <= max_length:
         return path_text
     return f"...{path_text[-(max_length - 3):]}"
+
+
+def _paths_match_loose(left: Path, right: Path) -> bool:
+    left_resolved = left.expanduser().resolve(strict=False)
+    right_resolved = right.expanduser().resolve(strict=False)
+    if left_resolved == right_resolved:
+        return True
+    if os.name == "nt":
+        return str(left_resolved).casefold() == str(right_resolved).casefold()
+    return False
 
 
 def _package_inspection_entry_label(entry: PackageInspectionBatchEntry) -> str:

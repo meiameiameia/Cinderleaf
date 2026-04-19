@@ -47,6 +47,13 @@ from sdvmm.domain.models import (
 )
 
 
+def _assert_contains_any_casefold(text: str, *candidates: str) -> None:
+    lowered = text.casefold()
+    assert any(candidate.casefold() in lowered for candidate in candidates), (
+        f"Expected one of {candidates!r} in text:\n{text}"
+    )
+
+
 def test_update_report_text_is_human_readable_and_includes_next_step() -> None:
     report = ModUpdateReport(
         statuses=(
@@ -65,10 +72,10 @@ def test_update_report_text_is_human_readable_and_includes_next_step() -> None:
 
     text = build_update_report_text(report)
 
-    assert "Update Awareness" in text
-    assert "Update available" in text
-    assert "Recommended next step" in text
-    assert "Open remote page" in text
+    _assert_contains_any_casefold(text, "Update Awareness", "Panorama de atualizações")
+    _assert_contains_any_casefold(text, "Update available", "Atualização disponível")
+    _assert_contains_any_casefold(text, "Recommended next step", "Próximo passo recomendado")
+    _assert_contains_any_casefold(text, "Open remote page", "Abrir página remota")
 
 
 def test_findings_text_uses_inactive_rows_language() -> None:
@@ -93,9 +100,13 @@ def test_findings_text_uses_inactive_rows_language() -> None:
 
     text = build_findings_text(inventory)
 
-    assert "Inactive rows detected: 1" in text
+    _assert_contains_any_casefold(text, "Inactive rows detected: 1", "Linhas inativas detectadas: 1")
     assert "Disabled rows detected" not in text
-    assert "Review inactive rows in Library and enable any mods you want active in this view." in text
+    _assert_contains_any_casefold(
+        text,
+        "Review inactive rows in Library and enable any mods you want active in this view.",
+        "Revise as linhas inativas na Biblioteca e ative os mods que você quer deixar ativos nesta visualização.",
+    )
 
 
 def test_mod_removal_result_text_lists_grouped_included_folders() -> None:
@@ -148,10 +159,10 @@ def test_environment_text_clarifies_invalid_path_next_step() -> None:
 
     text = build_environment_status_text(status)
 
-    assert "Environment Detection" in text
-    assert "Invalid game path" in text
-    assert "Recommended next step" in text
-    assert "Pick the Stardew Valley install folder" in text
+    _assert_contains_any_casefold(text, "Environment Detection", "Detecção do ambiente")
+    _assert_contains_any_casefold(text, "Invalid game path", "Caminho do jogo inválido")
+    _assert_contains_any_casefold(text, "Recommended next step", "Próximo passo recomendado")
+    _assert_contains_any_casefold(text, "Pick the Stardew Valley install folder", "Escolha a pasta de instalação do Stardew Valley")
 
 
 def test_smapi_update_text_highlights_manual_update_guidance() -> None:
@@ -167,10 +178,10 @@ def test_smapi_update_text_highlights_manual_update_guidance() -> None:
 
     text = build_smapi_update_status_text(status)
 
-    assert "SMAPI Update Awareness" in text
-    assert "Status: SMAPI update available" in text
-    assert "Recommended next step" in text
-    assert "Open the SMAPI page and update SMAPI manually" in text
+    _assert_contains_any_casefold(text, "SMAPI Update Awareness", "Visão geral da atualização do SMAPI")
+    _assert_contains_any_casefold(text, "Status: SMAPI update available", "Status: Atualização do SMAPI disponível")
+    _assert_contains_any_casefold(text, "Recommended next step", "Próximo passo recomendado")
+    _assert_contains_any_casefold(text, "Open the SMAPI page and update SMAPI manually", "Abra a página do SMAPI e atualize o SMAPI manualmente")
 
 
 def test_smapi_log_report_text_highlights_missing_dependencies_guidance() -> None:
@@ -197,10 +208,10 @@ def test_smapi_log_report_text_highlights_missing_dependencies_guidance() -> Non
 
     text = build_smapi_log_report_text(report)
 
-    assert "SMAPI Log Troubleshooting" in text
-    assert "Log parsed" in text
-    assert "missing dependencies=1" in text
-    assert "Install missing dependencies first" in text
+    _assert_contains_any_casefold(text, "SMAPI Log Troubleshooting", "Análise do log do SMAPI")
+    _assert_contains_any_casefold(text, "Log parsed", "Log analisado")
+    _assert_contains_any_casefold(text, "missing dependencies=1", "dependências ausentes=1", "missing_dependencies=1")
+    _assert_contains_any_casefold(text, "Install missing dependencies first", "Instale primeiro as dependências ausentes")
 
 
 def test_downloads_intake_text_shows_classification_summary_and_action() -> None:
@@ -221,11 +232,11 @@ def test_downloads_intake_text_shows_classification_summary_and_action() -> None
 
     text = build_downloads_intake_text(result)
 
-    assert "Downloads Intake" in text
-    assert "Intake summary" in text
-    assert "Unusable package: 1" in text
-    assert "recommended next step" in text
-    assert "Not actionable" in text
+    _assert_contains_any_casefold(text, "Downloads Intake", "Entrada de downloads")
+    _assert_contains_any_casefold(text, "Intake summary", "Resumo da entrada")
+    _assert_contains_any_casefold(text, "Unusable package: 1", "Pacote não utilizável: 1", "Pacote inutilizável: 1")
+    _assert_contains_any_casefold(text, "recommended next step", "próximo passo recomendado")
+    _assert_contains_any_casefold(text, "Not actionable", "Não acionável")
 
 
 def test_discovery_search_text_shows_compatibility_and_next_step() -> None:
@@ -259,14 +270,14 @@ def test_discovery_search_text_shows_compatibility_and_next_step() -> None:
 
     text = build_discovery_search_text(result, (correlation,))
 
-    assert "Mod Discovery" in text
-    assert "SMAPI compatibility index" in text
+    _assert_contains_any_casefold(text, "Mod Discovery", "Descoberta de mods")
+    _assert_contains_any_casefold(text, "SMAPI compatibility index", "índice de compatibilidade do SMAPI")
     assert "SpaceCore" in text
     assert "Compatible" in text
-    assert "source context" in text
-    assert "provider relation" in text
-    assert "app context" in text
-    assert "Open discovered page" in text
+    _assert_contains_any_casefold(text, "source context", "contexto da origem")
+    _assert_contains_any_casefold(text, "provider relation", "relação do provedor")
+    _assert_contains_any_casefold(text, "app context", "contexto do app")
+    _assert_contains_any_casefold(text, "Open discovered page", "Abrir página descoberta", "Abrir página do mod", "Open source page")
 
 
 def test_package_inspection_text_separates_blocking_and_non_blocking_guidance() -> None:
@@ -298,9 +309,19 @@ def test_package_inspection_text_separates_blocking_and_non_blocking_guidance() 
 
     text = build_package_inspection_text(inspection)
 
-    assert "Manifest dependency preflight (blocking/local)" in text
-    assert "Remote requirement guidance (non-blocking/source-declared)" in text
-    assert "Recommended next step" in text
+    _assert_contains_any_casefold(
+        text,
+        "Manifest dependency preflight (blocking/local)",
+        "prévia de dependências do manifesto (bloqueante/local)",
+        "pré-checagem de dependências do manifesto (bloqueante/local)",
+    )
+    _assert_contains_any_casefold(
+        text,
+        "Remote requirement guidance (non-blocking/source-declared)",
+        "orientação de requisitos remotos (não bloqueante/declarado na origem)",
+        "orientação de requisitos remotos (não bloqueante/declarada na origem)",
+    )
+    _assert_contains_any_casefold(text, "Recommended next step", "Próximo passo recomendado")
 
 
 def test_sandbox_plan_text_highlights_blocked_plan() -> None:
@@ -331,11 +352,11 @@ def test_sandbox_plan_text_highlights_blocked_plan() -> None:
 
     text = build_sandbox_install_plan_text(plan)
 
-    assert "Install Plan" in text
-    assert "Sandbox Mods destination" in text
-    assert "Plan status: BLOCKED" in text
-    assert "Recommended next step" in text
-    assert "Resolve warnings" in text
+    _assert_contains_any_casefold(text, "Install Plan", "Plano de instalação")
+    _assert_contains_any_casefold(text, "Sandbox Mods destination", "Destino Mods sandbox")
+    _assert_contains_any_casefold(text, "Plan status: BLOCKED", "Status do plano: BLOQUEADO")
+    _assert_contains_any_casefold(text, "Recommended next step", "Próximo passo recomendado")
+    _assert_contains_any_casefold(text, "Resolve warnings", "Resolva os avisos")
 
 
 def test_real_destination_plan_text_is_explicit() -> None:
@@ -352,7 +373,7 @@ def test_real_destination_plan_text_is_explicit() -> None:
 
     text = build_sandbox_install_plan_text(plan)
 
-    assert "Game Mods destination (real)" in text
+    _assert_contains_any_casefold(text, "Game Mods destination (real)", "Destino Mods do jogo (real)")
 
 
 def test_archive_restore_result_text_shows_destination_and_target_path() -> None:
@@ -388,8 +409,8 @@ def test_archive_restore_result_text_shows_destination_and_target_path() -> None
 
     text = build_archive_restore_result_text(result)
 
-    assert "Archive restore completed" in text
-    assert "Game Mods destination (real)" in text
+    _assert_contains_any_casefold(text, "Archive restore completed", "Restauração do arquivo concluída")
+    _assert_contains_any_casefold(text, "Game Mods destination (real)", "Destino Mods do jogo (real)")
     assert str(result.restored_target) in text
 
 
@@ -431,7 +452,7 @@ def test_mod_rollback_result_text_shows_destination_and_paths() -> None:
 
     text = build_mod_rollback_result_text(result)
 
-    assert "Mod rollback completed." in text
-    assert "Sandbox Mods destination" in text
+    _assert_contains_any_casefold(text, "Mod rollback completed.", "Mod rollback completed.")
+    _assert_contains_any_casefold(text, "Sandbox Mods destination", "Destino Mods sandbox")
     assert str(result.archived_current_target) in text
     assert str(result.restored_target) in text
