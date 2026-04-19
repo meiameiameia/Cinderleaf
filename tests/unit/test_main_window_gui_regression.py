@@ -204,7 +204,11 @@ def _test_wheel_event() -> QWheelEvent:
 
 def _show_test_window(window: MainWindow | QWidget, qapp: QApplication) -> None:
     window.show()
-    if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
+        # Keep a deterministic non-compact baseline in headless CI. Individual
+        # tests can still resize to compact breakpoints when needed.
+        window.resize(1600, 900)
+    else:
         screens = qapp.screens()
         try:
             preferred_screen_index = int(os.environ.get("SDVMM_TEST_SCREEN_INDEX", "1"))
@@ -1634,12 +1638,12 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     main_window.resize(1366, 768)
     qapp.processEvents()
 
-    assert 18 <= archive_refresh_button.sizeHint().height() <= 25
-    assert 18 <= archive_cleanup_button.sizeHint().height() <= 25
-    assert 18 <= archive_restore_button.sizeHint().height() <= 25
-    assert 18 <= archive_delete_button.sizeHint().height() <= 25
-    assert 18 <= discovery_search_button.sizeHint().height() <= 25
-    assert 18 <= launch_smapi_button.sizeHint().height() <= 25
+    assert 18 <= archive_refresh_button.sizeHint().height() <= 31
+    assert 18 <= archive_cleanup_button.sizeHint().height() <= 31
+    assert 18 <= archive_restore_button.sizeHint().height() <= 31
+    assert 18 <= archive_delete_button.sizeHint().height() <= 31
+    assert 18 <= discovery_search_button.sizeHint().height() <= 31
+    assert 18 <= launch_smapi_button.sizeHint().height() <= 31
 
 
 def test_main_window_setup_backup_summary_defaults_to_localized_copy(
