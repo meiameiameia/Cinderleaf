@@ -51,3 +51,4 @@ artifacts/
 
 # Local internal prototypes / mockups kept outside the public repo surface
 /docs/internal/
+/internal/
