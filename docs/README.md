@@ -4,7 +4,7 @@ Public users should start with the repository [README](../README.md) for the sho
 
 For detailed step-by-step usage, read the [User Manual](USER_GUIDE.md).
 
-The public docs currently track the `1.4.0` release line.
+The public docs currently track the `1.5.0` release line.
 
 This `docs/` area stays intentionally small:
 
@@ -12,9 +12,11 @@ This `docs/` area stays intentionally small:
 - the main [README](../README.md) for the concise public product surface and download guidance
 - GitHub Releases for packaged downloads
 
-Docs direction for `1.4.0`:
+Docs direction for `1.5.0`:
 
 - explain Cinderleaf as an everyday mod manager first
 - keep safer testing, review-before-write, and recovery visible without making the app sound process-heavy
 - make dependency planning and profile dependency handling easy to understand for non-technical players
 - describe `History` as the combined home for archived copies and install rollback
+- treat PT-BR app localization as shipped baseline, with polish-on-sight fixes for runtime text gaps
+- document Linux portable packaging as an experimental available lane (not yet broad distro support)

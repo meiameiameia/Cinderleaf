@@ -10567,9 +10567,10 @@ def _compare_intake_against_inventory(
     if inventory is None:
         return tuple()
 
+    installed_rows = inventory.mods + inventory.disabled_mods
     installed_by_unique_id = {
         canonicalize_unique_id(mod.unique_id): mod
-        for mod in inventory.mods
+        for mod in installed_rows
     }
     comparisons: list[IntakeVersionComparison] = []
     for package_mod in intake.mods:
@@ -10613,7 +10614,7 @@ def _compare_intake_against_inventory(
 
 def _build_install_target_overrides(inventory: ModsInventory) -> dict[str, Path]:
     installed_by_unique_id: dict[str, list[InstalledMod]] = {}
-    for mod in inventory.mods:
+    for mod in inventory.mods + inventory.disabled_mods:
         installed_by_unique_id.setdefault(canonicalize_unique_id(mod.unique_id), []).append(mod)
 
     overrides: dict[str, Path] = {}

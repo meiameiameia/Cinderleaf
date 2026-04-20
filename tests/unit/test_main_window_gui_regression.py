@@ -312,7 +312,7 @@ def test_main_window_portuguese_localizer_keeps_stable_nav_ids_and_localized_she
     assert section_label is not None
     assert setup_button.text() == "Configuração"
     assert packages_button.text() == "Pacotes"
-    assert brand_version.text() == "Versão 1.4.0"
+    assert brand_version.text() == f"Versão {window._app_version_text}"
     assert section_label.text() == "Áreas"
 
     window.close()
@@ -391,7 +391,7 @@ def test_setup_language_preference_change_retranslates_visible_shell_without_res
     assert setup_group is not None
     assert setup_button.text() == "Configuração"
     assert save_button.text() == "Salvar configuração"
-    assert brand_version.text() == "Versão 1.4.0"
+    assert brand_version.text() == f"Versão {window._app_version_text}"
     assert setup_title.text() == "Configuração"
     assert setup_group.title() == "Pastas"
     assert readiness_label.text() == (
@@ -472,17 +472,18 @@ def test_main_window_portuguese_localizer_translates_runtime_surface_summaries(
     )
     assert window._environment_status_label.text() == "mods detectados, SMAPI detectado"
 
+    app_version = window._app_version_text
     status = AppUpdateStatus(
         state="up_to_date",
-        current_version="1.4.0",
-        latest_version="1.4.0",
+        current_version=app_version,
+        latest_version=app_version,
         update_page_url="https://example.com/releases",
-        message="Cinderleaf is up to date (installed 1.4.0, latest 1.4.0).",
+        message=f"Cinderleaf is up to date (installed {app_version}, latest {app_version}).",
     )
     window._apply_app_update_status(status)
     assert (
         window._setup_app_update_status_label.text()
-        == "Cinderleaf está atualizado (instalado 1.4.0, mais recente 1.4.0)."
+        == f"Cinderleaf está atualizado (instalado {app_version}, mais recente {app_version})."
     )
 
     window._selected_zip_package_paths = tuple()
@@ -2122,7 +2123,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert brand_icon_pixmap.isNull() is False
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
-    assert brand_version.text() == "Version 1.4.0"
+    assert brand_version.text() == f"Version {main_window._app_version_text}"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(0).widget() is brand_header

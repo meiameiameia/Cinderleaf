@@ -1065,6 +1065,7 @@ QComboBox QAbstractItemView {
 
 /* ── Table widget ────────────────────────────────────────────────────────── */
 
+QTableView,
 QTableWidget {
     background: #161b1f;
     alternate-background-color: #1a1f24;
@@ -1074,6 +1075,11 @@ QTableWidget {
     selection-background-color: rgba(80, 120, 65, 0.76);
     selection-color: #f8f4ec;
     outline: 0;
+}
+
+QHeaderView {
+    background: #1f252b;
+    border: none;
 }
 
 QHeaderView::section {

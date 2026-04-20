@@ -8516,6 +8516,57 @@ def test_correlate_intake_with_updates_flags_remote_page_newer_but_package_same_
     assert "downloaded package itself carries the newer manifest version" in correlation.next_step.casefold()
 
 
+def test_correlate_intake_with_updates_treats_disabled_library_rows_as_installed(
+    tmp_path: Path,
+) -> None:
+    from sdvmm.domain.models import InstalledMod, ModsInventory, PackageModEntry
+
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    mods_root = tmp_path / "Mods"
+    inventory = ModsInventory(
+        mods=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Exists",
+                name="Sample Exists",
+                version="1.0.0",
+                folder_path=mods_root / "SampleExists",
+                manifest_path=mods_root / "SampleExists" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    intake = _intake_result(
+        package_path=tmp_path / "newer-package.zip",
+        classification="new_install_candidate",
+        matched_installed_unique_ids=tuple(),
+        mods=(
+            PackageModEntry(
+                name="Sample Exists",
+                unique_id="Sample.Exists",
+                version="1.1.0",
+                manifest_path="SampleExists/manifest.json",
+            ),
+        ),
+    )
+
+    correlation = service.correlate_intake_with_updates(
+        intake=intake,
+        inventory=inventory,
+        comparison_target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        update_report=None,
+        guided_update_unique_ids=tuple(),
+    )
+
+    assert correlation.comparison_state == "newer_than_installed"
+    assert correlation.actionable_as_update is True
+
+
 def _create_launchable_game_install(game_path: Path, *, with_smapi: bool = True) -> Path:
     game_path.mkdir()
     (game_path / "Mods").mkdir()

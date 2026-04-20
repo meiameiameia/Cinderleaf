@@ -1,6 +1,6 @@
 # Cinderleaf
 
-**Cinderleaf** is a Windows-first mod manager for **Stardew Valley**.
+**Cinderleaf** is a desktop mod manager for **Stardew Valley** with portable releases for Windows and Linux.
 
 It is made for players who want modding to feel simpler:
 
@@ -14,9 +14,14 @@ It is made for players who want modding to feel simpler:
 
 `for Stardew Valley` is just a description, not an official affiliation. Cinderleaf is a community tool and is not endorsed by ConcernedApe.
 
-Current project version: **1.4.0**
+Current project version: **1.5.0**
 
-Latest packaged public release: **1.4.0**
+Latest packaged public release: **1.5.0**
+
+Release lanes in `1.5.0`:
+
+- Windows portable (`.zip`)
+- Linux portable (`.tar.gz`, experimental lane validated on Ubuntu 24.04)
 
 If you want the full walkthrough, start with the [User Guide](docs/USER_GUIDE.md).
 
@@ -49,7 +54,7 @@ The goal is not to bury you in process. The goal is to make the normal flow feel
 - `History`: archived copies and install rollback history in one place
 - `Setup`: folders, backups, restore/import tools, and a few extra configuration options
 
-## Why `1.4.0` matters
+## Why `1.5.0` matters
 
 This release is a usability release.
 
@@ -60,20 +65,27 @@ The app now feels much more like an everyday mod manager first:
 - `Packages` is faster to use, with `Add package`, better watcher handoff, and automatic `Install` opening when the next step is obvious
 - dependency handling is more visible in the normal flow, with install planning warnings and smarter profile enabling
 - `Compare` shows more rows at once
-- the packaged Windows build fixes a watcher issue that could flash a terminal window during RAR intake
+- packaged build behavior is cleaner on both lanes, including Linux table/header rendering fixes and prior Windows watcher stability fixes
+- app localization is now shipped, including broad Brazilian Portuguese (`pt-BR`) coverage across the main shell and workflow surfaces
+- Linux portable packaging is now available as an experimental release lane alongside Windows portable builds
 
 For the release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Download the portable build
 
-The public build is a Windows portable zip on GitHub Releases.
+Public release artifacts are published on GitHub Releases.
 
 1. Open the repository [Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Download `cinderleaf-1.4.0-windows-portable.zip`.
-3. Extract it to a normal folder.
-4. Run `Cinderleaf.exe`.
+2. Download the artifact for your platform:
+   - Windows: `cinderleaf-1.5.0-windows-portable.zip`
+   - Linux: `cinderleaf-1.5.0-linux-portable.tar.gz` (experimental lane)
+3. Extract to a normal folder.
+4. Run `Cinderleaf.exe` on Windows, or `./Cinderleaf` inside the Linux portable folder.
 
-If a checksum file is published with the release, you can verify it against `cinderleaf-1.4.0-windows-portable.zip.sha256`.
+If checksum files are published with the release, verify against:
+
+- `cinderleaf-1.5.0-windows-portable.zip.sha256`
+- `cinderleaf-1.5.0-linux-portable.tar.gz.sha256`
 
 Good to know:
 
@@ -107,7 +119,7 @@ That means dependency problems show up earlier, during review, instead of only a
 
 ## Screenshots
 
-These screenshots reflect the current `1.4.0` app surface.
+These screenshots reflect the current `1.5.0` app surface.
 
 ![Setup workspace](media/nexus-screenshots/00-setup-workspace.png)
 
@@ -132,7 +144,7 @@ These screenshots reflect the current `1.4.0` app surface.
 - Cinderleaf helps you get to review faster, but it still does not install mods silently
 - save-file export exists in backup bundles, but save restore is still manual
 - Windows is the main supported desktop path today
-- Linux portable builds are now experimental and still need broader runtime validation
+- Linux portable builds are available but still experimental (validated on Ubuntu 24.04; broader distro coverage is still in progress)
 
 ## Public roadmap
 
@@ -143,18 +155,17 @@ Cinderleaf is already usable today, and the next focus is making it easier to us
 - keep the install and update flow smooth and easy to review
 - keep the app calm, consistent, and easy to scan
 - keep packaged builds reliable before every public release
+- harden Linux portable runtime behavior beyond first validated distro targets
 
 ### Next
 
-- add proper app localization infrastructure
-- ship Brazilian Portuguese (`pt-BR`) in the app
 - keep improving update recognition and review flow
 - make translation work easier to contribute to
+- continue PT-BR polish where runtime/generated text still leaks English
+- prepare additional app languages based on community contributions
 
 ### Later
 
-- add more app languages based on community interest and help
-- ship an experimental Linux portable package lane
 - explore Steam Deck support after Linux packaging is stable
 - keep reducing friction in install, update, and recovery flows
 
@@ -162,7 +173,7 @@ This roadmap is directional, not a promise or deadline list. I would rather ship
 
 ## Help translate Cinderleaf
 
-I am actively working toward app localization, starting with Brazilian Portuguese (`pt-BR`).
+App localization is now live in `1.5.0`, including Brazilian Portuguese (`pt-BR`).
 
 If you would like to help translate Cinderleaf into your language, I would love the collaboration. Community help can make it much easier to support the languages that Stardew players actually use day to day.
 
@@ -175,7 +186,7 @@ Bug reports and feature suggestions are welcome through GitHub Issues.
 If you report a bug, it helps to include:
 
 - your Cinderleaf version
-- your Windows version
+- your OS and version (for example Windows 11 or Ubuntu 24.04)
 - which workspace you were using
 - what you expected to happen
 - what happened instead
@@ -196,9 +207,9 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.4.0-windows-portable\
-dist\cinderleaf-1.4.0-windows-portable.zip
-dist\cinderleaf-1.4.0-windows-portable.zip.sha256
+dist\cinderleaf-1.5.0-windows-portable\
+dist\cinderleaf-1.5.0-windows-portable.zip
+dist\cinderleaf-1.5.0-windows-portable.zip.sha256
 ```
 
 Linux portable build (experimental):
@@ -214,9 +225,9 @@ python3 -m venv .venv
 The Linux build script produces:
 
 ```text
-dist/cinderleaf-1.4.0-linux-portable/
-dist/cinderleaf-1.4.0-linux-portable.tar.gz
-dist/cinderleaf-1.4.0-linux-portable.tar.gz.sha256
+dist/cinderleaf-1.5.0-linux-portable/
+dist/cinderleaf-1.5.0-linux-portable.tar.gz
+dist/cinderleaf-1.5.0-linux-portable.tar.gz.sha256
 ```
 
 ## License

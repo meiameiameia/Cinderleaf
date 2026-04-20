@@ -1,6 +1,6 @@
 # Cinderleaf User Guide
 
-This is the easy-to-read guide for the current `1.4.0` release line.
+This is the easy-to-read guide for the current `1.5.0` release line.
 
 If you want the short version first, read the main [README](../README.md).
 
@@ -113,6 +113,19 @@ Use it to:
 - launch with SMAPI
 - launch a sandbox test
 - work with profiles
+
+### How to update a mod
+
+Use this flow when a mod has a newer version available:
+
+1. In `Library`, click `Check updates`.
+2. Select a row that shows `Update available`.
+3. Click `Open page` (or `Find source`) and download the new archive.
+4. Go to `Packages` and let the watcher detect it, or click `Add package`.
+5. Select the package row, choose the compare target, and open `Install`.
+6. Review replacement/dependency warnings, then apply the install.
+
+This keeps updates on the same safe path as normal installs: detect, queue, review, write.
 
 If you spend most of your time in one workspace, it will probably be `Library`.
 
@@ -245,7 +258,7 @@ It does not install mods by itself.
 If you want to report a bug, it helps to include:
 
 - your Cinderleaf version
-- your Windows version
+- your OS and version (for example Windows 11 or Ubuntu 24.04)
 - which workspace you were using
 - the status text or error message you saw
 - whether it only happens in the portable packaged build or also from source
@@ -275,4 +288,5 @@ Right now, it helps to remember:
 - `Compare` is still read-only
 - Cinderleaf helps you get to review faster, but it still does not install mods silently
 - save restore is still manual
-- Windows is the main supported desktop path
+- Windows is still the main supported desktop path
+- Linux portable builds are now available in `1.5.0`, but still experimental and not yet broadly validated across distros
