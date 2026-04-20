@@ -114,6 +114,19 @@ Use it to:
 - launch a sandbox test
 - work with profiles
 
+### How to update a mod
+
+Use this flow when a mod has a newer version available:
+
+1. In `Library`, click `Check updates`.
+2. Select a row that shows `Update available`.
+3. Click `Open page` (or `Find source`) and download the new archive.
+4. Go to `Packages` and let the watcher detect it, or click `Add package`.
+5. Select the package row, choose the compare target, and open `Install`.
+6. Review replacement/dependency warnings, then apply the install.
+
+This keeps updates on the same safe path as normal installs: detect, queue, review, write.
+
 If you spend most of your time in one workspace, it will probably be `Library`.
 
 ## 7. SMAPI
