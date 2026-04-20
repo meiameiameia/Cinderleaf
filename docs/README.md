@@ -4,6 +4,12 @@ Public users should start with the repository [README](../README.md) for the sho
 
 For detailed step-by-step usage, read the [User Manual](USER_GUIDE.md).
 
+Localized docs:
+
+- Portuguese (Brazil):
+  - [README (PT-BR)](i18n/pt-BR/README.md)
+  - [User Guide (PT-BR)](i18n/pt-BR/USER_GUIDE.md)
+
 The public docs currently track the `1.5.0` release line.
 
 This `docs/` area stays intentionally small:

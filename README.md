@@ -25,6 +25,15 @@ Release lanes in `1.5.0`:
 
 If you want the full walkthrough, start with the [User Guide](docs/USER_GUIDE.md).
 
+## Documentation languages
+
+- English:
+  - [Project README](README.md)
+  - [User Guide](docs/USER_GUIDE.md)
+- Português (Brasil):
+  - [README (PT-BR)](docs/i18n/pt-BR/README.md)
+  - [Guia do Usuário (PT-BR)](docs/i18n/pt-BR/USER_GUIDE.md)
+
 ## What Cinderleaf is good at
 
 Cinderleaf is meant to help with the normal day-to-day modding routine:
