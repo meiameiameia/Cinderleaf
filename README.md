@@ -1,6 +1,6 @@
 # Cinderleaf
 
-**Cinderleaf** is a desktop mod manager for **Stardew Valley** with portable release artifacts for Windows and Linux.
+**Cinderleaf** is a desktop mod manager for **Stardew Valley** with portable releases for Windows and Linux.
 
 It is made for players who want modding to feel simpler:
 
