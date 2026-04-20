@@ -4,6 +4,8 @@ This is the easy-to-read guide for the current `1.5.0` release line.
 
 If you want the short version first, read the main [README](../README.md).
 
+Portuguese (Brazil) version: [Guia do Usuário (PT-BR)](i18n/pt-BR/USER_GUIDE.md).
+
 ## 1. What Cinderleaf is for
 
 Cinderleaf is for Stardew Valley players who want modding to feel more organized without turning it into a chore.
