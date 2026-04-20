@@ -1,6 +1,6 @@
 # Cinderleaf
 
-**Cinderleaf** is a Windows-first mod manager for **Stardew Valley**.
+**Cinderleaf** is a desktop mod manager for **Stardew Valley** with portable release artifacts for Windows and Linux.
 
 It is made for players who want modding to feel simpler:
 
@@ -17,6 +17,11 @@ It is made for players who want modding to feel simpler:
 Current project version: **1.5.0**
 
 Latest packaged public release: **1.5.0**
+
+Release lanes in `1.5.0`:
+
+- Windows portable (`.zip`)
+- Linux portable (`.tar.gz`, experimental lane validated on Ubuntu 24.04)
 
 If you want the full walkthrough, start with the [User Guide](docs/USER_GUIDE.md).
 
@@ -60,7 +65,7 @@ The app now feels much more like an everyday mod manager first:
 - `Packages` is faster to use, with `Add package`, better watcher handoff, and automatic `Install` opening when the next step is obvious
 - dependency handling is more visible in the normal flow, with install planning warnings and smarter profile enabling
 - `Compare` shows more rows at once
-- the packaged Windows build fixes a watcher issue that could flash a terminal window during RAR intake
+- packaged build behavior is cleaner on both lanes, including Linux table/header rendering fixes and prior Windows watcher stability fixes
 - app localization is now shipped, including broad Brazilian Portuguese (`pt-BR`) coverage across the main shell and workflow surfaces
 - Linux portable packaging is now available as an experimental release lane alongside Windows portable builds
 
@@ -71,10 +76,11 @@ For the release history, see [CHANGELOG.md](CHANGELOG.md).
 Public release artifacts are published on GitHub Releases.
 
 1. Open the repository [Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Download `cinderleaf-1.5.0-windows-portable.zip`.
-3. Optionally also download `cinderleaf-1.5.0-linux-portable.tar.gz` for Linux (experimental lane).
-4. Extract to a normal folder.
-5. Run `Cinderleaf.exe` on Windows, or `./Cinderleaf` inside the Linux portable folder.
+2. Download the artifact for your platform:
+   - Windows: `cinderleaf-1.5.0-windows-portable.zip`
+   - Linux: `cinderleaf-1.5.0-linux-portable.tar.gz` (experimental lane)
+3. Extract to a normal folder.
+4. Run `Cinderleaf.exe` on Windows, or `./Cinderleaf` inside the Linux portable folder.
 
 If checksum files are published with the release, verify against:
 
