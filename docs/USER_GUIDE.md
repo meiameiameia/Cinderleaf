@@ -245,7 +245,7 @@ It does not install mods by itself.
 If you want to report a bug, it helps to include:
 
 - your Cinderleaf version
-- your Windows version
+- your OS and version (for example Windows 11 or Ubuntu 24.04)
 - which workspace you were using
 - the status text or error message you saw
 - whether it only happens in the portable packaged build or also from source
@@ -275,4 +275,5 @@ Right now, it helps to remember:
 - `Compare` is still read-only
 - Cinderleaf helps you get to review faster, but it still does not install mods silently
 - save restore is still manual
-- Windows is the main supported desktop path
+- Windows is still the main supported desktop path
+- Linux portable builds are now available in `1.5.0`, but still experimental and not yet broadly validated across distros

@@ -8,6 +8,7 @@ All notable user-facing changes for this repository are tracked here.
 - Polished shell density and responsive behavior, including tighter small-desktop defaults, clearer top-context collapse behavior, and cleaner version/status presentation.
 - Fixed Packages watched-folders rail composition for 1920x1080 so labels, path rows, and watcher actions remain aligned and readable.
 - Added Linux portable packaging foundation (`scripts/build_linux_portable.py` + `packaging/sdvmm_linux_portable.spec`) so Linux artifact creation and checksums are now part of the repo baseline.
+- Fixed Linux dark-theme table/header fallback paint so packaged Ubuntu runs no longer show white filler artifacts across `Library`, `Discover`, `Compare`, and `History` data grids.
 - Hardened headless GUI regression reliability by auto-resolving modal dialogs in offscreen tests and stabilizing responsive test assumptions used in CI.
 - Fixed an app-update localization import-cycle risk by lazily resolving UI localizer text in update status checks.
 

@@ -2,16 +2,16 @@
 
 Project: `Cinderleaf / stardew-mod-manager`
 
-Last refreshed: `2026-04-09` after the `1.3.1` patch release, product-direction reset, locked profile redesign audit, external product critique review, and the grouped custom-profile membership implementation pass
+Last refreshed: `2026-04-20` after `1.5.0` release-prep stabilization (PT-BR localization rollout, Linux portable packaging lane, headless GUI hardening, and Linux visual artifact fixes)
 
 ## Baseline
 
-- Full unit baseline: `701 passed`
-- Current release line: `1.3.1`
+- Full unit baseline: `752 passed`
+- Current release line: `1.5.0`
 - Largest Python files:
-  - `src/sdvmm/ui/main_window.py`: `12771` lines
-  - `src/sdvmm/app/shell_service.py`: `9875` lines
-  - `src/sdvmm/app/inventory_presenter.py`: `1124` lines
+  - `src/sdvmm/ui/main_window.py`: `15617` lines
+  - `src/sdvmm/app/shell_service.py`: `10443` lines
+  - `src/sdvmm/app/inventory_presenter.py`: `1484` lines
 
 ## Strategic Direction
 
@@ -44,12 +44,12 @@ Current mainstream expectations for a Stardew mod manager are roughly:
 - clear update checking
 - low-friction daily use
 
-Cinderleaf already has strong differentiators in safety and recovery, but it still needs to close gaps in:
+Cinderleaf already has strong differentiators in safety and recovery, and `1.5.0` landed major PT-BR + Linux-packaging groundwork, but it still needs to close gaps in:
 
 1. default-flow simplicity
-2. profile mental model
+2. localization/runtime text consistency
 3. UI density and readability
-4. everyday speed and trust signals
+4. Linux experimental-lane runtime reliability
 
 ## Audit Conclusions
 
@@ -60,9 +60,8 @@ Main current risks:
 1. Mainstream UX drift
 - too much of the product story still reads like a careful advanced tool instead of a broadly welcoming everyday manager
 
-2. Profile model mismatch
-- current profile creation still materializes linked clones of the whole inventory
-- this is slow on large libraries and does not match the simpler enable/disable mental model most users expect
+2. Localization consistency gaps
+- broad PT-BR coverage is now landed, but runtime/generated text can still leak English and needs polish-on-sight hardening before wider language expansion
 
 3. UI density
 - many screens are better than before, but `MainWindow` still exposes too much state and explanation at once
@@ -159,11 +158,11 @@ Target model:
 - disabling a mod removes it from that profile
 - dependency warnings appear when enabling a mod that needs another mod not present in the profile
 
-Why this is next:
+Why this remains important:
 
-- it directly addresses the current slow, noisy, clone-heavy profile creation behavior
-- it makes profiles easier to explain
-- it aligns Cinderleaf with mainstream mod-manager mental models
+- it keeps custom profiles predictable for everyday players
+- it preserves the mainstream enable/disable mental model as surrounding features evolve
+- it prevents regressions while localization and packaging work continue
 
 Bounded implementation order:
 
@@ -178,7 +177,7 @@ Audit status:
 - the profile redesign audit is now locked in [internal/PROFILE_MODEL_REDESIGN_AUDIT.md](C:/Users/darth/Projects/stardew-mod-manager/internal/PROFILE_MODEL_REDESIGN_AUDIT.md)
 - empty-profile creation and membership-truthfulness are already landed
 - grouped custom-profile membership is now landed, so grouped multi-folder mods can be added or removed as one logical profile entry again
-- the next step is dependency warnings on enable, not more product-direction drift
+- dependency warnings on enable are now landed; remaining work is polish, edge-case truthfulness, and docs clarity
 
 ### Phase 3: Update And Install Experience
 
@@ -253,7 +252,7 @@ Priority targets:
 
 ## What Not To Do Yet
 
-- Do not widen into cross-platform positioning work yet.
+- Do not widen into broad cross-platform positioning work yet (Linux portable remains an experimental lane, not a parity promise).
 - Do not attempt a broad visual redesign before the profile and happy-path flows are calmer.
 - Do not let advanced sandbox/recovery workflows define the first-run experience.
 - Do not rewrite `main_window.py` or `shell_service.py` wholesale.
@@ -276,10 +275,10 @@ These matter, but they are not the next engineering slice:
 
 ## Immediate Next Safe Increment
 
-`dependency warning on enable for custom profiles`
+`post-1.5.0 stability + release operations hardening`
 
 Reason:
 
-- the empty-profile foundation, membership-truthfulness pass, and grouped custom-profile membership are now landed
-- the next missing profile behavior is dependency warnings when enabling a mod whose required dependencies are not in the active custom profile
-- this should land before chrome-compression work because it is still core profile behavior, not presentation polish
+- the `1.5.0` feature line is effectively complete and should prioritize release safety over new scope
+- Linux portable is now shippable as an experimental lane, but still needs broader distro/runtime smoke coverage
+- docs/release comms should stay aligned with shipped behavior (PT-BR now live, Linux lane now available, limits clearly stated)
