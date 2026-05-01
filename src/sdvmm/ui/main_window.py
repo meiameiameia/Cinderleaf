@@ -422,6 +422,26 @@ def _inventory_group_base_name(mod: InstalledMod) -> str:
     return name
 
 
+def _inventory_group_normalized_family_name(mod: InstalledMod) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _inventory_group_base_name(mod).casefold())
+
+
+def _inventory_mods_share_family_identity(left: InstalledMod, right: InstalledMod) -> bool:
+    left_id = canonicalize_unique_id(left.unique_id)
+    right_id = canonicalize_unique_id(right.unique_id)
+    if not left_id or not right_id:
+        return False
+    has_unique_id_family = left_id.startswith(f"{right_id}.") or right_id.startswith(f"{left_id}.")
+    if not has_unique_id_family:
+        return False
+
+    left_name = _inventory_group_normalized_family_name(left)
+    right_name = _inventory_group_normalized_family_name(right)
+    if not left_name or not right_name:
+        return False
+    return left_name.startswith(right_name) or right_name.startswith(left_name)
+
+
 def _inventory_group_display_name(member_mods: tuple[InstalledMod, ...]) -> str:
     primary_mod = member_mods[0]
     base_names = {_inventory_group_base_name(mod) for mod in member_mods if mod.name.strip()}
@@ -1201,8 +1221,6 @@ def _build_inventory_row_entries(
             left_update_keys = _inventory_effective_update_keys(left_mod)
             for right_key in candidate_keys[index + 1 :]:
                 _, right_mod, _ = candidate_rows_by_key[right_key]
-                if not _inventory_has_direct_dependency_link(left_mod, right_mod):
-                    continue
                 right_update_keys = _inventory_effective_update_keys(right_mod)
                 has_shared_update_key = bool(left_update_keys & right_update_keys)
                 has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
@@ -1210,9 +1228,14 @@ def _build_inventory_row_entries(
                     _inventory_group_base_name(left_mod).casefold()
                     == _inventory_group_base_name(right_mod).casefold()
                 )
+                shares_family_identity = _inventory_mods_share_family_identity(left_mod, right_mod)
+                has_direct_dependency_link = _inventory_has_direct_dependency_link(left_mod, right_mod)
+                if not has_direct_dependency_link and not shares_family_identity:
+                    continue
                 if not (
                     has_shared_update_key
                     or (has_single_sided_update_key and shares_base_name)
+                    or (not left_update_keys and not right_update_keys and shares_family_identity)
                 ):
                     continue
                 adjacency[left_key].add(right_key)
@@ -5306,6 +5329,7 @@ class MainWindow(QMainWindow):
                 inventory,
                 nexus_api_key_text=nexus_api_key_text,
                 existing_config=config,
+                smapi_log_report=self._last_smapi_log_report,
             ),
             on_success=lambda report, _target=target_kind, _scan_path=scan_path: (
                 self._on_startup_update_check_completed(report, _target, _scan_path)
@@ -7060,6 +7084,7 @@ class MainWindow(QMainWindow):
                 inventory,
                 nexus_api_key_text=nexus_api_key_text,
                 existing_config=config,
+                smapi_log_report=self._last_smapi_log_report,
             ),
             on_success=self._on_check_updates_completed,
             busy_button=self._check_updates_button,
@@ -15719,6 +15744,15 @@ def _smapi_log_summary_label(report: SmapiLogReport, *, context_label: str | Non
         + counts[SMAPI_LOG_RUNTIME_ISSUE]
     )
     if issue_count == 0 and counts[SMAPI_LOG_WARNING] == 0:
+        if report.mod_update_alerts:
+            summary = (
+                f"Atualizações: {len(report.mod_update_alerts)}"
+                if localizer.effective_language == "pt-BR"
+                else f"Updates: {len(report.mod_update_alerts)}"
+            )
+            if context_label:
+                return f"{_smapi_log_context_short_label(context_label)}: {summary.lower()}"
+            return summary
         if context_label:
             return localizer.text(
                 "smapi.log.no_obvious_issues_context",
@@ -15851,14 +15885,16 @@ def _smapi_log_report_summary_text(report: SmapiLogReport) -> str:
         f"avisos={counts[SMAPI_LOG_WARNING]}, "
         f"mods_com_falha={counts[SMAPI_LOG_FAILED_MOD]}, "
         f"dependências_ausentes={counts[SMAPI_LOG_MISSING_DEPENDENCY]}, "
-        f"problemas_de_runtime={counts[SMAPI_LOG_RUNTIME_ISSUE]}."
+        f"problemas_de_runtime={counts[SMAPI_LOG_RUNTIME_ISSUE]}, "
+        f"atualizações={len(report.mod_update_alerts)}."
         if pt_br
         else "Parsed SMAPI log: "
         f"errors={counts[SMAPI_LOG_ERROR]}, "
         f"warnings={counts[SMAPI_LOG_WARNING]}, "
         f"failed_mods={counts[SMAPI_LOG_FAILED_MOD]}, "
         f"missing_dependencies={counts[SMAPI_LOG_MISSING_DEPENDENCY]}, "
-        f"runtime_issues={counts[SMAPI_LOG_RUNTIME_ISSUE]}."
+        f"runtime_issues={counts[SMAPI_LOG_RUNTIME_ISSUE]}, "
+        f"updates={len(report.mod_update_alerts)}."
     )
 
 

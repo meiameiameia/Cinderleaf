@@ -273,6 +273,12 @@ def build_smapi_log_report_text(report: SmapiLogReport) -> str:
             if pt_br
             else f"- Missing dependency targets: {report.missing_dependency_target_count}"
         )
+    if report.mod_update_alerts:
+        lines.append(
+            f"- Alertas de atualização de mods: {len(report.mod_update_alerts)}"
+            if pt_br
+            else f"- Mod update alerts: {len(report.mod_update_alerts)}"
+        )
     lines.append(f"- Resumo: {_smapi_log_summary_text(report)}" if pt_br else f"- Summary: {_smapi_log_summary_text(report)}")
     if report.missing_dependencies:
         lines.append("")
@@ -284,6 +290,13 @@ def build_smapi_log_report_text(report: SmapiLogReport) -> str:
             if entry.required_version:
                 detail += f" (requer {entry.required_version})" if pt_br else f" (required {entry.required_version})"
             lines.append(detail)
+    if report.mod_update_alerts:
+        lines.append("")
+        lines.append("Atualizações apontadas pelo SMAPI:" if pt_br else "SMAPI mod update alerts:")
+        for alert in report.mod_update_alerts:
+            lines.append(
+                f"- {alert.name}: {alert.installed_version} -> {alert.latest_version} ({alert.page_url})"
+            )
 
     lines.append("")
     if report.findings:
@@ -361,11 +374,18 @@ def build_smapi_log_report_text(report: SmapiLogReport) -> str:
                 else "- Review warnings and monitor if they repeat after next launch."
             )
         else:
-            lines.append(
-                "- Nenhum problema óbvio foi encontrado. Verifique de novo depois de reproduzir um problema, se necessário."
-                if pt_br
-                else "- No obvious issues parsed. Re-check after reproducing a problem if needed."
-            )
+            if report.mod_update_alerts:
+                lines.append(
+                    "- Execute Verificar atualizações na Biblioteca para aplicar esses alertas às linhas instaladas."
+                    if pt_br
+                    else "- Run Check updates in Library to apply those alerts to installed rows."
+                )
+            else:
+                lines.append(
+                    "- Nenhum problema óbvio foi encontrado. Verifique de novo depois de reproduzir um problema, se necessário."
+                    if pt_br
+                    else "- No obvious issues parsed. Re-check after reproducing a problem if needed."
+                )
 
     return "\n".join(lines)
 

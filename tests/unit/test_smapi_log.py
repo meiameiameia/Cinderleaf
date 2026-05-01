@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sdvmm.domain.models import SmapiMissingDependency
+from sdvmm.domain.models import SmapiMissingDependency, SmapiModUpdateAlert
 from sdvmm.services.smapi_log import (
     capture_cinderleaf_context_log,
     cinderleaf_smapi_latest_log_path,
@@ -180,6 +180,41 @@ def test_parse_smapi_log_text_collects_unique_missing_dependency_ids() -> None:
         "Pathoschild.ContentPatcher",
     )
     assert "missing_dependencies=3" in (report.message or "")
+
+
+def test_parse_smapi_log_text_extracts_mod_update_alerts() -> None:
+    log_text = "\n".join(
+        (
+            "[14:48:16 ALERT SMAPI] You can update 5 mods:",
+            "[14:48:16 ALERT SMAPI]    (DLL) Weather Wonders - Stable 1.5.3-beta: https://www.curseforge.com/stardewvalley/mods/weather-wonders (you have 1.4.10-stable)",
+            "[14:48:16 ALERT SMAPI]    Dwarven Network 1.0.0: https://www.nexusmods.com/stardewvalley/mods/45283 (you have 0.9.1)",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.mod_update_alerts == (
+        SmapiModUpdateAlert(
+            name="(DLL) Weather Wonders - Stable",
+            latest_version="1.5.3-beta",
+            installed_version="1.4.10-stable",
+            page_url="https://www.curseforge.com/stardewvalley/mods/weather-wonders",
+            line_number=2,
+        ),
+        SmapiModUpdateAlert(
+            name="Dwarven Network",
+            latest_version="1.0.0",
+            installed_version="0.9.1",
+            page_url="https://www.nexusmods.com/stardewvalley/mods/45283",
+            line_number=3,
+        ),
+    )
+    assert "mod_updates=2" in (report.message or "")
 
 
 def test_parse_smapi_log_text_keeps_dependency_target_and_required_version_separate() -> None:

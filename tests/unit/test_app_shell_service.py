@@ -56,6 +56,7 @@ from sdvmm.domain.models import (
     SandboxInstallPlan,
     SandboxInstallPlanEntry,
     SmapiLogReport,
+    SmapiModUpdateAlert,
     SmapiUpdateStatus,
     UpdateSourceIntentOverlay,
     UpdateSourceIntentRecord,
@@ -7482,6 +7483,53 @@ def test_check_updates_returns_no_remote_link_for_unlinked_mod(tmp_path: Path, m
     assert len(report.statuses) == 1
     assert report.statuses[0].state == "no_remote_link"
     assert report.statuses[0].remote_link is None
+
+
+def test_check_updates_applies_smapi_update_alert_for_missing_source_mod(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    mod_path = tmp_path / "Mods" / "Dwarven Network"
+    mod = InstalledMod(
+        unique_id="Orneryy.DwarvenNetwork",
+        name="Dwarven Network",
+        version="0.9.1",
+        folder_path=mod_path,
+        manifest_path=mod_path / "manifest.json",
+        dependencies=tuple(),
+    )
+    inventory = ModsInventory(
+        mods=(mod,),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    smapi_report = SmapiLogReport(
+        state="parsed",
+        source="manual",
+        log_path=tmp_path / "SMAPI-latest.txt",
+        game_path=tmp_path,
+        findings=tuple(),
+        mod_update_alerts=(
+            SmapiModUpdateAlert(
+                name="Dwarven Network",
+                latest_version="1.0.0",
+                installed_version="0.9.1",
+                page_url="https://www.nexusmods.com/stardewvalley/mods/45283",
+                line_number=2,
+            ),
+        ),
+    )
+
+    report = service.check_updates(inventory, smapi_log_report=smapi_report)
+
+    assert len(report.statuses) == 1
+    status = report.statuses[0]
+    assert status.state == "update_available"
+    assert status.remote_version == "1.0.0"
+    assert status.remote_link is not None
+    assert status.remote_link.provider == "nexus"
+    assert status.remote_link.page_url == "https://www.nexusmods.com/stardewvalley/mods/45283"
 
 
 def test_check_updates_marks_metadata_unavailable_for_nexus_link(

@@ -61,6 +61,7 @@ from sdvmm.domain.models import (
     InstallRecoveryPlanSummary,
     RecoveryExecutionHistory,
     RecoveryExecutionRecord,
+    RemoteModLink,
     RemoteMetadataPayloadCache,
     SandboxModProfile,
     SandboxModProfileCatalog,
@@ -84,6 +85,7 @@ from sdvmm.domain.models import (
     PackageInspectionResult,
     PackageModEntry,
     SmapiLogReport,
+    SmapiModUpdateAlert,
     SmapiUpdateStatus,
     SandboxInstallPlan,
     SandboxInstallPlanEntry,
@@ -102,6 +104,7 @@ from sdvmm.domain.dependency_codes import (
     UNRESOLVED_DEPENDENCY_CONTEXT,
 )
 from sdvmm.domain.scan_codes import DIRECT_MOD, MULTI_MOD_CONTAINER, NESTED_MOD_CONTAINER
+from sdvmm.domain.update_codes import CURSEFORGE_PROVIDER, GITHUB_PROVIDER, JSON_PROVIDER, NEXUS_PROVIDER
 from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.services.app_state_store import (
     AppStateStoreError,
@@ -4164,6 +4167,7 @@ class AppShellService:
         *,
         nexus_api_key_text: str = "",
         existing_config: AppConfig | None = None,
+        smapi_log_report: SmapiLogReport | None = None,
     ) -> ModUpdateReport:
         nexus_api_key = self._resolve_nexus_api_key(
             nexus_api_key_text=nexus_api_key_text,
@@ -4184,7 +4188,11 @@ class AppShellService:
             save_remote_metadata_cache(self._remote_metadata_cache_file, updated_cache)
         except AppStateStoreError:
             pass
-        return report
+        return _merge_smapi_mod_update_alerts_into_update_report(
+            inventory=inventory,
+            report=report,
+            smapi_log_report=smapi_log_report,
+        )
 
     def _enrich_package_inspection_result(
         self,
@@ -10960,6 +10968,184 @@ def _normalize_real_mod_profile_catalog(
     )
 
 
+def _merge_smapi_mod_update_alerts_into_update_report(
+    *,
+    inventory: ModsInventory,
+    report: ModUpdateReport,
+    smapi_log_report: SmapiLogReport | None,
+) -> ModUpdateReport:
+    if smapi_log_report is None or not smapi_log_report.mod_update_alerts:
+        return report
+
+    statuses_by_folder = {
+        _path_lookup_key(status.folder_path): status for status in report.statuses
+    }
+    merged_statuses = list(report.statuses)
+
+    for alert in smapi_log_report.mod_update_alerts:
+        mod = _single_smapi_update_alert_match(alert=alert, inventory=inventory)
+        if mod is None:
+            continue
+        if not _smapi_update_alert_version_matches_mod(alert=alert, mod=mod):
+            continue
+        comparison = compare_versions(mod.version, alert.latest_version)
+        if comparison is None or comparison >= 0:
+            continue
+
+        folder_key = _path_lookup_key(mod.folder_path)
+        existing_status = statuses_by_folder.get(folder_key)
+        if existing_status is not None and existing_status.state == "update_available":
+            continue
+
+        replacement = (
+            replace(
+                existing_status,
+                remote_version=alert.latest_version,
+                state="update_available",
+                remote_link=_remote_link_from_smapi_update_alert(alert),
+                update_source_diagnostic=None,
+                message="SMAPI latest log reports a newer version for this installed mod.",
+            )
+            if existing_status is not None
+            else ModUpdateStatus(
+                unique_id=mod.unique_id,
+                name=mod.name,
+                folder_path=mod.folder_path,
+                installed_version=mod.version,
+                remote_version=alert.latest_version,
+                state="update_available",
+                remote_link=_remote_link_from_smapi_update_alert(alert),
+                update_source_diagnostic=None,
+                message="SMAPI latest log reports a newer version for this installed mod.",
+            )
+        )
+
+        if existing_status is None:
+            statuses_by_folder[folder_key] = replacement
+            merged_statuses.append(replacement)
+            continue
+
+        statuses_by_folder[folder_key] = replacement
+        merged_statuses = [
+            replacement if _path_lookup_key(status.folder_path) == folder_key else status
+            for status in merged_statuses
+        ]
+
+    return ModUpdateReport(
+        statuses=tuple(merged_statuses),
+        diagnostics=report.diagnostics,
+    )
+
+
+def _single_smapi_update_alert_match(
+    *,
+    alert: SmapiModUpdateAlert,
+    inventory: ModsInventory,
+) -> InstalledMod | None:
+    normalized_alert_name = _normalized_smapi_update_alert_name(alert.name)
+    compact_alert_name = _compact_mod_match_text(normalized_alert_name)
+    candidates: list[InstalledMod] = []
+    for mod in inventory.mods:
+        normalized_mod_name = _normalized_smapi_update_alert_name(mod.name)
+        if normalized_mod_name.casefold() == normalized_alert_name.casefold():
+            candidates.append(mod)
+            continue
+        if _compact_mod_match_text(normalized_mod_name) == compact_alert_name:
+            candidates.append(mod)
+
+    unique_candidates: dict[str, InstalledMod] = {}
+    for candidate in candidates:
+        unique_candidates.setdefault(_path_lookup_key(candidate.folder_path), candidate)
+    if len(unique_candidates) != 1:
+        return None
+    return next(iter(unique_candidates.values()))
+
+
+def _normalized_smapi_update_alert_name(name: str) -> str:
+    normalized = name.strip()
+    while normalized.startswith("(") and ")" in normalized:
+        prefix, _, remainder = normalized.partition(")")
+        if not prefix.strip("()").strip():
+            break
+        normalized = remainder.strip()
+    return normalized
+
+
+def _compact_mod_match_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _smapi_update_alert_version_matches_mod(
+    *,
+    alert: SmapiModUpdateAlert,
+    mod: InstalledMod,
+) -> bool:
+    comparison = compare_versions(mod.version, alert.installed_version)
+    if comparison is not None:
+        return comparison == 0
+    return mod.version.strip().casefold() == alert.installed_version.strip().casefold()
+
+
+def _remote_link_from_smapi_update_alert(alert: SmapiModUpdateAlert) -> RemoteModLink:
+    nexus_match = re.fullmatch(
+        r"https?://(?:www\.)?nexusmods\.com/([a-z0-9][a-z0-9_-]*)/mods/(\d+)(?:[/?#].*)?",
+        alert.page_url.strip().casefold(),
+    )
+    if nexus_match is not None:
+        game_domain, mod_id = nexus_match.groups()
+        return RemoteModLink(
+            provider=NEXUS_PROVIDER,
+            key=f"{game_domain}:{mod_id}",
+            page_url=alert.page_url,
+            metadata_url=f"https://api.nexusmods.com/v1/games/{game_domain}/mods/{mod_id}.json",
+        )
+
+    github_match = re.fullmatch(
+        r"https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:[/?#].*)?",
+        alert.page_url.strip(),
+    )
+    if github_match is not None:
+        repo = github_match.group(1)
+        return RemoteModLink(
+            provider=GITHUB_PROVIDER,
+            key=repo,
+            page_url=alert.page_url,
+            metadata_url=f"https://api.github.com/repos/{repo}/releases/latest",
+        )
+
+    curseforge_project_match = re.fullmatch(
+        r"https?://(?:www\.)?curseforge\.com/projects/(\d+)(?:[/?#].*)?",
+        alert.page_url.strip().casefold(),
+    )
+    if curseforge_project_match is not None:
+        project_id = curseforge_project_match.group(1)
+        return RemoteModLink(
+            provider=CURSEFORGE_PROVIDER,
+            key=project_id,
+            page_url=alert.page_url,
+            metadata_url=None,
+        )
+
+    curseforge_page_match = re.fullmatch(
+        r"https?://(?:www\.)?curseforge\.com/(?:stardewvalley|stardew-valley)/[^?#]+",
+        alert.page_url.strip().casefold(),
+    )
+    if curseforge_page_match is not None:
+        return RemoteModLink(
+            provider=CURSEFORGE_PROVIDER,
+            key=alert.page_url,
+            page_url=alert.page_url,
+            metadata_url=None,
+        )
+
+    return RemoteModLink(
+        provider=JSON_PROVIDER,
+        key=alert.page_url,
+        page_url=alert.page_url,
+        metadata_url=None,
+    )
+
+
 def _path_lookup_key(path: Path) -> str:
     key = str(Path(os.path.abspath(os.path.normpath(str(path.expanduser())))))
     if os.name == "nt":
@@ -11011,6 +11197,26 @@ def _profile_group_base_name(mod: InstalledMod) -> str:
     if suffix_start > 0 and name.endswith(")"):
         return name[:suffix_start].strip()
     return name
+
+
+def _profile_group_normalized_family_name(mod: InstalledMod) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _profile_group_base_name(mod).casefold())
+
+
+def _profile_mods_share_family_identity(left: InstalledMod, right: InstalledMod) -> bool:
+    left_id = canonicalize_unique_id(left.unique_id)
+    right_id = canonicalize_unique_id(right.unique_id)
+    if not left_id or not right_id:
+        return False
+    has_unique_id_family = left_id.startswith(f"{right_id}.") or right_id.startswith(f"{left_id}.")
+    if not has_unique_id_family:
+        return False
+
+    left_name = _profile_group_normalized_family_name(left)
+    right_name = _profile_group_normalized_family_name(right)
+    if not left_name or not right_name:
+        return False
+    return left_name.startswith(right_name) or right_name.startswith(left_name)
 
 
 def _profile_normalized_update_keys(mod: InstalledMod) -> set[str]:
@@ -11165,8 +11371,6 @@ def _build_profile_entry_state_maps(
             left_update_keys = _profile_effective_update_keys(left_mod)
             for right_key in candidate_keys[index + 1 :]:
                 _, right_mod, _ = candidate_rows_by_key[right_key]
-                if not _profile_has_direct_dependency_link(left_mod, right_mod):
-                    continue
                 right_update_keys = _profile_effective_update_keys(right_mod)
                 has_shared_update_key = bool(left_update_keys & right_update_keys)
                 has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
@@ -11174,9 +11378,14 @@ def _build_profile_entry_state_maps(
                     _profile_group_base_name(left_mod).casefold()
                     == _profile_group_base_name(right_mod).casefold()
                 )
+                shares_family_identity = _profile_mods_share_family_identity(left_mod, right_mod)
+                has_direct_dependency_link = _profile_has_direct_dependency_link(left_mod, right_mod)
+                if not has_direct_dependency_link and not shares_family_identity:
+                    continue
                 if not (
                     has_shared_update_key
                     or (has_single_sided_update_key and shares_base_name)
+                    or (not left_update_keys and not right_update_keys and shares_family_identity)
                 ):
                     continue
                 adjacency[left_key].add(right_key)

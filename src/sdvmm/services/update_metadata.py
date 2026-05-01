@@ -39,6 +39,7 @@ from sdvmm.domain.remote_requirement_codes import (
 )
 from sdvmm.domain.update_codes import (
     GITHUB_PROVIDER,
+    CURSEFORGE_PROVIDER,
     JSON_PROVIDER,
     LOCAL_PRIVATE_MOD,
     METADATA_UNAVAILABLE,
@@ -55,6 +56,7 @@ from sdvmm.domain.update_codes import (
 
 NEXUS_API_KEY_ENV = "SDVMM_NEXUS_API_KEY"
 NEXUS_VALIDATE_URL = "https://api.nexusmods.com/v1/users/validate.json"
+SMAPI_MODS_API_URL = "https://smapi.io/api/v4.0.0/mods"
 
 MALFORMED_UPDATE_KEY = "malformed_update_key"
 MISSING_API_KEY = "missing_api_key"
@@ -85,6 +87,15 @@ class JsonMetadataFetcher(Protocol):
         headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Fetch JSON from a remote URL."""
+
+    def post_json(
+        self,
+        url: str,
+        payload: Mapping[str, Any],
+        timeout_seconds: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """POST JSON to a remote URL and fetch a JSON response."""
 
 
 class UrllibJsonMetadataFetcher:
@@ -122,6 +133,61 @@ class UrllibJsonMetadataFetcher:
                 f"Invalid metadata JSON: {exc}",
             ) from exc
 
+        if isinstance(data, list):
+            return {"mods": data}
+
+        if not isinstance(data, dict):
+            raise MetadataFetchError(
+                UNEXPECTED_PROVIDER_RESPONSE,
+                "Metadata payload must be a JSON object",
+            )
+
+        return data
+
+    def post_json(
+        self,
+        url: str,
+        payload: Mapping[str, Any],
+        timeout_seconds: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        request_headers: dict[str, str] = {
+            "User-Agent": "sdvmm/0.1 (+local metadata check)",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if headers:
+            request_headers.update({str(key): str(value) for key, value in headers.items()})
+
+        request = Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=request_headers,
+            method="POST",
+        )
+
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                response_payload = response.read().decode("utf-8")
+        except HTTPError as exc:
+            body_message = _extract_http_error_message(exc)
+            reason = AUTH_FAILURE if exc.code in {401, 403} else REQUEST_FAILURE
+            message = f"HTTP {exc.code}: {body_message or exc.reason or 'request failed'}"
+            raise MetadataFetchError(reason, message) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise MetadataFetchError(REQUEST_FAILURE, str(exc)) from exc
+
+        try:
+            data = json.loads(response_payload)
+        except json.JSONDecodeError as exc:
+            raise MetadataFetchError(
+                UNEXPECTED_PROVIDER_RESPONSE,
+                f"Invalid metadata JSON: {exc}",
+            ) from exc
+
+        if isinstance(data, list):
+            return {"mods": data}
+
         if not isinstance(data, dict):
             raise MetadataFetchError(
                 UNEXPECTED_PROVIDER_RESPONSE,
@@ -141,6 +207,7 @@ class MetadataProviderAdapter(Protocol):
         self,
         link: RemoteModLink,
         *,
+        mod: InstalledMod,
         fetcher: JsonMetadataFetcher,
         timeout_seconds: float,
         nexus_api_key: str | None = None,
@@ -176,11 +243,12 @@ class JsonProviderAdapter:
         self,
         link: RemoteModLink,
         *,
+        mod: InstalledMod,
         fetcher: JsonMetadataFetcher,
         timeout_seconds: float,
         nexus_api_key: str | None = None,
     ) -> dict[str, Any]:
-        _ = nexus_api_key
+        _ = mod, nexus_api_key
         if not link.metadata_url:
             raise MetadataFetchError(UNEXPECTED_PROVIDER_RESPONSE, "JSON provider has no metadata URL")
         return fetcher.fetch_json(link.metadata_url, timeout_seconds)
@@ -214,11 +282,12 @@ class GithubProviderAdapter:
         self,
         link: RemoteModLink,
         *,
+        mod: InstalledMod,
         fetcher: JsonMetadataFetcher,
         timeout_seconds: float,
         nexus_api_key: str | None = None,
     ) -> dict[str, Any]:
-        _ = nexus_api_key
+        _ = mod, nexus_api_key
         if not link.metadata_url:
             raise MetadataFetchError(UNEXPECTED_PROVIDER_RESPONSE, "GitHub provider has no metadata URL")
         return fetcher.fetch_json(link.metadata_url, timeout_seconds)
@@ -238,6 +307,85 @@ class GithubProviderAdapter:
 
     def extract_requirements(self, payload: Mapping[str, Any]) -> tuple[str, ...]:
         return _extract_generic_requirements(payload)
+
+
+class CurseForgeProviderAdapter:
+    provider = CURSEFORGE_PROVIDER
+
+    def build_link(self, raw_value: str) -> RemoteModLink | None:
+        project_id = _parse_curseforge_key(raw_value)
+        if project_id is None:
+            return None
+
+        return RemoteModLink(
+            provider=CURSEFORGE_PROVIDER,
+            key=project_id,
+            page_url=f"https://www.curseforge.com/projects/{project_id}",
+            metadata_url=None,
+        )
+
+    def fetch_payload(
+        self,
+        link: RemoteModLink,
+        *,
+        mod: InstalledMod,
+        fetcher: JsonMetadataFetcher,
+        timeout_seconds: float,
+        nexus_api_key: str | None = None,
+    ) -> dict[str, Any]:
+        _ = nexus_api_key
+        request_payload = {
+            "mods": (
+                {
+                    "id": mod.unique_id,
+                    "updateKeys": (f"CurseForge:{link.key}",),
+                    "installedVersion": mod.version,
+                    "isBroken": False,
+                },
+            ),
+            "apiVersion": "4.0.0",
+            "includeExtendedMetadata": True,
+        }
+        return fetcher.post_json(SMAPI_MODS_API_URL, request_payload, timeout_seconds)
+
+    def extract_version(self, payload: Mapping[str, Any]) -> str | None:
+        suggested = _extract_smapi_first_suggested_update(payload)
+        if suggested is not None:
+            version = suggested.get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+
+        metadata_entry = _extract_smapi_first_metadata_entry(payload)
+        if metadata_entry is None:
+            return None
+        version = metadata_entry.get("version")
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+        return None
+
+    def extract_page_url(self, payload: Mapping[str, Any]) -> str | None:
+        suggested = _extract_smapi_first_suggested_update(payload)
+        if suggested is not None:
+            value = suggested.get("url")
+            if isinstance(value, str) and _looks_like_url(value):
+                return value.strip()
+
+        metadata_entry = _extract_smapi_first_metadata_entry(payload)
+        if metadata_entry is not None:
+            value = metadata_entry.get("url")
+            if isinstance(value, str) and _looks_like_url(value):
+                return value.strip()
+
+        metadata = _extract_smapi_first_metadata(payload)
+        if metadata is not None:
+            for key in ("url", "mainUrl", "modPageUrl"):
+                value = metadata.get(key)
+                if isinstance(value, str) and _looks_like_url(value):
+                    return value.strip()
+        return None
+
+    def extract_requirements(self, payload: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple()
 
 
 class NexusProviderAdapter:
@@ -260,10 +408,12 @@ class NexusProviderAdapter:
         self,
         link: RemoteModLink,
         *,
+        mod: InstalledMod,
         fetcher: JsonMetadataFetcher,
         timeout_seconds: float,
         nexus_api_key: str | None = None,
     ) -> dict[str, Any]:
+        _ = mod
         if not link.metadata_url:
             raise MetadataFetchError(UNEXPECTED_PROVIDER_RESPONSE, "Nexus provider has no metadata URL")
 
@@ -323,10 +473,11 @@ class ProviderFailure:
     message: str
 
 
-_PROVIDER_PRIORITY = (JSON_PROVIDER, GITHUB_PROVIDER, NEXUS_PROVIDER)
+_PROVIDER_PRIORITY = (JSON_PROVIDER, GITHUB_PROVIDER, NEXUS_PROVIDER, CURSEFORGE_PROVIDER)
 _PROVIDER_ADAPTERS: tuple[MetadataProviderAdapter, ...] = (
     JsonProviderAdapter(),
     GithubProviderAdapter(),
+    CurseForgeProviderAdapter(),
     NexusProviderAdapter(),
 )
 _PROVIDERS_BY_NAME = {adapter.provider: adapter for adapter in _PROVIDER_ADAPTERS}
@@ -650,6 +801,7 @@ def _check_single_mod(
         try:
             payload = _fetch_payload_with_cache(
                 provider=provider,
+                mod=mod,
                 link=link,
                 fetcher=fetcher,
                 timeout_seconds=timeout_seconds,
@@ -747,6 +899,7 @@ def _check_single_mod(
 def _fetch_payload_with_cache(
     *,
     provider: MetadataProviderAdapter,
+    mod: InstalledMod,
     link: RemoteModLink,
     fetcher: JsonMetadataFetcher,
     timeout_seconds: float,
@@ -779,6 +932,7 @@ def _fetch_payload_with_cache(
     try:
         payload = provider.fetch_payload(
             link,
+            mod=mod,
             fetcher=fetcher,
             timeout_seconds=timeout_seconds,
             nexus_api_key=nexus_api_key,
@@ -859,7 +1013,7 @@ def _prefetch_primary_remote_payloads(
     remote_payload_cache: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue],
     diagnostics: _UpdateCheckDiagnosticsAccumulator,
 ) -> dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue]:
-    requests: dict[_RemotePayloadCacheKey, tuple[MetadataProviderAdapter, RemoteModLink]] = {}
+    requests: dict[_RemotePayloadCacheKey, tuple[MetadataProviderAdapter, InstalledMod, RemoteModLink]] = {}
     for resolved_check in resolved_checks:
         if not resolved_check.links:
             continue
@@ -871,7 +1025,7 @@ def _prefetch_primary_remote_payloads(
         provider = _PROVIDERS_BY_NAME.get(link.provider)
         if provider is None:
             continue
-        requests[cache_key] = (provider, link)
+        requests[cache_key] = (provider, resolved_check.mod, link)
 
     if len(requests) < 2:
         return {}
@@ -880,12 +1034,13 @@ def _prefetch_primary_remote_payloads(
     prefetched: dict[_RemotePayloadCacheKey, _RemotePayloadCacheValue] = {}
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sdvmm-update") as executor:
         future_to_cache_key = {}
-        for cache_key, (provider, link) in requests.items():
+        for cache_key, (provider, mod, link) in requests.items():
             diagnostics.live_fetches += 1
             future_to_cache_key[
                 executor.submit(
                     _fetch_remote_payload_for_prefetch,
                     provider=provider,
+                    mod=mod,
                     link=link,
                     fetcher=fetcher,
                     timeout_seconds=timeout_seconds,
@@ -907,6 +1062,7 @@ def _prefetch_primary_remote_payloads(
 def _fetch_remote_payload_for_prefetch(
     *,
     provider: MetadataProviderAdapter,
+    mod: InstalledMod,
     link: RemoteModLink,
     fetcher: JsonMetadataFetcher,
     timeout_seconds: float,
@@ -915,6 +1071,7 @@ def _fetch_remote_payload_for_prefetch(
 ) -> _CachedRemotePayload:
     payload = provider.fetch_payload(
         link,
+        mod=mod,
         fetcher=fetcher,
         timeout_seconds=timeout_seconds,
         nexus_api_key=nexus_api_key,
@@ -984,6 +1141,29 @@ def _parse_nexus_key(raw_value: str) -> tuple[str, str] | None:
     return None
 
 
+def _parse_curseforge_key(raw_value: str) -> str | None:
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    if "@" in value:
+        value = value.split("@", 1)[0].strip()
+        if not value:
+            return None
+
+    if value.isdigit():
+        return value
+
+    project_url_match = re.fullmatch(
+        r"https?://(?:www\.)?curseforge\.com/projects/(\d+)(?:[/?#].*)?",
+        value.casefold(),
+    )
+    if project_url_match is not None:
+        return project_url_match.group(1)
+
+    return None
+
+
 def _looks_like_repo_slug(value: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value.strip()) is not None
 
@@ -1013,6 +1193,46 @@ def _extract_generic_version(payload: Mapping[str, Any]) -> str | None:
             return value.strip()
 
     return None
+
+
+def _extract_smapi_first_suggested_update(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    for mod_entry in _extract_smapi_mod_entries(payload):
+        suggested = mod_entry.get("suggestedUpdate")
+        if isinstance(suggested, Mapping):
+            return suggested
+    return None
+
+
+def _extract_smapi_first_metadata(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    for mod_entry in _extract_smapi_mod_entries(payload):
+        metadata = mod_entry.get("metadata")
+        if isinstance(metadata, Mapping):
+            return metadata
+    return None
+
+
+def _extract_smapi_first_metadata_entry(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    for mod_entry in _extract_smapi_mod_entries(payload):
+        metadata = mod_entry.get("metadata")
+        if not isinstance(metadata, Mapping):
+            continue
+
+        for key in ("main", "optional"):
+            entry = metadata.get(key)
+            if isinstance(entry, Mapping):
+                return entry
+
+        for entry in metadata.values():
+            if isinstance(entry, Mapping) and any(key in entry for key in ("version", "url")):
+                return entry
+    return None
+
+
+def _extract_smapi_mod_entries(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    mods = payload.get("mods")
+    if not isinstance(mods, list):
+        return tuple()
+    return tuple(entry for entry in mods if isinstance(entry, Mapping))
 
 
 def _extract_generic_requirements(payload: Mapping[str, Any]) -> tuple[str, ...]:

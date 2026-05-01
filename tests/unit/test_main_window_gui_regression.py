@@ -119,6 +119,7 @@ from sdvmm.ui.main_window import _ROLE_MOD_IS_GROUPED
 from sdvmm.ui.main_window import _ROLE_MOD_MEMBER_FOLDER_PATHS
 from sdvmm.ui.main_window import _ROLE_MOD_TOGGLEABLE
 from sdvmm.ui.main_window import _ROLE_MOD_UPDATE_STATUS
+from sdvmm.ui.main_window import _build_inventory_row_entries
 from sdvmm.ui.main_window import _smapi_log_context_details
 from sdvmm.services.app_state_store import save_app_config
 from sdvmm.ui.main_window import _ROLE_UPDATE_BLOCK_REASON
@@ -6346,6 +6347,56 @@ def test_main_window_real_grouped_profile_rows_share_toggle_ownership(
         str(profile_root / "[CP]ZebrusLawnRobot"),
     )
     assert updated_status.text() == "not_checked"
+
+
+def test_inventory_row_entries_group_family_components_without_update_keys(tmp_path: Path) -> None:
+    mods_root = tmp_path / "Mods"
+    primary_path = mods_root / "Dwarven Network"
+    assets_path = mods_root / "Dwarven Network Assets"
+    primary = InstalledMod(
+        unique_id="Orneryy.DwarvenNetwork",
+        name="Dwarven Network",
+        version="0.9.1",
+        folder_path=primary_path,
+        manifest_path=primary_path / "manifest.json",
+        dependencies=tuple(),
+    )
+    assets = InstalledMod(
+        unique_id="Orneryy.DwarvenNetwork.Assets",
+        name="Dwarven Network Assets",
+        version="0.9.1",
+        folder_path=assets_path,
+        manifest_path=assets_path / "manifest.json",
+        dependencies=tuple(),
+    )
+    inventory = ModsInventory(
+        mods=(primary, assets),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=primary_path,
+                mod_paths=(primary_path,),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=assets_path,
+                mod_paths=(assets_path,),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+
+    rows = _build_inventory_row_entries(inventory=inventory, roots=(mods_root,))
+
+    assert len(rows) == 1
+    assert rows[0].display_name == "Dwarven Network (+1 more)"
+    assert rows[0].grouped is True
+    assert rows[0].member_folder_paths == (primary_path, assets_path)
 
 
 def test_main_window_create_real_profile_dispatches_create_operation(

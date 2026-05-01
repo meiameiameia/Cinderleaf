@@ -16,11 +16,13 @@ METADATA_UNAVAILABLE: UpdateState = "metadata_unavailable"
 
 RemoteLinkProvider = Literal[
     "github",
+    "curseforge",
     "nexus",
     "json",
 ]
 
 GITHUB_PROVIDER: RemoteLinkProvider = "github"
+CURSEFORGE_PROVIDER: RemoteLinkProvider = "curseforge"
 NEXUS_PROVIDER: RemoteLinkProvider = "nexus"
 JSON_PROVIDER: RemoteLinkProvider = "json"
 

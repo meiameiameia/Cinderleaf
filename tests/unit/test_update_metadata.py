@@ -28,6 +28,7 @@ from sdvmm.services.update_metadata import (
     NEXUS_API_KEY_ENV,
     REQUEST_FAILURE,
     RESPONSE_MISSING_VERSION,
+    SMAPI_MODS_API_URL,
     MetadataFetchError,
     check_nexus_connection,
     check_updates_for_inventory,
@@ -40,13 +41,14 @@ from sdvmm.services.update_metadata import (
 class StubFetcher:
     def __init__(
         self,
-        payloads: dict[str, dict[str, object]] | None = None,
+        payloads: dict[str, object] | None = None,
         *,
         error_by_url: dict[str, MetadataFetchError] | None = None,
     ) -> None:
         self._payloads = payloads or {}
         self._error_by_url = error_by_url or {}
         self.calls: list[tuple[str, dict[str, str]]] = []
+        self.post_calls: list[tuple[str, dict[str, object], dict[str, str]]] = []
 
     def fetch_json(
         self,
@@ -65,11 +67,38 @@ class StubFetcher:
         if payload is None:
             raise MetadataFetchError(REQUEST_FAILURE, f"no payload for {url}")
 
+        if not isinstance(payload, dict):
+            raise MetadataFetchError(REQUEST_FAILURE, f"invalid payload for {url}")
         return payload
+
+    def post_json(
+        self,
+        url: str,
+        payload: Mapping[str, object],
+        timeout_seconds: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, object]:
+        _ = timeout_seconds
+        captured_headers = dict(headers or {})
+        captured_payload = dict(payload)
+        self.post_calls.append((url, captured_payload, captured_headers))
+
+        if url in self._error_by_url:
+            raise self._error_by_url[url]
+
+        response_payload = self._payloads.get(url)
+        if response_payload is None:
+            raise MetadataFetchError(REQUEST_FAILURE, f"no payload for {url}")
+
+        if isinstance(response_payload, list):
+            return {"mods": response_payload}
+        if not isinstance(response_payload, dict):
+            raise MetadataFetchError(REQUEST_FAILURE, f"invalid payload for {url}")
+        return response_payload
 
 
 class BlockingFetcher(StubFetcher):
-    def __init__(self, payloads: dict[str, dict[str, object]], *, expected_parallel_calls: int) -> None:
+    def __init__(self, payloads: dict[str, object], *, expected_parallel_calls: int) -> None:
         super().__init__(payloads=payloads)
         self._expected_parallel_calls = expected_parallel_calls
         self._lock = threading.Lock()
@@ -126,6 +155,12 @@ def test_real_nexus_updatekey_forms_are_resolved() -> None:
     )
 
 
+def test_curseforge_updatekey_forms_are_resolved() -> None:
+    assert resolve_remote_link(("CurseForge:309243",)).provider == "curseforge"
+    assert resolve_remote_link(("CurseForge: 309243@Main",)).provider == "curseforge"
+    assert resolve_remote_link(("CurseForge:https://www.curseforge.com/projects/309243",)).provider == "curseforge"
+
+
 def test_nexus_provider_reports_up_to_date_when_remote_equals_installed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -176,6 +211,79 @@ def test_nexus_provider_reports_update_available_when_remote_is_newer(
     assert status.state == "update_available"
     assert status.remote_version == "1.2.0"
     assert status.remote_requirements_state == "requirements_absent"
+
+
+def test_curseforge_provider_uses_smapi_update_api_for_latest_version() -> None:
+    mod = _mod(
+        unique_id="Pathoschild.ContentPatcher",
+        version="2.8.0",
+        update_keys=("CurseForge:309243",),
+    )
+    inventory = _inventory((mod,))
+    fetcher = StubFetcher(
+        payloads={
+            SMAPI_MODS_API_URL: [
+                {
+                    "id": "Pathoschild.ContentPatcher",
+                    "suggestedUpdate": {
+                        "version": "2.9.1",
+                        "url": "https://www.curseforge.com/stardewvalley/mods/content-patcher",
+                    },
+                }
+            ]
+        }
+    )
+
+    report = check_updates_for_inventory(inventory, fetcher=fetcher)
+
+    status = report.statuses[0]
+    assert status.state == "update_available"
+    assert status.remote_version == "2.9.1"
+    assert status.remote_link is not None
+    assert status.remote_link.provider == "curseforge"
+    assert status.remote_link.page_url == "https://www.curseforge.com/stardewvalley/mods/content-patcher"
+    assert fetcher.post_calls
+    post_url, post_payload, _ = fetcher.post_calls[0]
+    assert post_url == SMAPI_MODS_API_URL
+    assert post_payload["mods"][0]["id"] == "Pathoschild.ContentPatcher"
+    assert post_payload["mods"][0]["installedVersion"] == "2.8.0"
+    assert post_payload["mods"][0]["updateKeys"] == ("CurseForge:309243",)
+    assert post_payload["apiVersion"] == "4.0.0"
+
+
+def test_curseforge_provider_uses_smapi_metadata_for_up_to_date_version() -> None:
+    mod = _mod(
+        unique_id="Kana.WeatherWonders.CC",
+        version="1.5.3-beta",
+        update_keys=("CurseForge:1016623",),
+    )
+    inventory = _inventory((mod,))
+    fetcher = StubFetcher(
+        payloads={
+            SMAPI_MODS_API_URL: [
+                {
+                    "id": "Kana.WeatherWonders.CC",
+                    "metadata": {
+                        "id": [],
+                        "main": {
+                            "version": "1.5.3-beta",
+                            "url": "https://www.curseforge.com/stardewvalley/mods/weather-wonders",
+                        },
+                    },
+                    "errors": [],
+                }
+            ]
+        }
+    )
+
+    report = check_updates_for_inventory(inventory, fetcher=fetcher)
+
+    status = report.statuses[0]
+    assert status.state == "up_to_date"
+    assert status.remote_version == "1.5.3-beta"
+    assert status.remote_link is not None
+    assert status.remote_link.provider == "curseforge"
+    assert status.remote_link.page_url == "https://www.curseforge.com/stardewvalley/mods/weather-wonders"
 
 
 def test_nexus_missing_api_key_is_reported_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:

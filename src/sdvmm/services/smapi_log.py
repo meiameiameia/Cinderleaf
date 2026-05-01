@@ -12,6 +12,7 @@ from sdvmm.domain.models import (
     SmapiLogFinding,
     SmapiLogReport,
     SmapiMissingDependency,
+    SmapiModUpdateAlert,
 )
 from sdvmm.domain.smapi_log_codes import (
     SMAPI_LOG_ERROR,
@@ -69,6 +70,12 @@ _MISSING_DEPENDENCY_COLON_RE = re.compile(
 )
 _MODS_PATH_OVERRIDE_RE = re.compile(
     r"--mods-path(?:=|\s+)(?:\"(?P<quoted>[^\"]+)\"|(?P<unquoted>.+?))(?=\s--[A-Za-z0-9_-]+|\s+\|\s*|$)",
+    re.IGNORECASE,
+)
+_LOG_PREFIX_RE = re.compile(r"^\[[^\]]+\]\s*")
+_MOD_UPDATE_ALERT_RE = re.compile(
+    r"^(?P<name>.+?)\s+(?P<latest_version>[^\s:]+):\s+"
+    r"(?P<page_url>https?://\S+)\s+\(you have (?P<installed_version>[^)]+)\)",
     re.IGNORECASE,
 )
 _MOD_IDENTITY_RE = re.compile(
@@ -288,6 +295,8 @@ def parse_smapi_log_text(
     counts_by_kind: dict[str, int] = {}
     missing_dependencies: list[SmapiMissingDependency] = []
     missing_dependency_ids: set[str] = set()
+    mod_update_alerts: list[SmapiModUpdateAlert] = []
+    seen_mod_update_alerts: set[tuple[str, str, str, str]] = set()
     seen_missing_dependency_entries: set[tuple[str | None, str | None, str | None, str | None]] = set()
     detected_mods_path_overrides: list[str] = []
     seen_mods_path_overrides: set[str] = set()
@@ -307,6 +316,12 @@ def parse_smapi_log_text(
             detected_mods_path_overrides.append(override)
 
         lowered = line.casefold()
+        _append_mod_update_alert_from_line(
+            line_number=line_number,
+            line=line,
+            mod_update_alerts=mod_update_alerts,
+            seen_alerts=seen_mod_update_alerts,
+        )
 
         if "skipped mods" in lowered:
             in_skipped_mods_block = True
@@ -406,6 +421,7 @@ def parse_smapi_log_text(
     summary = _build_summary_message(
         findings,
         missing_dependency_count=len(missing_dependencies),
+        mod_update_alert_count=len(mod_update_alerts),
     )
     return SmapiLogReport(
         state=SMAPI_LOG_PARSED,
@@ -415,6 +431,7 @@ def parse_smapi_log_text(
         findings=tuple(findings),
         missing_dependencies=tuple(missing_dependencies),
         missing_dependency_ids=tuple(sorted(missing_dependency_ids, key=str.casefold)),
+        mod_update_alerts=tuple(mod_update_alerts),
         notes=tuple(notes),
         message=summary,
     )
@@ -549,6 +566,50 @@ def _unique_context_capture_path(*, context_directory: Path, context_label: str)
         candidate = context_directory / f"{stamp}-{suffix}-smapi-{counter}.txt"
         counter += 1
     return candidate
+
+
+def _append_mod_update_alert_from_line(
+    *,
+    line_number: int,
+    line: str,
+    mod_update_alerts: list[SmapiModUpdateAlert],
+    seen_alerts: set[tuple[str, str, str, str]],
+) -> None:
+    content = _strip_log_prefix(line)
+    match = _MOD_UPDATE_ALERT_RE.match(content)
+    if match is None:
+        return
+
+    name = match.group("name").strip()
+    latest_version = match.group("latest_version").strip()
+    installed_version = match.group("installed_version").strip()
+    page_url = match.group("page_url").strip().rstrip(".")
+    if not name or not latest_version or not installed_version or not page_url:
+        return
+
+    dedupe_key = (
+        name.casefold(),
+        latest_version.casefold(),
+        installed_version.casefold(),
+        page_url.casefold(),
+    )
+    if dedupe_key in seen_alerts:
+        return
+
+    seen_alerts.add(dedupe_key)
+    mod_update_alerts.append(
+        SmapiModUpdateAlert(
+            name=name,
+            latest_version=latest_version,
+            installed_version=installed_version,
+            page_url=page_url,
+            line_number=line_number,
+        )
+    )
+
+
+def _strip_log_prefix(line: str) -> str:
+    return _LOG_PREFIX_RE.sub("", line.strip()).strip()
 
 
 def _append_missing_dependency_from_line(
@@ -760,6 +821,7 @@ def _build_summary_message(
     findings: Iterable[SmapiLogFinding],
     *,
     missing_dependency_count: int,
+    mod_update_alert_count: int,
 ) -> str:
     counts = {
         SMAPI_LOG_ERROR: 0,
@@ -778,7 +840,8 @@ def _build_summary_message(
         f"warnings={counts[SMAPI_LOG_WARNING]}, "
         f"failed_mods={counts[SMAPI_LOG_FAILED_MOD]}, "
         f"missing_dependencies={missing_dependency_count}, "
-        f"runtime_issues={counts[SMAPI_LOG_RUNTIME_ISSUE]}."
+        f"runtime_issues={counts[SMAPI_LOG_RUNTIME_ISSUE]}, "
+        f"mod_updates={mod_update_alert_count}."
     )
 
 

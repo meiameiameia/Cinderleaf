@@ -134,6 +134,15 @@ class SmapiMissingDependency:
 
 
 @dataclass(frozen=True, slots=True)
+class SmapiModUpdateAlert:
+    name: str
+    latest_version: str
+    installed_version: str
+    page_url: str
+    line_number: int
+
+
+@dataclass(frozen=True, slots=True)
 class SmapiLogReport:
     state: SmapiLogStatusState
     source: SmapiLogSourceKind
@@ -142,6 +151,7 @@ class SmapiLogReport:
     findings: tuple[SmapiLogFinding, ...]
     missing_dependencies: tuple[SmapiMissingDependency, ...] = tuple()
     missing_dependency_ids: tuple[str, ...] = tuple()
+    mod_update_alerts: tuple[SmapiModUpdateAlert, ...] = tuple()
     notes: tuple[str, ...] = tuple()
     message: str | None = None
 
