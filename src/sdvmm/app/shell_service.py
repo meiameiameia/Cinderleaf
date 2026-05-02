@@ -21,6 +21,7 @@ from sdvmm.domain.models import (
     ArchivedModEntry,
     ArchiveCleanupPlan,
     ArchiveCleanupResult,
+    ArchiveDeleteBatchResult,
     ArchiveDeletePlan,
     ArchiveDeleteResult,
     ArchiveRetentionGroup,
@@ -120,6 +121,7 @@ from sdvmm.services.app_state_store import (
     real_mod_profile_catalog_file,
     recovery_execution_history_file,
     remote_metadata_cache_file,
+    save_install_operation_history,
     save_real_mod_profile_catalog,
     sandbox_mod_profile_catalog_file,
     save_app_config,
@@ -633,6 +635,15 @@ class AppShellService:
             return load_install_operation_history(self._install_operation_history_file)
         except AppStateStoreError as exc:
             raise AppShellError(f"Could not load install history: {exc}") from exc
+
+    def clear_install_history(self) -> None:
+        try:
+            save_install_operation_history(
+                self._install_operation_history_file,
+                InstallOperationHistory(operations=tuple()),
+            )
+        except (AppStateStoreError, OSError) as exc:
+            raise AppShellError(f"Could not clear install history: {exc}") from exc
 
     def load_recovery_execution_history(self) -> RecoveryExecutionHistory:
         try:
@@ -1538,6 +1549,7 @@ class AppShellService:
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
         language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
+        archive_retention_keep_count: int = ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
         existing_config: AppConfig | None,
     ) -> AppConfig:
         config = self._build_validated_operational_config(
@@ -1553,6 +1565,7 @@ class AppShellService:
             install_target=install_target,
             language_preference=language_preference,
             steam_auto_start_enabled=steam_auto_start_enabled,
+            archive_retention_keep_count=archive_retention_keep_count,
             existing_config=existing_config,
         )
 
@@ -1595,6 +1608,7 @@ class AppShellService:
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
         language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
+        archive_retention_keep_count: int = ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
         existing_config: AppConfig | None,
     ) -> AppConfig:
         if scan_target not in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
@@ -1659,6 +1673,7 @@ class AppShellService:
             install_target=install_target,
             language_preference=language_preference,
             steam_auto_start_enabled=steam_auto_start_enabled,
+            archive_retention_keep_count=max(1, archive_retention_keep_count),
         )
         return config
 
@@ -1677,6 +1692,7 @@ class AppShellService:
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
         language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
+        archive_retention_keep_count: int = ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
         existing_config: AppConfig | None,
     ) -> SessionConfigPersistenceResult:
         has_session_input = any(
@@ -1713,6 +1729,7 @@ class AppShellService:
                 install_target=install_target,
                 language_preference=language_preference,
                 steam_auto_start_enabled=steam_auto_start_enabled,
+                archive_retention_keep_count=archive_retention_keep_count,
                 existing_config=existing_config,
             )
         except AppShellError as exc:
@@ -1958,6 +1975,7 @@ class AppShellService:
         install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
         language_preference: str = "system",
         steam_auto_start_enabled: bool = True,
+        archive_retention_keep_count: int = ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
         existing_config: AppConfig | None,
     ) -> CinderleafManagedMigrationResult:
         managed_paths = self.resolve_cinderleaf_managed_paths(
@@ -2176,6 +2194,7 @@ class AppShellService:
             install_target=install_target,
             language_preference=language_preference,
             steam_auto_start_enabled=steam_auto_start_enabled,
+            archive_retention_keep_count=archive_retention_keep_count,
             existing_config=existing_config,
         )
         except Exception:
@@ -5092,6 +5111,7 @@ class AppShellService:
         real_archive_path_text: str,
         sandbox_archive_path_text: str,
         existing_config: AppConfig | None = None,
+        keep_latest_count: int = ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
     ) -> tuple[ArchivedModEntry, ...]:
         real_mods_path = self._resolve_real_mods_path(
             configured_mods_path_text=configured_mods_path_text,
@@ -5142,7 +5162,7 @@ class AppShellService:
         )
         return _annotate_archive_retention_entries(
             tuple(entries),
-            keep_latest_count=ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
+            keep_latest_count=keep_latest_count,
         )
 
     def build_archive_restore_plan(
@@ -5278,6 +5298,38 @@ class AppShellService:
         return ArchiveDeleteResult(
             plan=plan,
             deleted_path=deleted_path,
+        )
+
+    def execute_archive_delete_batch(
+        self,
+        plans: tuple[ArchiveDeletePlan, ...],
+        *,
+        confirm_delete: bool = False,
+    ) -> ArchiveDeleteBatchResult:
+        if not confirm_delete:
+            raise AppShellError("Explicit confirmation is required before permanent archive delete.")
+        if not plans:
+            raise AppShellError("At least one archived entry is required for permanent archive delete.")
+
+        results: list[ArchiveDeleteResult] = []
+        deleted_paths: list[Path] = []
+        for plan in plans:
+            try:
+                result = self.execute_archive_delete(plan, confirm_delete=True)
+            except AppShellError as exc:
+                if deleted_paths:
+                    raise AppShellError(
+                        "Archive delete partially completed before failing on "
+                        f"{plan.entry.archived_path}: {exc}. Archived entries already deleted: "
+                        f"{len(deleted_paths)}."
+                    ) from exc
+                raise
+            results.append(result)
+            deleted_paths.append(result.deleted_path)
+
+        return ArchiveDeleteBatchResult(
+            results=tuple(results),
+            deleted_paths=tuple(deleted_paths),
         )
 
     def build_archive_cleanup_plan(

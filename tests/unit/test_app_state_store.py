@@ -64,6 +64,8 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
         scan_target="sandbox_mods",
         install_target="configured_real_mods",
         language_preference="pt-BR",
+        steam_auto_start_enabled=False,
+        archive_retention_keep_count=7,
     )
 
     save_app_config(state_file=state_file, config=config)
@@ -79,6 +81,8 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
     assert payload["app_config"]["nexus_api_key"] == "test-nexus-key"
     assert payload["app_config"]["install_target"] == "configured_real_mods"
     assert payload["app_config"]["language_preference"] == "pt-BR"
+    assert payload["app_config"]["steam_auto_start_enabled"] is False
+    assert payload["app_config"]["archive_retention_keep_count"] == 7
 
 
 def test_default_app_state_file_uses_platform_default_windows_appdata(
@@ -297,6 +301,30 @@ def test_load_app_config_defaults_optional_fields_when_missing(tmp_path: Path) -
     assert loaded.nexus_api_key is None
     assert loaded.scan_target == "configured_real_mods"
     assert loaded.install_target == "sandbox_mods"
+    assert loaded.language_preference == "system"
+    assert loaded.steam_auto_start_enabled is True
+    assert loaded.archive_retention_keep_count == 3
+
+
+def test_load_app_config_rejects_invalid_archive_retention_keep_count(tmp_path: Path) -> None:
+    state_file = tmp_path / "app-state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "version": APP_STATE_VERSION,
+                "app_config": {
+                    "game_path": "/game",
+                    "mods_path": "/mods",
+                    "app_data_path": "/data",
+                    "archive_retention_keep_count": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AppStateStoreError, match="archive_retention_keep_count"):
+        load_app_config(state_file)
 
 
 def test_install_operation_history_round_trip(tmp_path: Path) -> None:

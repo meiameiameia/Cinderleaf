@@ -45,6 +45,7 @@ class AppConfig:
     install_target: str = "sandbox_mods"
     language_preference: str = "system"
     steam_auto_start_enabled: bool = True
+    archive_retention_keep_count: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -1005,6 +1006,12 @@ class ArchiveDeletePlan:
 class ArchiveDeleteResult:
     plan: ArchiveDeletePlan
     deleted_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveDeleteBatchResult:
+    results: tuple[ArchiveDeleteResult, ...]
+    deleted_paths: tuple[Path, ...]
 
 
 @dataclass(frozen=True, slots=True)

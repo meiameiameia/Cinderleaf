@@ -53,33 +53,45 @@ class TopContextSurface(QGroupBox):
             _prepare_context_value_label(value_label)
 
         context_layout = QVBoxLayout(self)
-        context_layout.setContentsMargins(8, 8, 8, 8)
-        context_layout.setSpacing(8)
+        context_layout.setContentsMargins(10, 8, 10, 8)
+        context_layout.setSpacing(7)
 
         header_panel = QWidget()
         header_panel.setObjectName("top_context_header")
         header_layout = QHBoxLayout(header_panel)
-        header_layout.setContentsMargins(2, 0, 2, 0)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(2, 0, 2, 1)
+        header_layout.setSpacing(12)
 
-        header_text_stack = QWidget()
-        header_text_stack.setObjectName("top_context_header_text_stack")
-        header_text_layout = QVBoxLayout(header_text_stack)
-        header_text_layout.setContentsMargins(0, 0, 0, 0)
-        header_text_layout.setSpacing(2)
+        scope_label = QLabel(localizer.text("top_context.scope"))
+        scope_label.setObjectName("top_context_scope_label")
+        scope_label.setProperty("translationKey", "top_context.scope")
+        _set_label_font_weight(scope_label, bold=True)
 
-        brand_eyebrow = QLabel(localizer.text("top_context.eyebrow"))
-        brand_eyebrow.setObjectName("top_context_brand_eyebrow")
-        brand_title = QLabel(localizer.text("top_context.title"))
-        brand_title.setObjectName("top_context_brand_title")
-        brand_title.setWordWrap(True)
-        header_text_layout.addWidget(brand_eyebrow)
-        header_text_layout.addWidget(brand_title)
-        header_layout.addWidget(header_text_stack, 1)
+        header_scan_caption = QLabel(localizer.text("top_context.read"))
+        header_scan_caption.setProperty("translationKey", "top_context.read")
+        header_scan_value = QLabel(scan_context_label.text())
+        header_scan_chip = _build_scope_chip(
+            caption_label=header_scan_caption,
+            value_label=header_scan_value,
+            object_name="top_context_scan_scope_chip",
+        )
+
+        header_install_caption = QLabel(localizer.text("top_context.write"))
+        header_install_caption.setProperty("translationKey", "top_context.write")
+        header_install_value = QLabel(install_context_label.text())
+        header_install_chip = _build_scope_chip(
+            caption_label=header_install_caption,
+            value_label=header_install_value,
+            object_name="top_context_install_scope_chip",
+        )
+
+        header_layout.addWidget(scope_label, 0)
+        header_layout.addWidget(header_scan_chip, 2)
+        header_layout.addWidget(header_install_chip, 2)
         header_layout.addWidget(
             collapse_toggle_button,
             0,
-            Qt.AlignmentFlag.AlignTop,
+            Qt.AlignmentFlag.AlignVCenter,
         )
 
         body_panel = QWidget()
@@ -92,14 +104,19 @@ class TopContextSurface(QGroupBox):
         brand_panel.setObjectName("top_context_brand_panel")
         brand_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         brand_layout = QVBoxLayout(brand_panel)
-        brand_layout.setContentsMargins(12, 10, 12, 10)
-        brand_layout.setSpacing(4)
+        brand_layout.setContentsMargins(12, 9, 12, 9)
+        brand_layout.setSpacing(5)
 
         brand_subtitle = QLabel(
             localizer.text("top_context.subtitle")
         )
         brand_subtitle.setObjectName("top_context_brand_subtitle")
         brand_subtitle.setWordWrap(True)
+        brand_eyebrow = QLabel(localizer.text("top_context.eyebrow"))
+        brand_eyebrow.setObjectName("top_context_brand_eyebrow")
+        brand_title = QLabel(localizer.text("top_context.title"))
+        brand_title.setObjectName("top_context_brand_title")
+        brand_title.setWordWrap(True)
 
         active_context_group = QWidget()
         active_context_group.setObjectName("top_context_active_context_panel")
@@ -140,6 +157,8 @@ class TopContextSurface(QGroupBox):
         active_context_layout.setColumnStretch(1, 1)
         active_context_container_layout.addLayout(active_context_layout)
 
+        brand_layout.addWidget(brand_eyebrow)
+        brand_layout.addWidget(brand_title)
         brand_layout.addWidget(brand_subtitle)
         brand_layout.addWidget(active_context_group)
         brand_layout.addStretch(1)
@@ -148,7 +167,7 @@ class TopContextSurface(QGroupBox):
         operations_group.setObjectName("top_context_operational_panel")
         operations_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         operations_container_layout = QVBoxLayout(operations_group)
-        operations_container_layout.setContentsMargins(12, 10, 12, 10)
+        operations_container_layout.setContentsMargins(12, 9, 12, 9)
         operations_container_layout.setSpacing(5)
         operations_section_label = _section_label(localizer.text("top_context.operational"))
         operations_section_label.setProperty("translationKey", "top_context.operational")
@@ -269,9 +288,11 @@ class TopContextSurface(QGroupBox):
         self.brand_eyebrow = brand_eyebrow
         self.brand_title = brand_title
         self.brand_subtitle = brand_subtitle
+        self.scope_label = scope_label
+        self.header_scan_value = header_scan_value
+        self.header_install_value = header_install_value
         self.context_layout = context_layout
         self.header_layout = header_layout
-        self.header_text_layout = header_text_layout
         self.body_layout = body_layout
         self.brand_layout = brand_layout
         self.active_context_container_layout = active_context_container_layout
@@ -293,7 +314,6 @@ class TopContextSurface(QGroupBox):
         self.context_layout.setSpacing(4 if compact else 8)
         self.header_layout.setContentsMargins(0 if compact else 2, 0, 0 if compact else 2, 0)
         self.header_layout.setSpacing(6 if compact else 10)
-        self.header_text_layout.setSpacing(1 if compact else 2)
         self.body_layout.setSpacing(6 if compact else 10)
         self.brand_layout.setContentsMargins(
             8 if compact else 12,
@@ -326,6 +346,19 @@ class TopContextSurface(QGroupBox):
     def set_details_expanded(self, expanded: bool) -> None:
         self.body_panel.setVisible(expanded)
 
+    def set_scope_summary(
+        self,
+        *,
+        scan_text: str,
+        install_text: str,
+        scan_tooltip: str = "",
+        install_tooltip: str = "",
+    ) -> None:
+        self.header_scan_value.setText(scan_text)
+        self.header_scan_value.setToolTip(scan_tooltip)
+        self.header_install_value.setText(install_text)
+        self.header_install_value.setToolTip(install_tooltip)
+
     def retranslate(self, localizer: UiLocalizer) -> None:
         self._localizer = localizer
         self.brand_eyebrow.setText(localizer.text("top_context.eyebrow"))
@@ -353,6 +386,34 @@ def _section_label(text: str) -> QLabel:
     label.setObjectName("top_context_section_title")
     _set_section_label_style(label)
     return label
+
+
+def _build_scope_chip(
+    *,
+    caption_label: QLabel,
+    value_label: QLabel,
+    object_name: str,
+) -> QWidget:
+    chip = QWidget()
+    chip.setObjectName(object_name)
+    chip.setProperty("contextRole", "scopeChip")
+    chip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    layout = QHBoxLayout(chip)
+    layout.setContentsMargins(9, 3, 9, 3)
+    layout.setSpacing(6)
+
+    caption_label.setProperty("contextRole", "scopeCaption")
+    caption_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    caption_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+    _set_label_font_weight(caption_label, bold=True)
+
+    value_label.setProperty("contextRole", "scopeValue")
+    value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    value_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+    layout.addWidget(caption_label, 0)
+    layout.addWidget(value_label, 1)
+    return chip
 
 
 def _set_label_font_weight(label: QLabel, *, bold: bool = False) -> None:

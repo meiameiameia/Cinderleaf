@@ -18,6 +18,7 @@ from sdvmm.domain.environment_codes import (
 from sdvmm.domain.models import (
     ArchivedModEntry,
     ArchiveCleanupResult,
+    ArchiveDeleteBatchResult,
     ArchiveDeleteResult,
     ArchiveRestoreResult,
     DependencyPreflightFinding,
@@ -860,6 +861,27 @@ def build_archive_delete_result_text(result: ArchiveDeleteResult) -> str:
     lines.append("Exclusão permanente do arquivo concluída." if pt_br else "Archive permanent delete completed.")
     lines.append(f"- {'Origem do arquivo' if pt_br else 'Archive source'}: {_archive_source_label(result.plan.entry.source_kind)}")
     lines.append(f"- {'Pasta arquivada excluída' if pt_br else 'Deleted archived folder'}: {result.deleted_path}")
+    lines.append("")
+    lines.append("Próximo passo recomendado:" if pt_br else "Recommended next step:")
+    lines.append(
+        "- Atualize os arquivos e continue o planejamento de restauração/desfazer com as entradas restantes, se precisar."
+        if pt_br
+        else "- Refresh archives and continue restore/rollback planning with remaining entries if needed."
+    )
+    return "\n".join(lines)
+
+
+def build_archive_delete_batch_result_text(result: ArchiveDeleteBatchResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+    lines: list[str] = []
+    count = len(result.deleted_paths)
+    lines.append(
+        f"Exclusão permanente de arquivo concluída para {count} item(ns)."
+        if pt_br
+        else f"Archive permanent delete completed for {count} item(s)."
+    )
+    for deleted_path in result.deleted_paths:
+        lines.append(f"- {deleted_path}")
     lines.append("")
     lines.append("Próximo passo recomendado:" if pt_br else "Recommended next step:")
     lines.append(

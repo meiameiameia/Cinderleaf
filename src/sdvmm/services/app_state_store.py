@@ -87,6 +87,7 @@ def load_app_config(state_file: Path) -> AppConfig | None:
         _optional_non_empty_string(app_config, "language_preference") or "system"
     )
     steam_auto_start_enabled = _optional_bool(app_config, "steam_auto_start_enabled")
+    archive_retention_keep_count = _optional_positive_int(app_config, "archive_retention_keep_count")
 
     return AppConfig(
         game_path=Path(game_path),
@@ -105,6 +106,9 @@ def load_app_config(state_file: Path) -> AppConfig | None:
         language_preference=language_preference,
         steam_auto_start_enabled=(
             True if steam_auto_start_enabled is None else steam_auto_start_enabled
+        ),
+        archive_retention_keep_count=(
+            3 if archive_retention_keep_count is None else archive_retention_keep_count
         ),
     )
 
@@ -136,6 +140,7 @@ def save_app_config(state_file: Path, config: AppConfig) -> None:
             "install_target": config.install_target,
             "language_preference": config.language_preference,
             "steam_auto_start_enabled": config.steam_auto_start_enabled,
+            "archive_retention_keep_count": config.archive_retention_keep_count,
         },
     }
 
@@ -920,4 +925,18 @@ def _optional_bool(
         return None
     if not isinstance(value, bool):
         raise AppStateStoreError(f"{prefix}.{key} must be a boolean when provided")
+    return value
+
+
+def _optional_positive_int(
+    data: dict[str, object],
+    key: str,
+    *,
+    prefix: str = "app_config",
+) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise AppStateStoreError(f"{prefix}.{key} must be a positive integer when provided")
     return value

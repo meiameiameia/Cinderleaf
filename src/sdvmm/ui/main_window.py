@@ -66,11 +66,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QSizePolicy,
+    QSpinBox,
 )
 
 from sdvmm.app.inventory_presenter import (
     build_archive_cleanup_result_text,
     build_archive_listing_text,
+    build_archive_delete_batch_result_text,
     build_archive_delete_result_text,
     build_archive_restore_result_text,
     build_dependency_preflight_text,
@@ -99,7 +101,6 @@ from sdvmm.app.table_filters import row_matches_filter
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
     ARCHIVE_SOURCE_SANDBOX,
-    ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
     BackupBundleExportResult,
     BackupBundleExportSelection,
     DEFAULT_REAL_PROFILE_ID,
@@ -148,7 +149,7 @@ from sdvmm.domain.models import (
     ModsCompareResult,
     ArchiveRestoreResult,
     ArchiveCleanupResult,
-    ArchiveDeleteResult,
+    ArchiveDeleteBatchResult,
     ArchivedModEntry,
     ModRemovalResult,
     ModRollbackResult,
@@ -1741,7 +1742,7 @@ class MainWindow(QMainWindow):
         self._compare_results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._compare_results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._compare_results_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._compare_results_table.verticalHeader().setDefaultSectionSize(20)
+        self._compare_results_table.verticalHeader().setDefaultSectionSize(24)
         self._compare_results_table.verticalHeader().setVisible(False)
         self._compare_results_table.setAlternatingRowColors(True)
         self._compare_results_table.setSortingEnabled(True)
@@ -1806,6 +1807,10 @@ class MainWindow(QMainWindow):
         self._steam_auto_start_checkbox.setObjectName("setup_steam_auto_start_checkbox")
         self._steam_auto_start_checkbox.setChecked(True)
         self._steam_auto_start_checkbox.setToolTip(self._tr("setup.steam_auto_start_tooltip"))
+        self._archive_retention_spinbox = QSpinBox()
+        self._archive_retention_spinbox.setObjectName("setup_archive_retention_spinbox")
+        self._archive_retention_spinbox.setRange(1, 10)
+        self._archive_retention_spinbox.setValue(3)
         self._overwrite_checkbox = QCheckBox(self._tr("install.overwrite_checkbox"))
         self._overwrite_checkbox.setObjectName("plan_install_overwrite_checkbox")
         self._overwrite_checkbox.setProperty("translationKey", "install.overwrite_checkbox")
@@ -1989,6 +1994,10 @@ class MainWindow(QMainWindow):
         self._run_recovery_button = QPushButton(self._tr("history.apply_recovery"))
         self._run_recovery_button.setObjectName("recovery_execute_button")
         self._run_recovery_button.setProperty("translationKey", "history.apply_recovery")
+        self._clear_install_history_button = QPushButton(self._tr("history.clear_install_history"))
+        self._clear_install_history_button.setObjectName("recovery_clear_history_button")
+        self._clear_install_history_button.setProperty("translationKey", "history.clear_install_history")
+        self._clear_install_history_button.setEnabled(False)
         self._plan_review_summary_label = QLabel(_no_plan_review_summary_text())
         self._plan_review_summary_label.setObjectName("plan_install_review_summary_label")
         self._plan_review_summary_label.setWordWrap(True)
@@ -2027,6 +2036,7 @@ class MainWindow(QMainWindow):
             self._packages_compare_target_combo,
             self._install_history_combo,
             self._install_history_filter_combo,
+            self._archive_retention_spinbox,
         ):
             control.setMinimumHeight(24)
 
@@ -2044,7 +2054,7 @@ class MainWindow(QMainWindow):
         self._mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._mods_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._mods_table.verticalHeader().setDefaultSectionSize(20)
+        self._mods_table.verticalHeader().setDefaultSectionSize(24)
         self._mods_table.verticalHeader().setVisible(False)
         self._mods_table.setAlternatingRowColors(True)
         self._mods_table.setSortingEnabled(True)
@@ -2074,7 +2084,7 @@ class MainWindow(QMainWindow):
         )
         self._discovery_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._discovery_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._discovery_table.verticalHeader().setDefaultSectionSize(20)
+        self._discovery_table.verticalHeader().setDefaultSectionSize(24)
         self._discovery_table.verticalHeader().setVisible(False)
         self._discovery_table.setAlternatingRowColors(True)
         self._discovery_table.setSortingEnabled(True)
@@ -2104,7 +2114,8 @@ class MainWindow(QMainWindow):
         )
         self._archive_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._archive_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._archive_table.verticalHeader().setDefaultSectionSize(20)
+        self._archive_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._archive_table.verticalHeader().setDefaultSectionSize(24)
         self._archive_table.verticalHeader().setVisible(False)
         self._archive_table.setAlternatingRowColors(True)
         self._archive_table.setSortingEnabled(True)
@@ -2482,18 +2493,18 @@ class MainWindow(QMainWindow):
         rail = QFrame()
         rail.setObjectName("workspace_nav_rail")
         rail.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        rail.setMinimumWidth(194)
-        rail.setMaximumWidth(212)
+        rail.setMinimumWidth(218)
+        rail.setMaximumWidth(236)
 
         rail_layout = QVBoxLayout(rail)
-        rail_layout.setContentsMargins(8, 8, 8, 8)
-        rail_layout.setSpacing(6)
+        rail_layout.setContentsMargins(10, 10, 10, 10)
+        rail_layout.setSpacing(8)
 
         brand_panel = QFrame()
         brand_panel.setObjectName("workspace_nav_brand_panel")
         brand_layout = QVBoxLayout(brand_panel)
-        brand_layout.setContentsMargins(8, 8, 8, 8)
-        brand_layout.setSpacing(4)
+        brand_layout.setContentsMargins(10, 10, 10, 10)
+        brand_layout.setSpacing(6)
 
         brand_header = QWidget()
         brand_header.setObjectName("workspace_nav_brand_header")
@@ -2584,7 +2595,7 @@ class MainWindow(QMainWindow):
             button.setToolTip(label)
             button.setIcon(_workspace_nav_icon(nav_key))
             button.setIconSize(QSize(16, 16))
-            button.setFixedHeight(26)
+            button.setFixedHeight(30)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(
                 lambda checked=False, target=page: self._context_tabs.setCurrentWidget(target)
@@ -2614,8 +2625,8 @@ class MainWindow(QMainWindow):
         page = QWidget()
         page.setObjectName(object_name)
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(4, 4, 4, 4)
-        page_layout.setSpacing(4)
+        page_layout.setContentsMargins(8, 6, 8, 8)
+        page_layout.setSpacing(8)
         page_layout.addWidget(
             self._build_page_header(
                 eyebrow=eyebrow,
@@ -2770,8 +2781,8 @@ class MainWindow(QMainWindow):
         page = QWidget()
         page.setObjectName("mods_workspace_page")
         page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(4, 4, 4, 4)
-        page_layout.setSpacing(4)
+        page_layout.setContentsMargins(8, 6, 8, 8)
+        page_layout.setSpacing(8)
 
         page_layout.addWidget(
             self._build_page_header(
@@ -2819,6 +2830,7 @@ class MainWindow(QMainWindow):
         inspector_panel = QGroupBox("")
         inspector_panel.setObjectName("mods_selection_context_group")
         inspector_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        inspector_panel.setMinimumWidth(304)
         inspector_layout = QVBoxLayout(inspector_panel)
         inspector_layout.setContentsMargins(0, 0, 0, 0)
         inspector_layout.setSpacing(0)
@@ -3103,6 +3115,7 @@ class MainWindow(QMainWindow):
             nexus_api_key_input=self._nexus_api_key_input,
             language_preference_combo=self._language_preference_combo,
             steam_auto_start_checkbox=self._steam_auto_start_checkbox,
+            archive_retention_spinbox=self._archive_retention_spinbox,
             browse_game_button=browse_game_button,
             browse_mods_button=browse_mods_button,
             open_mods_button=open_mods_button,
@@ -3767,11 +3780,11 @@ class MainWindow(QMainWindow):
         self._cleanup_archives_button.clicked.connect(self._on_cleanup_archives)
         self._cleanup_archives_button.setToolTip(
             (
-                f"Manter as {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} cópias arquivadas mais recentes por mod "
+                "Manter o número configurado de cópias arquivadas mais recentes por mod "
                 "e excluir permanentemente as mais antigas após confirmação."
             )
             if self._localizer.effective_language == "pt-BR"
-            else f"Keep latest {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} archived copies per mod and "
+            else "Keep the configured latest archived copies per mod and "
             "permanently delete older copies after confirmation."
         )
         _set_danger_button_style(self._cleanup_archives_button)
@@ -3979,6 +3992,9 @@ class MainWindow(QMainWindow):
         _set_primary_button_style(self._run_recovery_button)
         self._run_recovery_button.setEnabled(False)
         recovery_controls.addWidget(self._run_recovery_button, 1, 3)
+        self._clear_install_history_button.clicked.connect(self._on_clear_install_history)
+        _set_danger_button_style(self._clear_install_history_button)
+        recovery_controls.addWidget(self._clear_install_history_button, 2, 3)
         recovery_group_layout.addLayout(recovery_controls)
         recovery_group_layout.addWidget(self._recovery_selection_summary_label)
         recovery_output_group = QGroupBox(self._tr("history.recovery_detail"))
@@ -4098,6 +4114,7 @@ class MainWindow(QMainWindow):
             collapse_toggle_button=self._top_context_toggle_button,
         )
         self._context_group = context_group
+        self._refresh_top_context_scope_summary()
         self._apply_top_context_surface_state()
         _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
         return context_group
@@ -4114,6 +4131,16 @@ class MainWindow(QMainWindow):
             self._tr("top_context.hide_details_tooltip")
             if self._top_context_expanded
             else self._tr("top_context.show_details_tooltip")
+        )
+
+    def _refresh_top_context_scope_summary(self) -> None:
+        if not hasattr(self, "_context_group"):
+            return
+        self._context_group.set_scope_summary(
+            scan_text=self._scan_context_label.text(),
+            install_text=self._install_context_label.text(),
+            scan_tooltip=self._scan_context_label.toolTip(),
+            install_tooltip=self._install_context_label.toolTip(),
         )
 
     def _show_localized_question_dialog(
@@ -4162,8 +4189,8 @@ class MainWindow(QMainWindow):
             rail_minimum_width = 52 if compact_small_desktop else 58 if compact_viewport else 68
             rail_maximum_width = 58 if compact_small_desktop else 66 if compact_viewport else 78
         else:
-            rail_minimum_width = 202 if compact_small_desktop else 182 if compact_viewport else 194
-            rail_maximum_width = 218 if compact_small_desktop else 194 if compact_viewport else 212
+            rail_minimum_width = 218 if compact_small_desktop else 210 if compact_viewport else 218
+            rail_maximum_width = 236 if compact_small_desktop else 226 if compact_viewport else 236
 
         self._workspace_nav_rail.setMinimumWidth(rail_minimum_width)
         self._workspace_nav_rail.setMaximumWidth(rail_maximum_width)
@@ -4225,7 +4252,7 @@ class MainWindow(QMainWindow):
             button.setProperty("navCollapsed", collapsed)
             button.setText("" if collapsed else label)
             button.setToolTip(label)
-            button.setFixedHeight(30 if collapsed else 26)
+            button.setFixedHeight(30)
             button.setIconSize(QSize(18 if collapsed else 16, 18 if collapsed else 16))
             button.setMinimumWidth(0)
             button.style().unpolish(button)
@@ -4902,6 +4929,7 @@ class MainWindow(QMainWindow):
             self._set_current_install_target(state.config.install_target)
             self._set_language_preference(state.config.language_preference)
             self._steam_auto_start_checkbox.setChecked(state.config.steam_auto_start_enabled)
+            self._archive_retention_spinbox.setValue(state.config.archive_retention_keep_count)
             self._set_status(
                 self._tr("setup.loaded_status", path=self._shell_service.state_file)
             )
@@ -4919,6 +4947,9 @@ class MainWindow(QMainWindow):
         self._refresh_cinderleaf_managed_paths_surface()
         self._refresh_responsive_panel_bounds()
 
+    def _current_archive_retention_keep_count(self) -> int:
+        return max(1, self._archive_retention_spinbox.value())
+
     def _current_operational_config_inputs(self) -> dict[str, object]:
         return {
             "game_path_text": self._game_path_input.text(),
@@ -4935,6 +4966,7 @@ class MainWindow(QMainWindow):
             "install_target": self._current_install_target(),
             "language_preference": self._current_language_preference(),
             "steam_auto_start_enabled": self._steam_auto_start_checkbox.isChecked(),
+            "archive_retention_keep_count": self._current_archive_retention_keep_count(),
             "existing_config": self._config,
         }
 
@@ -6729,6 +6761,7 @@ class MainWindow(QMainWindow):
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
+            self._clear_install_history_button.setEnabled(False)
             self._refresh_recovery_selection_summary()
             return
 
@@ -6749,6 +6782,7 @@ class MainWindow(QMainWindow):
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
+            self._clear_install_history_button.setEnabled(False)
             self._refresh_recovery_selection_summary()
             return
 
@@ -6765,6 +6799,7 @@ class MainWindow(QMainWindow):
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
+            self._clear_install_history_button.setEnabled(True)
             self._refresh_recovery_selection_summary()
             return
 
@@ -6792,7 +6827,38 @@ class MainWindow(QMainWindow):
         self._install_history_combo.setToolTip(self._install_history_combo.currentText())
         self._inspect_recovery_button.setEnabled(True)
         self._run_recovery_button.setEnabled(False)
+        self._clear_install_history_button.setEnabled(True)
         self._refresh_recovery_selection_summary()
+
+    def _on_clear_install_history(self) -> None:
+        yes = QMessageBox.question(
+            self,
+            self._tr("history.clear_install_history"),
+            self._tr("history.clear_install_history_confirm"),
+        )
+        if yes != QMessageBox.StandardButton.Yes:
+            self._set_status(
+                "Limpeza do histórico de instalação cancelada."
+                if self._localizer.effective_language == "pt-BR"
+                else "Install history clear cancelled."
+            )
+            return
+
+        try:
+            self._shell_service.clear_install_history()
+        except AppShellError as exc:
+            QMessageBox.critical(self, self._tr("history.clear_install_history"), str(exc))
+            self._set_status(str(exc))
+            return
+
+        self._current_recovery_inspection = None
+        self._set_recovery_output_text("")
+        self._refresh_install_operation_selector()
+        self._set_status(
+            "Histórico de instalação limpo."
+            if self._localizer.effective_language == "pt-BR"
+            else "Install history cleared."
+        )
 
     def _select_new_install_operation_for_recovery(
         self,
@@ -8158,6 +8224,7 @@ class MainWindow(QMainWindow):
                 real_archive_path_text=self._real_archive_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 existing_config=self._config,
+                keep_latest_count=self._current_archive_retention_keep_count(),
             )
         except AppShellError:
             return
@@ -8176,6 +8243,7 @@ class MainWindow(QMainWindow):
                 real_archive_path_text=self._real_archive_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 existing_config=self._config,
+                keep_latest_count=self._current_archive_retention_keep_count(),
             ),
             on_success=self._on_refresh_archives_completed,
             busy_button=self._refresh_archives_button,
@@ -8212,6 +8280,7 @@ class MainWindow(QMainWindow):
                 real_archive_path_text=self._real_archive_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 existing_config=self._config,
+                keep_latest_count=self._current_archive_retention_keep_count(),
             )
         except AppShellError as exc:
             QMessageBox.information(self, "No archive cleanup candidates", str(exc))
@@ -8362,37 +8431,45 @@ class MainWindow(QMainWindow):
         )
 
     def _on_delete_selected_archive(self) -> None:
-        entry = self._selected_archive_entry()
-        if entry is None:
+        entries = self._selected_archive_entries()
+        if not entries:
             message = "Select an archived entry first."
             QMessageBox.warning(self, "No archive selection", message)
             self._set_status(message)
             return
 
         try:
-            plan = self._shell_service.build_archive_delete_plan(
-                source_kind=entry.source_kind,
-                archived_path_text=str(entry.archived_path),
-                configured_mods_path_text=self._mods_path_input.text(),
-                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
-                real_archive_path_text=self._real_archive_path_input.text(),
-                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
-                existing_config=self._config,
+            plans = tuple(
+                self._shell_service.build_archive_delete_plan(
+                    source_kind=entry.source_kind,
+                    archived_path_text=str(entry.archived_path),
+                    configured_mods_path_text=self._mods_path_input.text(),
+                    sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                    real_archive_path_text=self._real_archive_path_input.text(),
+                    sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                    existing_config=self._config,
+                )
+                for entry in entries
             )
         except AppShellError as exc:
             QMessageBox.critical(self, "Archive delete plan failed", str(exc))
             self._set_status(str(exc))
             return
 
+        selected_count = len(entries)
+        selected_lines = "\n".join(
+            f"- {_archive_source_summary_label(entry.source_kind)}: {entry.archived_folder_name}\n  {entry.archived_path}"
+            for entry in entries[:10]
+        )
+        if selected_count > 10:
+            selected_lines = f"{selected_lines}\n- ...and {selected_count - 10} more selected archived item(s)"
         yes = QMessageBox.question(
             self,
             "Confirm permanent archive delete",
             (
-                "Permanently delete selected archived item?\n\n"
-                f"Archive source: {_archive_source_summary_label(entry.source_kind)}\n"
-                f"Archived folder: {entry.archived_folder_name}\n"
-                f"Archive path: {entry.archived_path}\n\n"
-                "This action is irreversible. The archived item will be deleted forever."
+                f"Permanently delete {selected_count} selected archived item(s)?\n\n"
+                f"{selected_lines}\n\n"
+                "This action is irreversible. The selected archived item(s) will be deleted forever."
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
@@ -8402,31 +8479,35 @@ class MainWindow(QMainWindow):
         self._run_background_operation(
             operation_name="Archive permanent delete",
             running_label="Archive delete",
-            started_status=f"Deleting archived item permanently: {entry.archived_folder_name}",
+            started_status=f"Deleting {selected_count} archived item(s) permanently...",
             error_title="Archive permanent delete failed",
-            task_fn=lambda _plan=plan: self._shell_service.execute_archive_delete(
-                _plan,
+            task_fn=lambda _plans=plans: self._shell_service.execute_archive_delete_batch(
+                _plans,
                 confirm_delete=True,
             ),
-            on_success=self._on_delete_selected_archive_completed,
+            on_success=self._on_delete_selected_archives_completed,
         )
 
-    def _on_delete_selected_archive_completed(self, result: ArchiveDeleteResult) -> None:
-        self._set_archive_output_text(build_archive_delete_result_text(result))
+    def _on_delete_selected_archives_completed(self, result: ArchiveDeleteBatchResult) -> None:
+        if len(result.results) == 1:
+            self._set_archive_output_text(build_archive_delete_result_text(result.results[0]))
+        else:
+            self._set_archive_output_text(build_archive_delete_batch_result_text(result))
         self._refresh_archived_entries_after_change()
+        deleted_count = len(result.deleted_paths)
         self._set_status(
             (
-                f"Item arquivado excluído permanentemente: {result.deleted_path.name}"
+                f"{deleted_count} item(ns) arquivado(s) excluído(s) permanentemente."
                 if self._localizer.effective_language == "pt-BR"
-                else f"Archived item deleted permanently: {result.deleted_path.name}"
+                else f"{deleted_count} archived item(s) deleted permanently."
             )
         )
 
     def _on_archive_selection_changed(self) -> None:
-        has_selection = self._selected_archive_entry() is not None
+        selected_entries = self._selected_archive_entries()
         has_cleanup_candidates = bool(_archive_cleanup_candidate_entries(self._archived_entries))
-        self._restore_archived_button.setEnabled(has_selection)
-        self._delete_archived_button.setEnabled(has_selection)
+        self._restore_archived_button.setEnabled(len(selected_entries) == 1)
+        self._delete_archived_button.setEnabled(bool(selected_entries))
         self._cleanup_archives_button.setEnabled(has_cleanup_candidates)
         self._refresh_workflow_surface_states()
 
@@ -8438,6 +8519,7 @@ class MainWindow(QMainWindow):
                 real_archive_path_text=self._real_archive_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 existing_config=self._config,
+                keep_latest_count=self._current_archive_retention_keep_count(),
             )
         except AppShellError as exc:
             self._set_status(
@@ -10569,7 +10651,9 @@ class MainWindow(QMainWindow):
             )
             return
         cleanup_candidate_count = len(_archive_cleanup_candidate_entries(self._archived_entries))
-        if self._selected_archive_entry() is None:
+        keep_latest_count = self._current_archive_retention_keep_count()
+        selected_entries = self._selected_archive_entries()
+        if not selected_entries:
             if cleanup_candidate_count:
                 _set_feedback_label_state(
                     self._archive_state_hint_label,
@@ -10578,7 +10662,7 @@ class MainWindow(QMainWindow):
                         "archive.ready_cleanup",
                         cleanup=cleanup_candidate_count,
                         suffix="y" if cleanup_candidate_count == 1 else "ies",
-                        keep_latest=ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
+                        keep_latest=keep_latest_count,
                     ),
                 )
             else:
@@ -10588,18 +10672,19 @@ class MainWindow(QMainWindow):
                     self._tr("archive.ready_select"),
                 )
             return
+        selected_count = len(selected_entries)
         selected_message = (
-            "Entrada arquivada selecionada. Restaurar devolve ao destino, enquanto excluir remove a cópia arquivada permanentemente."
+            f"{selected_count} entrada(s) arquivada(s) selecionada(s). A restauração fica disponível para uma seleção única; excluir remove as cópias selecionadas permanentemente."
             if pt_br
-            else "Archive entry selected. Restore returns it to its target, while delete permanently removes the archived copy."
+            else f"{selected_count} archived entry/entries selected. Restore is available for one selected entry; delete permanently removes the selected copies."
         )
         if cleanup_candidate_count:
             selected_message += (
-                f" Limpar arquivos antigos também pode remover {cleanup_candidate_count} cópia(s) antiga(s) além das {ARCHIVE_RETENTION_KEEP_LATEST_COUNT} mais recentes por mod."
+                f" Limpar arquivos antigos também pode remover {cleanup_candidate_count} cópia(s) antiga(s) além das {keep_latest_count} mais recentes por mod."
                 if pt_br
                 else f" Cleanup older archives can also trim {cleanup_candidate_count} older cop"
                 f"{'y' if cleanup_candidate_count == 1 else 'ies'} beyond the latest "
-                f"{ARCHIVE_RETENTION_KEEP_LATEST_COUNT} per mod."
+                f"{keep_latest_count} per mod."
             )
         _set_feedback_label_state(
             self._archive_state_hint_label,
@@ -11605,6 +11690,7 @@ class MainWindow(QMainWindow):
         selected_suffix = "selecionado" if self._localizer.effective_language == "pt-BR" else "selected"
         self._scan_context_label.setText(f"{label} {selected_suffix}")
         self._scan_context_label.setToolTip(path_text)
+        self._refresh_top_context_scope_summary()
 
     def _apply_environment_status(self, status: GameEnvironmentStatus) -> None:
         self._last_environment_status = status
@@ -13493,21 +13579,42 @@ class MainWindow(QMainWindow):
             shown_count=visible_count,
             total_count=self._archive_table.rowCount(),
         )
-        self._refresh_workflow_surface_states()
+        self._on_archive_selection_changed()
 
     def _selected_archive_entry(self) -> ArchivedModEntry | None:
-        row = self._archive_table.currentRow()
-        if row < 0:
-            return None
-        row_item = self._archive_table.item(row, 0)
-        if row_item is None:
-            return None
-        index = row_item.data(_ROLE_ARCHIVE_INDEX)
-        if not isinstance(index, int):
-            return None
-        if index < 0 or index >= len(self._archived_entries):
-            return None
-        return self._archived_entries[index]
+        selected_entries = self._selected_archive_entries()
+        return selected_entries[0] if len(selected_entries) == 1 else None
+
+    def _selected_archive_entries(self) -> tuple[ArchivedModEntry, ...]:
+        selection_model = self._archive_table.selectionModel()
+        if selection_model is None:
+            return tuple()
+
+        selected_rows = sorted(
+            selection_model.selectedRows(0),
+            key=lambda index: index.row(),
+        )
+        entries: list[ArchivedModEntry] = []
+        seen: set[tuple[str, str]] = set()
+        for model_index in selected_rows:
+            row = model_index.row()
+            if row < 0 or self._archive_table.isRowHidden(row):
+                continue
+            row_item = self._archive_table.item(row, 0)
+            if row_item is None:
+                continue
+            archive_index = row_item.data(_ROLE_ARCHIVE_INDEX)
+            if not isinstance(archive_index, int):
+                continue
+            if archive_index < 0 or archive_index >= len(self._archived_entries):
+                continue
+            entry = self._archived_entries[archive_index]
+            key = (entry.source_kind, str(entry.archived_path.resolve(strict=False)).casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(entry)
+        return tuple(entries)
 
     def _current_inventory_or_empty(self) -> ModsInventory:
         if self._current_inventory is not None:
@@ -13539,6 +13646,7 @@ class MainWindow(QMainWindow):
             context_text = f"{context_text}{self._tr('install.context.path_unset_suffix')}"
         self._scan_context_label.setText(context_text)
         self._scan_context_label.setToolTip(path_text)
+        self._refresh_top_context_scope_summary()
 
     def _on_scan_target_changed(self, *_: object) -> None:
         self._refresh_scan_context_preview()
@@ -13565,6 +13673,7 @@ class MainWindow(QMainWindow):
                 context_text = f"{context_text}{self._tr('install.context.path_unset_suffix')}"
             self._install_context_label.setText(context_text)
             self._install_context_label.setToolTip(path_text)
+            self._refresh_top_context_scope_summary()
             if not self._real_archive_path_input.text().strip() and self._mods_path_input.text().strip():
                 self._set_programmatic_line_edit_text(
                     self._real_archive_path_input,
@@ -13580,6 +13689,7 @@ class MainWindow(QMainWindow):
             context_text = f"{context_text}{self._tr('install.context.path_unset_suffix')}"
         self._install_context_label.setText(context_text)
         self._install_context_label.setToolTip(path_text)
+        self._refresh_top_context_scope_summary()
         if (
             not self._sandbox_archive_path_input.text().strip()
             and self._sandbox_mods_path_input.text().strip()
@@ -14534,13 +14644,16 @@ class MainWindow(QMainWindow):
             self._launch_sandbox_dev_button.setFixedHeight(26 if compact_small_desktop else 28)
 
         if hasattr(self, "_mods_selection_context_group"):
+            self._mods_selection_context_group.setMinimumWidth(
+                292 if compact_small_desktop else 304
+            )
             self._mods_selection_context_group.setMaximumWidth(
-                224 if compact_small_desktop else 248 if compact_viewport else 16777215
+                336 if compact_small_desktop else 368 if compact_viewport else 16777215
             )
         if hasattr(self, "_mods_workspace_splitter") and compact_viewport:
             self._mods_workspace_splitter.setHandleWidth(4 if compact_small_desktop else 5)
             self._mods_workspace_splitter.setSizes(
-                [max(772, window_width - 348), 220 if compact_small_desktop else 236]
+                [max(704, window_width - 492), 316 if compact_small_desktop else 340]
             )
         self._set_compact_button_row_direction(
             getattr(self, "_mods_selected_actions_row", None),

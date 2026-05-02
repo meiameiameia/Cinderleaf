@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QPlainTextEdit
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtWidgets import QScrollArea
 from PySide6.QtWidgets import QSizePolicy
+from PySide6.QtWidgets import QSpinBox
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtWidgets import QWidget
 
@@ -33,6 +34,7 @@ class SetupConfigurationSurface(QScrollArea):
         nexus_api_key_input: QLineEdit,
         language_preference_combo: QComboBox,
         steam_auto_start_checkbox: QCheckBox,
+        archive_retention_spinbox: QSpinBox,
         browse_game_button: QPushButton,
         browse_mods_button: QPushButton,
         open_mods_button: QPushButton,
@@ -267,6 +269,18 @@ class SetupConfigurationSurface(QScrollArea):
         language_row_layout.addWidget(language_label)
         language_row_layout.addWidget(language_preference_combo)
         advanced_layout.addWidget(language_row)
+
+        archive_retention_row = QWidget()
+        archive_retention_row.setObjectName("setup_archive_retention_row")
+        archive_retention_row_layout = QVBoxLayout(archive_retention_row)
+        archive_retention_row_layout.setContentsMargins(0, 0, 0, 0)
+        archive_retention_row_layout.setSpacing(6)
+        archive_retention_label = QLabel(localizer.text("setup.archive_retention_keep"))
+        archive_retention_label.setProperty("translationKey", "setup.archive_retention_keep")
+        archive_retention_label.setProperty("setupFieldLabel", True)
+        archive_retention_row_layout.addWidget(archive_retention_label)
+        archive_retention_row_layout.addWidget(archive_retention_spinbox)
+        advanced_layout.addWidget(archive_retention_row)
 
         app_updates_row = QWidget()
         app_updates_row.setObjectName("setup_app_updates_row")

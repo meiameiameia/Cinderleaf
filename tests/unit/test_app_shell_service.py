@@ -31,6 +31,7 @@ from sdvmm.domain.models import (
     AppConfig,
     InstalledMod,
     InstallExecutionSummary,
+    InstallOperationHistory,
     InstallOperationEntryRecord,
     InstallOperationRecord,
     ManifestDependency,
@@ -5638,6 +5639,45 @@ def test_list_archived_entries_marks_only_older_versions_as_cleanup_candidates(
     }
 
 
+def test_list_archived_entries_respects_configured_retention_count(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    for index in range(1, 5):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    entries = service.list_archived_entries(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+        keep_latest_count=2,
+    )
+
+    cleanup_candidates = tuple(entry for entry in entries if entry.retention_cleanup_candidate)
+    kept_entries = tuple(entry for entry in entries if not entry.retention_cleanup_candidate)
+
+    assert {entry.archived_folder_name for entry in cleanup_candidates} == {
+        "SampleMod__sdvmm_archive_001",
+        "SampleMod__sdvmm_archive_002",
+    }
+    assert all(entry.retention_keep_limit == 2 for entry in entries)
+    assert {entry.archived_folder_name for entry in kept_entries} == {
+        "SampleMod__sdvmm_archive_003",
+        "SampleMod__sdvmm_archive_004",
+    }
+
+
 def test_build_archive_cleanup_plan_targets_only_older_versions_per_mod(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     real_mods = tmp_path / "RealMods"
@@ -5676,6 +5716,37 @@ def test_build_archive_cleanup_plan_targets_only_older_versions_per_mod(tmp_path
     assert plan.groups[0].target_folder_name == "SampleMod"
     assert plan.groups[0].cleanup_candidate_count == 1
     assert plan.groups[0].kept_entry_count == ARCHIVE_RETENTION_KEEP_LATEST_COUNT
+
+
+def test_build_archive_cleanup_plan_uses_configured_retention_count(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    for index in range(1, 5):
+        _create_archived_entry(
+            real_archive / f"SampleMod__sdvmm_archive_{index:03d}",
+            unique_id="Sample.Mod",
+            version=f"1.0.{index}",
+        )
+
+    plan = service.build_archive_cleanup_plan(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+        keep_latest_count=2,
+    )
+
+    assert plan.retention_keep_limit == 2
+    assert {entry.archived_folder_name for entry in plan.entries_to_delete} == {
+        "SampleMod__sdvmm_archive_001",
+        "SampleMod__sdvmm_archive_002",
+    }
+    assert plan.groups[0].kept_entry_count == 2
 
 
 def test_build_archive_cleanup_plan_rejects_when_everything_is_within_retention(
@@ -5890,6 +5961,77 @@ def test_execute_archive_delete_permanently_removes_sandbox_archive_entry(tmp_pa
 
     assert result.deleted_path == archived
     assert not archived.exists()
+
+
+def test_execute_archive_delete_batch_removes_multiple_entries_after_confirmation(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    archived_one = _create_archived_entry(
+        real_archive / "DeleteOne__sdvmm_archive_001",
+        unique_id="Sample.DeleteOne",
+        version="1.0.0",
+    )
+    archived_two = _create_archived_entry(
+        real_archive / "DeleteTwo__sdvmm_archive_001",
+        unique_id="Sample.DeleteTwo",
+        version="1.0.0",
+    )
+    archived_keep = _create_archived_entry(
+        real_archive / "Keep__sdvmm_archive_001",
+        unique_id="Sample.Keep",
+        version="1.0.0",
+    )
+    plans = tuple(
+        service.build_archive_delete_plan(
+            source_kind=ARCHIVE_SOURCE_REAL,
+            archived_path_text=str(archived),
+            configured_mods_path_text=str(real_mods),
+            sandbox_mods_path_text=str(sandbox_mods),
+            real_archive_path_text=str(real_archive),
+            sandbox_archive_path_text="",
+        )
+        for archived in (archived_one, archived_two)
+    )
+
+    result = service.execute_archive_delete_batch(plans, confirm_delete=True)
+
+    assert result.deleted_paths == (archived_one, archived_two)
+    assert not archived_one.exists()
+    assert not archived_two.exists()
+    assert archived_keep.exists()
+
+
+def test_execute_archive_delete_batch_requires_explicit_confirmation(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_archive.mkdir()
+    archived = _create_archived_entry(
+        real_archive / "DeleteOne__sdvmm_archive_001",
+        unique_id="Sample.DeleteOne",
+        version="1.0.0",
+    )
+    plan = service.build_archive_delete_plan(
+        source_kind=ARCHIVE_SOURCE_REAL,
+        archived_path_text=str(archived),
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text="",
+    )
+
+    with pytest.raises(AppShellError, match="Explicit confirmation is required"):
+        service.execute_archive_delete_batch((plan,), confirm_delete=False)
 
 
 def test_execute_archive_cleanup_requires_explicit_confirmation(tmp_path: Path) -> None:
@@ -6674,6 +6816,29 @@ def test_load_install_operation_history_returns_preexisting_records(tmp_path: Pa
     history = service.load_install_operation_history()
 
     assert history.operations == (operation,)
+
+
+def test_clear_install_history_replaces_existing_records_with_empty_history(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="New Mod",
+                unique_id="Sample.New",
+                action=INSTALL_NEW,
+            ),
+        ),
+    )
+    shell_service_module.save_install_operation_history(
+        shell_service_module.install_operation_history_file(service.state_file),
+        InstallOperationHistory(operations=(operation,)),
+    )
+
+    service.clear_install_history()
+
+    assert service.load_install_operation_history() == InstallOperationHistory(operations=tuple())
 
 
 def test_load_recovery_execution_history_returns_preexisting_records(tmp_path: Path) -> None:
