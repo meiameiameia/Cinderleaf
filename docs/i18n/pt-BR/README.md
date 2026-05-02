@@ -3,14 +3,14 @@
 Este documento é a versão em Português (Brasil) do README público do Cinderleaf.
 
 - Traduzido da base em inglês no commit: `a1074f1`
-- Status da tradução: `completo (linha 1.5.0)`
+- Status da tradução: `completo (linha 1.6.0)`
 - Documento-fonte (EN): [README raiz](../../../README.md)
 
 **Cinderleaf** é um gerenciador de mods para desktop de **Stardew Valley**, com releases portáteis para Windows e Linux.
 
 `for Stardew Valley` é uma descrição, não uma afiliação oficial. Cinderleaf é uma ferramenta da comunidade e não é endossada por ConcernedApe.
 
-Versão atual do projeto: **1.5.0**
+Versão atual do projeto: **1.6.0**
 
 Última versão pública empacotada: **1.5.0**
 

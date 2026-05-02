@@ -14,7 +14,7 @@ It is made for players who want modding to feel simpler:
 
 `for Stardew Valley` is just a description, not an official affiliation. Cinderleaf is a community tool and is not endorsed by ConcernedApe.
 
-Current project version: **1.5.0**
+Current project version: **1.6.0**
 
 Latest packaged public release: **1.5.0**
 
@@ -216,9 +216,9 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.5.0-windows-portable\
-dist\cinderleaf-1.5.0-windows-portable.zip
-dist\cinderleaf-1.5.0-windows-portable.zip.sha256
+dist\cinderleaf-1.6.0-windows-portable\
+dist\cinderleaf-1.6.0-windows-portable.zip
+dist\cinderleaf-1.6.0-windows-portable.zip.sha256
 ```
 
 Linux portable build (experimental):
@@ -234,9 +234,9 @@ python3 -m venv .venv
 The Linux build script produces:
 
 ```text
-dist/cinderleaf-1.5.0-linux-portable/
-dist/cinderleaf-1.5.0-linux-portable.tar.gz
-dist/cinderleaf-1.5.0-linux-portable.tar.gz.sha256
+dist/cinderleaf-1.6.0-linux-portable/
+dist/cinderleaf-1.6.0-linux-portable.tar.gz
+dist/cinderleaf-1.6.0-linux-portable.tar.gz.sha256
 ```
 
 ## License

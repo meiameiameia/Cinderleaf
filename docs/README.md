@@ -10,7 +10,7 @@ Localized docs:
   - [README (PT-BR)](i18n/pt-BR/README.md)
   - [User Guide (PT-BR)](i18n/pt-BR/USER_GUIDE.md)
 
-The public docs currently track the `1.5.0` release line.
+The public docs currently track the `1.6.0` working line. The latest packaged public release is still `1.5.0`.
 
 This `docs/` area stays intentionally small:
 
@@ -18,7 +18,7 @@ This `docs/` area stays intentionally small:
 - the main [README](../README.md) for the concise public product surface and download guidance
 - GitHub Releases for packaged downloads
 
-Docs direction for `1.5.0`:
+Docs direction for `1.6.0`:
 
 - explain Cinderleaf as an everyday mod manager first
 - keep safer testing, review-before-write, and recovery visible without making the app sound process-heavy

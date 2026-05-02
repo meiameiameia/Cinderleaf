@@ -1,9 +1,9 @@
 # Guia do Usuário Cinderleaf (PT-BR)
 
-Este é o guia em Português (Brasil) da linha de release `1.5.0`.
+Este é o guia em Português (Brasil) da linha de trabalho `1.6.0`.
 
 - Traduzido da base em inglês no commit: `a1074f1`
-- Status da tradução: `completo (linha 1.5.0)`
+- Status da tradução: `completo (linha 1.6.0)`
 - Documento-fonte (EN): [docs/USER_GUIDE.md](../../USER_GUIDE.md)
 
 Se você quiser uma visão rápida antes, veja o [README (PT-BR)](README.md).
