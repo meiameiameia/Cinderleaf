@@ -7516,7 +7516,7 @@ def test_main_window_packages_surface_elevates_review_actions_and_queue_selectio
         button.text() for button in queue_bulk_actions_widget.findChildren(QPushButton)
     }
     assert review_button_texts == {"Add package", "Open Install", "Open as update"}
-    assert queue_button_texts == {"Select all", "Deselect all"}
+    assert queue_button_texts == {"Select all", "Deselect all", "Select current only"}
     assert main_window._package_queue_list.maximumHeight() > 1000
 
 
@@ -9846,7 +9846,7 @@ def test_main_window_archive_state_hint_updates_for_selection(
     main_window._archive_table.selectRow(0)
     qapp.processEvents()
 
-    assert "Archive entry selected" in main_window._archive_state_hint_label.text()
+    assert "1 archived entry/entries selected" in main_window._archive_state_hint_label.text()
 
 
 def test_main_window_plan_install_safety_panel_updates_for_real_target(
