@@ -10282,6 +10282,32 @@ def test_main_window_package_queue_select_and_deselect_all_affect_visible_rows_o
     assert main_window._selected_zip_package_paths == (beta.package_path,)
 
 
+def test_main_window_select_current_only_collapses_watched_package_batch(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    alpha = _intake_result("Alpha.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha")
+    beta = _intake_result("Beta.zip", "new_install_candidate", "Beta Mod", "Sample.Beta")
+    main_window._detected_intakes = (alpha, beta)
+    main_window._intake_correlations = (
+        _intake_correlation(alpha, next_step="Review Alpha.zip"),
+        _intake_correlation(beta, next_step="Review Beta.zip"),
+    )
+    main_window._refresh_intake_selector()
+    main_window._set_selected_zip_package_paths(
+        (alpha.package_path, beta.package_path),
+        current_path=alpha.package_path,
+    )
+    beta_index = main_window._intake_result_combo.findData(1)
+    assert beta_index >= 0
+    main_window._intake_result_combo.setCurrentIndex(beta_index)
+    qapp.processEvents()
+
+    main_window._on_select_current_package_queue_item()
+
+    assert main_window._selected_zip_package_paths == (beta.package_path,)
+
+
 def test_main_window_zip_selection_summary_reflects_single_manual_path_entry(
     main_window: MainWindow,
 ) -> None:
@@ -12352,6 +12378,99 @@ def test_main_window_groups_top_level_paired_components_with_single_sided_update
     assert type_item.text() == "Grouped mod"
 
 
+def test_main_window_groups_family_linked_components_when_only_primary_has_update_key(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    primary_path = real_mods_root / "Hydraulics"
+    content_path = real_mods_root / "[CP] Hydraulics Content"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Alca259.Hydraulics",
+                name="Hydraulics",
+                version="3.1.2",
+                folder_path=primary_path,
+                manifest_path=primary_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=("GitHub:alca259/Mods-Game-StardewValley",),
+            ),
+            InstalledMod(
+                unique_id="Alca259.Hydraulics.Content",
+                name="Hydraulics Content",
+                version="3.1.2",
+                folder_path=content_path,
+                manifest_path=content_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Alca259.Hydraulics",
+                        required=True,
+                    ),
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                update_keys=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=primary_path,
+                mod_paths=(primary_path,),
+                message="Direct mod discovered.",
+            ),
+            ScanEntryFinding(
+                kind="direct_mod",
+                entry_path=content_path,
+                mod_paths=(content_path,),
+                message="Direct mod discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._mods_table.rowCount() == 1
+    grouped_item = main_window._mods_table.item(0, 0)
+    type_item = main_window._mods_table.item(0, 5)
+    assert grouped_item is not None
+    assert type_item is not None
+    assert grouped_item.text() == "Hydraulics (+1 more)"
+    assert grouped_item.data(_ROLE_MOD_IS_GROUPED) is True
+    assert grouped_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS) == (
+        str(primary_path),
+        str(content_path),
+    )
+    assert type_item.text() == "Grouped mod"
+
+
 def test_main_window_grouped_row_prefers_declared_update_key_member_status(
     main_window: MainWindow,
     qapp: QApplication,
@@ -13541,6 +13660,308 @@ def test_main_window_compare_filter_and_copy_identity_controls_work(
     main_window._compare_copy_identity_button.click()
 
     assert QApplication.clipboard().text() == "Same Mod | Sample.Same"
+
+
+def test_main_window_compare_sync_real_to_sandbox_uses_selected_row_context(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    current_result = ModsCompareResult(
+        real_mods_path=Path(r"C:\Game\Mods"),
+        sandbox_mods_path=Path(r"C:\Sandbox\Mods"),
+        real_inventory=_mods_inventory(),
+        sandbox_inventory=_mods_inventory(),
+        entries=(
+            ModsCompareEntry(
+                match_key="sample.mismatch",
+                unique_id="Sample.Mismatch",
+                name="Mismatch Mod",
+                state="version_mismatch",
+                real_mod=InstalledMod(
+                    unique_id="Sample.Mismatch",
+                    name="Mismatch Mod",
+                    version="2.0.0",
+                    folder_path=Path(r"C:\Game\Mods\MismatchLive"),
+                    manifest_path=Path(r"C:\Game\Mods\MismatchLive\manifest.json"),
+                    dependencies=tuple(),
+                ),
+                real_member_mods=(
+                    InstalledMod(
+                        unique_id="Sample.Mismatch",
+                        name="Mismatch Mod",
+                        version="2.0.0",
+                        folder_path=Path(r"C:\Game\Mods\MismatchLive"),
+                        manifest_path=Path(r"C:\Game\Mods\MismatchLive\manifest.json"),
+                        dependencies=tuple(),
+                    ),
+                ),
+                sandbox_mod=InstalledMod(
+                    unique_id="Sample.Mismatch",
+                    name="Mismatch Mod",
+                    version="1.0.0",
+                    folder_path=Path(r"C:\Sandbox\Mods\MismatchTest"),
+                    manifest_path=Path(r"C:\Sandbox\Mods\MismatchTest\manifest.json"),
+                    dependencies=tuple(),
+                ),
+                sandbox_member_mods=(
+                    InstalledMod(
+                        unique_id="Sample.Mismatch",
+                        name="Mismatch Mod",
+                        version="1.0.0",
+                        folder_path=Path(r"C:\Sandbox\Mods\MismatchTest"),
+                        manifest_path=Path(r"C:\Sandbox\Mods\MismatchTest\manifest.json"),
+                        dependencies=tuple(),
+                    ),
+                ),
+            ),
+        ),
+    )
+    refreshed_result = ModsCompareResult(
+        real_mods_path=current_result.real_mods_path,
+        sandbox_mods_path=current_result.sandbox_mods_path,
+        real_inventory=current_result.real_inventory,
+        sandbox_inventory=current_result.sandbox_inventory,
+        entries=(
+            ModsCompareEntry(
+                match_key="sample.mismatch",
+                unique_id="Sample.Mismatch",
+                name="Mismatch Mod",
+                state="same_version",
+                real_mod=current_result.entries[0].real_mod,
+                sandbox_mod=InstalledMod(
+                    unique_id="Sample.Mismatch",
+                    name="Mismatch Mod",
+                    version="2.0.0",
+                    folder_path=Path(r"C:\Sandbox\Mods\MismatchTest"),
+                    manifest_path=Path(r"C:\Sandbox\Mods\MismatchTest\manifest.json"),
+                    dependencies=tuple(),
+                ),
+            ),
+        ),
+    )
+
+    main_window._mods_path_input.setText(str(current_result.real_mods_path))
+    main_window._sandbox_mods_path_input.setText(str(current_result.sandbox_mods_path))
+    main_window._context_tabs.setCurrentWidget(main_window._compare_page)
+    main_window._on_compare_real_and_sandbox_completed(current_result)
+    qapp.processEvents()
+    row = _find_mod_row(main_window._compare_results_table, "Mismatch Mod")
+    assert row >= 0
+    main_window._compare_results_table.selectRow(row)
+    qapp.processEvents()
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda parent, title, text: (
+            captured.update({"question_title": title, "question_text": text})
+            or QMessageBox.StandardButton.Yes
+        ),
+    )
+
+    def _fake_preview(**kwargs):
+        captured["preview_kwargs"] = kwargs
+        return SimpleNamespace(
+            direction="real_to_sandbox",
+            review=SimpleNamespace(
+                allowed=True,
+                message="Sandbox review ready.",
+                summary=SimpleNamespace(total_entry_count=1),
+            ),
+            plan=SimpleNamespace(entries=(SimpleNamespace(action="overwrite_with_archive", target_path=Path(r"C:\Sandbox\Mods\MismatchTest")),)),
+            real_mods_path=current_result.real_mods_path,
+            sandbox_mods_path=current_result.sandbox_mods_path,
+            real_archive_path=Path(r"C:\Game\.sdvmm-real-archive"),
+            sandbox_archive_path=Path(r"C:\Sandbox\.sdvmm-sandbox-archive"),
+            source_mod_paths=(Path(r"C:\Game\Mods\MismatchLive"),),
+        )
+
+    def _fake_execute(preview):
+        captured["execute_preview"] = preview
+        return SimpleNamespace(
+            direction="real_to_sandbox",
+            real_mods_path=current_result.real_mods_path,
+            sandbox_mods_path=current_result.sandbox_mods_path,
+            real_archive_path=Path(r"C:\Game\.sdvmm-real-archive"),
+            sandbox_archive_path=Path(r"C:\Sandbox\.sdvmm-sandbox-archive"),
+            source_mod_paths=(Path(r"C:\Game\Mods\MismatchLive"),),
+            synced_target_paths=(Path(r"C:\Sandbox\Mods\MismatchTest"),),
+            archived_target_paths=(Path(r"C:\Sandbox\.sdvmm-sandbox-archive\\MismatchTest__sdvmm_archive_001"),),
+            replaced_target_paths=(Path(r"C:\Sandbox\Mods\MismatchTest"),),
+            compare_result=refreshed_result,
+        )
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        **_: object,
+    ) -> None:
+        captured["operation_name"] = operation_name
+        captured["running_label"] = running_label
+        captured["started_status"] = started_status
+        captured["error_title"] = error_title
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window._shell_service, "build_compare_mods_sync_preview", _fake_preview)
+    monkeypatch.setattr(main_window._shell_service, "execute_compare_mods_sync_preview", _fake_execute)
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+
+    assert main_window._compare_sync_real_to_sandbox_button.isEnabled() is True
+    assert main_window._compare_sync_sandbox_to_real_button.isEnabled() is True
+    main_window._compare_sync_real_to_sandbox_button.click()
+    qapp.processEvents()
+
+    assert captured["preview_kwargs"] == {
+        "direction": "real_to_sandbox",
+        "configured_mods_path_text": str(current_result.real_mods_path),
+        "sandbox_mods_path_text": str(current_result.sandbox_mods_path),
+        "real_archive_path_text": main_window._real_archive_path_input.text(),
+        "sandbox_archive_path_text": main_window._sandbox_archive_path_input.text(),
+        "source_mod_folder_path_text": r"C:\Game\Mods\MismatchLive",
+        "target_mod_folder_path_text": r"C:\Sandbox\Mods\MismatchTest",
+        "source_mod_folder_path_texts": (r"C:\Game\Mods\MismatchLive",),
+        "target_mod_folder_path_texts": (r"C:\Sandbox\Mods\MismatchTest",),
+        "existing_config": None,
+    }
+    assert captured["operation_name"] == "Compare sync"
+    assert captured["running_label"] == "Compare sync"
+    assert captured["error_title"] == "Compare sync failed"
+    assert "Mismatch Mod" in str(captured["started_status"])
+    assert captured["question_title"] == "Review compare sync"
+    assert "Mismatch Mod" in str(captured["question_text"])
+    assert main_window._status_strip_label.text() == "Compare sync complete: 1 mod(s), 1 archived replacement(s)."
+    assert main_window._compare_output_group.isHidden() is False
+    assert "Compare sync result" in main_window._compare_output_box.toPlainText()
+    assert _visible_mod_names(main_window._compare_results_table) == tuple()
+
+
+def test_main_window_compare_grouped_sync_passes_all_member_paths(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    real_members = (
+        InstalledMod(
+            unique_id="Kana.WeatherWonders.CC",
+            name="[CC] Weather Wonders - Beta",
+            version="1.5.3-beta",
+            folder_path=Path(r"C:\Game\Mods\[CC] Weather Wonders - Beta"),
+            manifest_path=Path(r"C:\Game\Mods\[CC] Weather Wonders - Beta\manifest.json"),
+            dependencies=tuple(),
+        ),
+        InstalledMod(
+            unique_id="Kana.WeatherWonders.DLL",
+            name="[DLL] Weather Wonders - Beta",
+            version="1.5.3-beta",
+            folder_path=Path(r"C:\Game\Mods\[DLL] Weather Wonders - Beta"),
+            manifest_path=Path(r"C:\Game\Mods\[DLL] Weather Wonders - Beta\manifest.json"),
+            dependencies=tuple((ManifestDependency("Kana.WeatherWonders.CC", True),)),
+        ),
+        InstalledMod(
+            unique_id="Kana.WeatherWonders.FTM",
+            name="[FTM] Weather Wonders - Beta",
+            version="1.5.3-beta",
+            folder_path=Path(r"C:\Game\Mods\[FTM] Weather Wonders - Beta"),
+            manifest_path=Path(r"C:\Game\Mods\[FTM] Weather Wonders - Beta\manifest.json"),
+            dependencies=tuple((ManifestDependency("Kana.WeatherWonders.CC", True),)),
+        ),
+    )
+    sandbox_members = (
+        InstalledMod(
+            unique_id="Kana.WeatherWonders.CC",
+            name="[CC] Weather Wonders - Beta",
+            version="1.4.10-stable",
+            folder_path=Path(r"C:\Sandbox\Mods\[CC] Weather Wonders - Beta"),
+            manifest_path=Path(r"C:\Sandbox\Mods\[CC] Weather Wonders - Beta\manifest.json"),
+            dependencies=tuple(),
+        ),
+        InstalledMod(
+            unique_id="Kana.WeatherWonders.DLL",
+            name="[DLL] Weather Wonders - Beta",
+            version="1.4.10-stable",
+            folder_path=Path(r"C:\Sandbox\Mods\[DLL] Weather Wonders - Beta"),
+            manifest_path=Path(r"C:\Sandbox\Mods\[DLL] Weather Wonders - Beta\manifest.json"),
+            dependencies=tuple((ManifestDependency("Kana.WeatherWonders.CC", True),)),
+        ),
+        InstalledMod(
+            unique_id="Kana.WeatherWonders.FTM",
+            name="[FTM] Weather Wonders - Beta",
+            version="1.4.10-stable",
+            folder_path=Path(r"C:\Sandbox\Mods\[FTM] Weather Wonders - Beta"),
+            manifest_path=Path(r"C:\Sandbox\Mods\[FTM] Weather Wonders - Beta\manifest.json"),
+            dependencies=tuple((ManifestDependency("Kana.WeatherWonders.CC", True),)),
+        ),
+    )
+    result = ModsCompareResult(
+        real_mods_path=Path(r"C:\Game\Mods"),
+        sandbox_mods_path=Path(r"C:\Sandbox\Mods"),
+        real_inventory=_mods_inventory(),
+        sandbox_inventory=_mods_inventory(),
+        entries=(
+            ModsCompareEntry(
+                match_key="component:update:curseforge:1016623",
+                unique_id="Kana.WeatherWonders.CC",
+                name="Weather Wonders - Beta (+2 more)",
+                state="version_mismatch",
+                real_mod=real_members[0],
+                sandbox_mod=sandbox_members[0],
+                real_member_mods=real_members,
+                sandbox_member_mods=sandbox_members,
+                grouped=True,
+            ),
+        ),
+    )
+
+    main_window._mods_path_input.setText(str(result.real_mods_path))
+    main_window._sandbox_mods_path_input.setText(str(result.sandbox_mods_path))
+    main_window._context_tabs.setCurrentWidget(main_window._compare_page)
+    main_window._on_compare_real_and_sandbox_completed(result)
+    qapp.processEvents()
+    row = _find_mod_row(main_window._compare_results_table, "Weather Wonders - Beta (+2 more)")
+    assert row >= 0
+    main_window._compare_results_table.selectRow(row)
+    qapp.processEvents()
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+
+    def _fake_preview(**kwargs):
+        captured["preview_kwargs"] = kwargs
+        return SimpleNamespace(
+            direction="real_to_sandbox",
+            review=SimpleNamespace(
+                allowed=True,
+                message="Sandbox review ready.",
+                summary=SimpleNamespace(total_entry_count=3),
+            ),
+            plan=SimpleNamespace(entries=tuple()),
+            real_mods_path=result.real_mods_path,
+            sandbox_mods_path=result.sandbox_mods_path,
+            real_archive_path=Path(r"C:\Game\.sdvmm-real-archive"),
+            sandbox_archive_path=Path(r"C:\Sandbox\.sdvmm-sandbox-archive"),
+            source_mod_paths=tuple(mod.folder_path for mod in real_members),
+        )
+
+    monkeypatch.setattr(main_window._shell_service, "build_compare_mods_sync_preview", _fake_preview)
+
+    main_window._compare_sync_real_to_sandbox_button.click()
+    qapp.processEvents()
+
+    assert captured["preview_kwargs"]["source_mod_folder_path_texts"] == tuple(
+        str(mod.folder_path) for mod in real_members
+    )
+    assert captured["preview_kwargs"]["target_mod_folder_path_texts"] == tuple(
+        str(mod.folder_path) for mod in sandbox_members
+    )
 
 
 def test_main_window_discovery_render_updates_filter_stats_label(
@@ -14908,6 +15329,56 @@ def test_main_window_open_selected_update_pages_guides_packages_and_stages_detec
     )
     assert "2 matching watched package(s) are already queued in Packages." in (
         main_window._packages_output_box.toPlainText()
+    )
+
+
+def test_main_window_guided_update_handoff_expands_selection_when_more_matched_packages_arrive(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    match_a = _intake_result(
+        "MatchA.zip",
+        "update_replace_candidate",
+        "Match A",
+        "Sample.MatchA",
+        version="1.1.0",
+    )
+    match_b = _intake_result(
+        "MatchB.zip",
+        "update_replace_candidate",
+        "Match B",
+        "Sample.MatchB",
+        version="1.1.0",
+    )
+
+    main_window._detected_intakes = (match_a, match_b)
+    main_window._intake_correlations = (
+        _intake_correlation(
+            match_a,
+            next_step="Review MatchA.zip",
+            matched_guided_update_unique_ids=("Sample.MatchA",),
+        ),
+        _intake_correlation(
+            match_b,
+            next_step="Review MatchB.zip",
+            matched_guided_update_unique_ids=("Sample.MatchB",),
+        ),
+    )
+    main_window._set_selected_zip_package_paths(
+        (match_a.package_path,),
+        current_path=match_a.package_path,
+    )
+    qapp.processEvents()
+
+    main_window._sync_guided_update_intake_handoff(
+        allow_auto_select=True,
+        update_output=False,
+        update_status=False,
+    )
+
+    assert main_window._selected_zip_package_paths == (
+        match_a.package_path,
+        match_b.package_path,
     )
 
 

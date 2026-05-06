@@ -1,6 +1,8 @@
 # Guia do Usuário Cinderleaf (PT-BR)
 
-Este é o guia em Português (Brasil) da linha de trabalho `1.6.0`.
+Este é o guia em Português (Brasil) da linha de trabalho `1.6.0` em source.
+
+A última versão pública empacotada ainda é a `1.5.0`.
 
 - Traduzido da base em inglês no commit: `a1074f1`
 - Status da tradução: `completo (linha 1.6.0)`

@@ -290,9 +290,32 @@ class GithubProviderAdapter:
         _ = mod, nexus_api_key
         if not link.metadata_url:
             raise MetadataFetchError(UNEXPECTED_PROVIDER_RESPONSE, "GitHub provider has no metadata URL")
-        return fetcher.fetch_json(link.metadata_url, timeout_seconds)
+        try:
+            return fetcher.fetch_json(link.metadata_url, timeout_seconds)
+        except MetadataFetchError as exc:
+            try:
+                return _fetch_smapi_metadata_fallback(
+                    mod=mod,
+                    update_key=f"GitHub:{link.key}",
+                    fetcher=fetcher,
+                    timeout_seconds=timeout_seconds,
+                )
+            except MetadataFetchError:
+                raise exc
 
     def extract_version(self, payload: Mapping[str, Any]) -> str | None:
+        suggested = _extract_smapi_first_suggested_update(payload)
+        if suggested is not None:
+            version = suggested.get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+
+        metadata_entry = _extract_smapi_first_metadata_entry(payload)
+        if metadata_entry is not None:
+            version = metadata_entry.get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+
         tag_name = payload.get("tag_name")
         if isinstance(tag_name, str) and tag_name.strip():
             stripped = tag_name.strip()
@@ -303,6 +326,18 @@ class GithubProviderAdapter:
         return _extract_generic_version(payload)
 
     def extract_page_url(self, payload: Mapping[str, Any]) -> str | None:
+        suggested = _extract_smapi_first_suggested_update(payload)
+        if suggested is not None:
+            value = suggested.get("url")
+            if isinstance(value, str) and _looks_like_url(value):
+                return value.strip()
+
+        metadata_entry = _extract_smapi_first_metadata_entry(payload)
+        if metadata_entry is not None:
+            value = metadata_entry.get("url")
+            if isinstance(value, str) and _looks_like_url(value):
+                return value.strip()
+
         return _extract_generic_page_url(payload)
 
     def extract_requirements(self, payload: Mapping[str, Any]) -> tuple[str, ...]:
@@ -839,6 +874,23 @@ def _check_single_mod(
 
         remote_version = provider.extract_version(payload)
         if remote_version is None:
+            if (
+                link.provider == CURSEFORGE_PROVIDER
+                and _curseforge_payload_should_keep_installed_version(payload)
+            ):
+                return replace(
+                    base_status,
+                    state=UP_TO_DATE,
+                    remote_link=link,
+                    remote_version=mod.version,
+                    message=(
+                        "CurseForge source is linked, but comparable remote version metadata is "
+                        "temporarily unavailable. Keeping the installed version as current."
+                    ),
+                    remote_requirements_state=remote_requirements_state,
+                    remote_requirements=remote_requirements,
+                    remote_requirements_message=remote_requirements_message,
+                )
             failures.append(
                 ProviderFailure(
                     provider=link.provider,
@@ -1233,6 +1285,53 @@ def _extract_smapi_mod_entries(payload: Mapping[str, Any]) -> tuple[Mapping[str,
     if not isinstance(mods, list):
         return tuple()
     return tuple(entry for entry in mods if isinstance(entry, Mapping))
+
+
+def _extract_smapi_error_messages(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    messages: list[str] = []
+    for mod_entry in _extract_smapi_mod_entries(payload):
+        errors = mod_entry.get("errors")
+        if not isinstance(errors, list):
+            continue
+        for error in errors:
+            if isinstance(error, str) and error.strip():
+                messages.append(error.strip())
+    return tuple(messages)
+
+
+def _curseforge_payload_should_keep_installed_version(payload: Mapping[str, Any]) -> bool:
+    return any("no valid versions" in message.casefold() for message in _extract_smapi_error_messages(payload))
+
+
+def _fetch_smapi_metadata_fallback(
+    *,
+    mod: InstalledMod,
+    update_key: str,
+    fetcher: JsonMetadataFetcher,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    request_payload = {
+        "mods": (
+            {
+                "id": mod.unique_id,
+                "updateKeys": (update_key,),
+                "installedVersion": mod.version,
+                "isBroken": False,
+            },
+        ),
+        "apiVersion": "4.0.0",
+        "includeExtendedMetadata": True,
+    }
+    payload = fetcher.post_json(SMAPI_MODS_API_URL, request_payload, timeout_seconds)
+    if (
+        _extract_smapi_first_metadata(payload) is None
+        and _extract_smapi_first_suggested_update(payload) is None
+    ):
+        raise MetadataFetchError(
+            UNEXPECTED_PROVIDER_RESPONSE,
+            "SMAPI fallback metadata does not provide usable source details.",
+        )
+    return payload
 
 
 def _extract_generic_requirements(payload: Mapping[str, Any]) -> tuple[str, ...]:

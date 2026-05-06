@@ -112,6 +112,8 @@ from sdvmm.app.shell_service import (
     SCAN_TARGET_SANDBOX_MODS,
     AppShellError,
     AppShellService,
+    CompareModsSyncPreview,
+    CompareModsSyncResult,
     IntakeUpdateCorrelation,
     RealModProfileCreateResult,
     RealModProfileDeleteResult,
@@ -172,6 +174,7 @@ from sdvmm.domain.scan_codes import DIRECT_MOD, MULTI_MOD_CONTAINER, NESTED_MOD_
 from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.domain.dependency_codes import SATISFIED
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB, DISCOVERY_SOURCE_NEXUS
+from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.smapi_codes import (
     SMAPI_DETECTED_VERSION_KNOWN,
     SMAPI_NOT_DETECTED_FOR_UPDATE,
@@ -1235,7 +1238,7 @@ def _build_inventory_row_entries(
                     continue
                 if not (
                     has_shared_update_key
-                    or (has_single_sided_update_key and shares_base_name)
+                    or (has_single_sided_update_key and (shares_base_name or shares_family_identity))
                     or (not left_update_keys and not right_update_keys and shares_family_identity)
                 ):
                     continue
@@ -1655,6 +1658,30 @@ class MainWindow(QMainWindow):
             "compare.compare_real_sandbox",
         )
         _set_primary_button_style(self._compare_real_vs_sandbox_button)
+        self._compare_sync_real_to_sandbox_button = QPushButton(
+            self._tr("compare.sync_real_to_sandbox")
+        )
+        self._compare_sync_real_to_sandbox_button.setObjectName(
+            "compare_sync_real_to_sandbox_button"
+        )
+        self._compare_sync_real_to_sandbox_button.setProperty(
+            "translationKey",
+            "compare.sync_real_to_sandbox",
+        )
+        self._compare_sync_real_to_sandbox_button.setEnabled(False)
+        _set_utility_button_style(self._compare_sync_real_to_sandbox_button)
+        self._compare_sync_sandbox_to_real_button = QPushButton(
+            self._tr("compare.sync_sandbox_to_real")
+        )
+        self._compare_sync_sandbox_to_real_button.setObjectName(
+            "compare_sync_sandbox_to_real_button"
+        )
+        self._compare_sync_sandbox_to_real_button.setProperty(
+            "translationKey",
+            "compare.sync_sandbox_to_real",
+        )
+        self._compare_sync_sandbox_to_real_button.setEnabled(False)
+        _set_utility_button_style(self._compare_sync_sandbox_to_real_button)
         self._compare_summary_label = QLabel(
             self._tr("compare.summary")
         )
@@ -1720,6 +1747,7 @@ class MainWindow(QMainWindow):
             "Select a compare row first."
         )
         _set_utility_button_style(self._compare_copy_identity_button)
+        self._set_compare_sync_button_states(None)
         self._compare_category_help_label = QLabel(
             self._tr("compare.category_help")
         )
@@ -1944,6 +1972,18 @@ class MainWindow(QMainWindow):
         self._package_queue_deselect_all_button.setProperty("translationKey", "packages.deselect_all")
         self._package_queue_deselect_all_button.clicked.connect(
             self._on_deselect_all_visible_package_queue_items
+        )
+        self._package_queue_select_current_only_button = QPushButton(
+            self._tr("packages.select_current_only")
+        )
+        self._package_queue_select_current_only_button.setObjectName(
+            "packages_queue_select_current_only_button"
+        )
+        self._package_queue_select_current_only_button.setProperty(
+            "translationKey", "packages.select_current_only"
+        )
+        self._package_queue_select_current_only_button.clicked.connect(
+            self._on_select_current_package_queue_item
         )
         self._package_queue_summary_label = QLabel("")
         self._package_queue_summary_label.setObjectName("packages_queue_summary_label")
@@ -3608,6 +3648,7 @@ class MainWindow(QMainWindow):
         queue_bulk_actions_layout.setSpacing(10)
         queue_bulk_actions_layout.addWidget(self._package_queue_select_all_button)
         queue_bulk_actions_layout.addWidget(self._package_queue_deselect_all_button)
+        queue_bulk_actions_layout.addWidget(self._package_queue_select_current_only_button)
         queue_bulk_actions_layout.addStretch(1)
         queue_header_widget = QWidget()
         queue_header_widget.setObjectName("packages_queue_header_widget")
@@ -3654,6 +3695,8 @@ class MainWindow(QMainWindow):
         compare_actions_layout.setContentsMargins(0, 0, 0, 0)
         compare_actions_layout.setSpacing(10)
         compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
+        compare_actions_layout.addWidget(self._compare_sync_real_to_sandbox_button)
+        compare_actions_layout.addWidget(self._compare_sync_sandbox_to_real_button)
         compare_show_label = _context_caption(
             self._tr("compare.show"),
             translation_key="compare.show",
@@ -3691,6 +3734,12 @@ class MainWindow(QMainWindow):
         compare_output_group.setVisible(False)
         compare_layout.addStretch(1)
         self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
+        self._compare_sync_real_to_sandbox_button.clicked.connect(
+            self._on_compare_sync_real_to_sandbox
+        )
+        self._compare_sync_sandbox_to_real_button.clicked.connect(
+            self._on_compare_sync_sandbox_to_real
+        )
         self._compare_category_filter_combo.currentIndexChanged.connect(
             self._apply_compare_results_filter
         )
@@ -3699,9 +3748,9 @@ class MainWindow(QMainWindow):
         )
         compare_page = self._build_page_shell(
             object_name="compare_tab",
-            eyebrow="Read-only drift orientation",
-            title="Compare real and sandbox",
-            subtitle="Check drift between real and sandbox before promoting changes.",
+            eyebrow=self._tr("compare.page.eyebrow"),
+            title=self._tr("compare.page.title"),
+            subtitle=self._tr("compare.page.subtitle"),
             body_widget=compare_tab,
             scroll_body=True,
         )
@@ -6545,6 +6594,7 @@ class MainWindow(QMainWindow):
         entry = self._selected_compare_entry()
         has_selection = entry is not None
         self._compare_copy_identity_button.setEnabled(has_selection)
+        self._set_compare_sync_button_states(entry)
         pt_br = self._localizer.effective_language == "pt-BR"
         if entry is None:
             self._compare_copy_identity_button.setToolTip(
@@ -6563,6 +6613,92 @@ class MainWindow(QMainWindow):
         )
         self._refresh_compare_summary_feedback()
 
+    def _set_compare_sync_button_states(self, entry: ModsCompareEntry | None) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
+        if self._current_mods_compare_result is None:
+            run_compare_message = (
+                "Execute a comparação primeiro."
+                if pt_br
+                else "Run compare first."
+            )
+            for button in (
+                self._compare_sync_real_to_sandbox_button,
+                self._compare_sync_sandbox_to_real_button,
+            ):
+                button.setEnabled(False)
+                button.setToolTip(run_compare_message)
+            return
+
+        if entry is None:
+            select_message = (
+                "Selecione primeiro uma linha da comparação."
+                if pt_br
+                else "Select a compare row first."
+            )
+            for button in (
+                self._compare_sync_real_to_sandbox_button,
+                self._compare_sync_sandbox_to_real_button,
+            ):
+                button.setEnabled(False)
+                button.setToolTip(select_message)
+            return
+
+        mismatch_message = (
+            f"Sincronizar {entry.name} do lado real para o sandbox."
+            if pt_br
+            else f"Sync {entry.name} from the real side into sandbox."
+        )
+        sandbox_message = (
+            f"Sincronizar {entry.name} do sandbox para o lado real."
+            if pt_br
+            else f"Sync {entry.name} from sandbox into the real side."
+        )
+        ambiguous_message = (
+            "Resolva a correspondência ambígua antes de sincronizar."
+            if pt_br
+            else "Resolve the ambiguous match before syncing."
+        )
+        same_message = (
+            "Os dois lados já correspondem nesta linha."
+            if pt_br
+            else "Both sides already match for this row."
+        )
+
+        if entry.state == "only_in_real":
+            self._compare_sync_real_to_sandbox_button.setEnabled(True)
+            self._compare_sync_real_to_sandbox_button.setToolTip(mismatch_message)
+            self._compare_sync_sandbox_to_real_button.setEnabled(False)
+            self._compare_sync_sandbox_to_real_button.setToolTip(
+                "Não existe cópia sandbox para sincronizar de volta."
+                if pt_br
+                else "There is no sandbox copy to sync back."
+            )
+            return
+
+        if entry.state == "only_in_sandbox":
+            self._compare_sync_real_to_sandbox_button.setEnabled(False)
+            self._compare_sync_real_to_sandbox_button.setToolTip(
+                "Não existe cópia real para sincronizar para o sandbox."
+                if pt_br
+                else "There is no real copy to sync into sandbox."
+            )
+            self._compare_sync_sandbox_to_real_button.setEnabled(True)
+            self._compare_sync_sandbox_to_real_button.setToolTip(sandbox_message)
+            return
+
+        if entry.state == "version_mismatch":
+            self._compare_sync_real_to_sandbox_button.setEnabled(True)
+            self._compare_sync_real_to_sandbox_button.setToolTip(mismatch_message)
+            self._compare_sync_sandbox_to_real_button.setEnabled(True)
+            self._compare_sync_sandbox_to_real_button.setToolTip(sandbox_message)
+            return
+
+        disabled_tooltip = ambiguous_message if entry.state == "ambiguous_match" else same_message
+        self._compare_sync_real_to_sandbox_button.setEnabled(False)
+        self._compare_sync_real_to_sandbox_button.setToolTip(disabled_tooltip)
+        self._compare_sync_sandbox_to_real_button.setEnabled(False)
+        self._compare_sync_sandbox_to_real_button.setToolTip(disabled_tooltip)
+
     def _on_copy_compare_row_identity(self) -> None:
         entry = self._selected_compare_entry()
         if entry is None:
@@ -6578,6 +6714,137 @@ class MainWindow(QMainWindow):
             f"Identidade da linha da comparação copiada: {entry.name} ({entry.unique_id})."
             if self._localizer.effective_language == "pt-BR"
             else f"Copied compare row identity: {entry.name} ({entry.unique_id})."
+        )
+
+    def _on_compare_sync_real_to_sandbox(self) -> None:
+        self._start_compare_sync("real_to_sandbox")
+
+    def _on_compare_sync_sandbox_to_real(self) -> None:
+        self._start_compare_sync("sandbox_to_real")
+
+    def _start_compare_sync(self, direction: str) -> None:
+        entry = self._selected_compare_entry()
+        pt_br = self._localizer.effective_language == "pt-BR"
+        if entry is None:
+            self._set_status(
+                "Selecione uma linha da comparação primeiro."
+                if pt_br
+                else "Select a compare row first."
+            )
+            return
+
+        if direction == "real_to_sandbox":
+            source_member_mods = entry.real_member_mods or ((entry.real_mod,) if entry.real_mod is not None else tuple())
+            target_member_mods = entry.sandbox_member_mods or ((entry.sandbox_mod,) if entry.sandbox_mod is not None else tuple())
+            if not source_member_mods:
+                self._set_status(
+                    "A linha selecionada não tem uma cópia real para sincronizar."
+                    if pt_br
+                    else "Selected row does not have a real-side copy to sync."
+                )
+                return
+        else:
+            source_member_mods = entry.sandbox_member_mods or ((entry.sandbox_mod,) if entry.sandbox_mod is not None else tuple())
+            target_member_mods = entry.real_member_mods or ((entry.real_mod,) if entry.real_mod is not None else tuple())
+            if not source_member_mods:
+                self._set_status(
+                    "A linha selecionada não tem uma cópia sandbox para sincronizar."
+                    if pt_br
+                    else "Selected row does not have a sandbox-side copy to sync."
+                )
+                return
+
+        try:
+            preview = self._shell_service.build_compare_mods_sync_preview(
+                direction=direction,
+                configured_mods_path_text=self._mods_path_input.text(),
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                real_archive_path_text=self._real_archive_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                source_mod_folder_path_text=str(source_member_mods[0].folder_path),
+                target_mod_folder_path_text=str(target_member_mods[0].folder_path) if target_member_mods else "",
+                source_mod_folder_path_texts=tuple(str(mod.folder_path) for mod in source_member_mods),
+                target_mod_folder_path_texts=tuple(str(mod.folder_path) for mod in target_member_mods),
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            self._set_status(str(exc))
+            return
+
+        if not preview.review.allowed:
+            self._set_status(preview.review.message)
+            return
+
+        confirm_title = (
+            "Revisar sincronização da comparação"
+            if pt_br
+            else "Review compare sync"
+        )
+        yes = QMessageBox.question(
+            self,
+            confirm_title,
+            _build_compare_mods_sync_confirmation_message(preview, entry_name=entry.name),
+        )
+        if yes != QMessageBox.StandardButton.Yes:
+            self._set_status(
+                "Sincronização da comparação cancelada."
+                if pt_br
+                else "Compare sync cancelled."
+            )
+            return
+
+        running_label = (
+            "Sincronização da comparação"
+            if pt_br
+            else "Compare sync"
+        )
+        started_status = (
+            f"Sincronizando {entry.name} com base na linha selecionada da comparação..."
+            if pt_br
+            else f"Syncing {entry.name} from the selected compare row..."
+        )
+        error_title = (
+            "Falha na sincronização da comparação"
+            if pt_br
+            else "Compare sync failed"
+        )
+        self._run_background_operation(
+            operation_name=running_label,
+            running_label=running_label,
+            started_status=started_status,
+            error_title=error_title,
+            task_fn=lambda _preview=preview: self._shell_service.execute_compare_mods_sync_preview(
+                _preview
+            ),
+            on_success=self._on_compare_sync_completed,
+        )
+
+    def _on_compare_sync_completed(self, result: CompareModsSyncResult) -> None:
+        self._current_mods_compare_result = result.compare_result
+        self._render_mods_compare_result(result.compare_result)
+        self._set_compare_output_text(_build_compare_mods_sync_result_text(result))
+        replaced_count = len(result.replaced_target_paths)
+        pt_br = self._localizer.effective_language == "pt-BR"
+        if replaced_count > 0:
+            self._set_status(
+                (
+                    f"Sincronização concluída: {len(result.synced_target_paths)} mod(s), "
+                    f"{replaced_count} alvo(s) substituído(s) com arquivo."
+                )
+                if pt_br
+                else (
+                    f"Compare sync complete: {len(result.synced_target_paths)} mod(s), "
+                    f"{replaced_count} archived replacement(s)."
+                )
+            )
+            return
+
+        self._set_status(
+            (
+                f"Sincronização concluída: {len(result.synced_target_paths)} mod(s) copiado(s)."
+            )
+            if pt_br
+            else f"Compare sync complete: {len(result.synced_target_paths)} mod(s) copied."
         )
 
     def _on_inspect_zip(self) -> None:
@@ -10099,6 +10366,7 @@ class MainWindow(QMainWindow):
         if result is None:
             table.setVisible(False)
             self._compare_copy_identity_button.setEnabled(False)
+            self._set_compare_sync_button_states(None)
             return
 
         visible_count = 0
@@ -11226,14 +11494,15 @@ class MainWindow(QMainWindow):
             if self._localizer.effective_language == "pt-BR"
             else "Select a compare row first."
         )
+        self._set_compare_sync_button_states(None)
         self._set_local_detail_group_visibility(
             getattr(self, "_compare_output_group", None),
             "",
         )
         self._compare_summary_label.setText(
-            "Execute a comparação para ver diferenças acionáveis entre o caminho configurado dos Mods reais e o caminho dos Mods sandbox. Linhas com a mesma versão ficam ocultas até você pedir por elas."
+            "Execute a comparação para ver diferenças acionáveis entre o caminho configurado dos Mods reais e o caminho dos Mods sandbox. Depois escolha o lado que deve sincronizar quando houver diferença."
             if self._localizer.effective_language == "pt-BR"
-            else "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path. Same-version rows stay hidden until you ask for them."
+            else "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path. Then choose which side should sync when a row differs."
         )
         self._compare_summary_label.setToolTip(
             "Execute a comparação depois de mudar qualquer caminho de Mods ou o caminho de exclusão do arquivo."
@@ -11448,6 +11717,9 @@ class MainWindow(QMainWindow):
         all_visible_checked = any_visible and visible_lookup <= selected_lookup
         self._package_queue_select_all_button.setEnabled(any_visible and not all_visible_checked)
         self._package_queue_deselect_all_button.setEnabled(checked_visible)
+        self._package_queue_select_current_only_button.setEnabled(
+            any_visible and self._selected_intake_index() >= 0
+        )
 
     def _selected_package_queue_paths(self) -> tuple[Path, ...]:
         paths: list[Path] = []
@@ -11486,6 +11758,24 @@ class MainWindow(QMainWindow):
 
     def _on_deselect_all_visible_package_queue_items(self) -> None:
         self._set_visible_package_queue_items_checked(False)
+
+    def _on_select_current_package_queue_item(self) -> None:
+        selected_index = self._selected_intake_index()
+        if selected_index < 0:
+            return
+        try:
+            intake = self._shell_service.select_intake_result(
+                intakes=self._detected_intakes,
+                selected_index=selected_index,
+            )
+        except AppShellError:
+            return
+        if not self._shell_service.is_actionable_intake_result(intake):
+            return
+        self._set_selected_zip_package_paths(
+            (intake.package_path,),
+            current_path=intake.package_path,
+        )
 
     def _set_visible_package_queue_items_checked(self, checked: bool) -> None:
         visible_paths = self._visible_package_queue_paths()
@@ -14305,6 +14595,10 @@ class MainWindow(QMainWindow):
         actionable_matches = self._guided_actionable_intake_indexes()
         if not actionable_matches:
             return
+        matched_paths = tuple(
+            self._detected_intakes[index].package_path
+            for index in actionable_matches
+        )
 
         message: str
         if len(actionable_matches) == 1:
@@ -14313,6 +14607,11 @@ class MainWindow(QMainWindow):
             if combo_index >= 0:
                 if allow_auto_select:
                     self._intake_result_combo.setCurrentIndex(combo_index)
+                    self._set_selected_zip_package_paths(
+                        matched_paths,
+                        current_path=matched_paths[0],
+                    )
+                    self._apply_auto_overwrite_intent_for_package_paths(matched_paths)
                 package_name = self._detected_intakes[match_index].package_path.name
                 correlation = self._intake_correlations[match_index]
                 message = (
@@ -14325,6 +14624,16 @@ class MainWindow(QMainWindow):
                     "Clear the filter or choose it manually in Packages."
                 )
         else:
+            if allow_auto_select:
+                current_path = next(
+                    (path for path in self._selected_zip_package_paths if path in matched_paths),
+                    matched_paths[0],
+                )
+                self._set_selected_zip_package_paths(
+                    matched_paths,
+                    current_path=current_path,
+                )
+                self._apply_auto_overwrite_intent_for_package_paths(matched_paths)
             message = (
                 "Multiple matched update packages are ready. Choose which package to install in Packages."
             )
@@ -15577,6 +15886,141 @@ def _build_sandbox_mods_promotion_result_text(result: SandboxModsPromotionResult
     )
     lines.append(
         "Recovery history was recorded for this explicit promotion so archive-aware replacements remain inspectable."
+    )
+    return "\n".join(lines)
+
+
+def _build_compare_mods_sync_confirmation_message(
+    preview: CompareModsSyncPreview,
+    *,
+    entry_name: str,
+) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+    install_new_count = sum(1 for entry in preview.plan.entries if entry.action == INSTALL_NEW)
+    replace_entries = tuple(
+        entry for entry in preview.plan.entries if entry.action == OVERWRITE_WITH_ARCHIVE
+    )
+    source_path = (
+        preview.real_mods_path if preview.direction == "real_to_sandbox" else preview.sandbox_mods_path
+    )
+    target_path = (
+        preview.sandbox_mods_path if preview.direction == "real_to_sandbox" else preview.real_mods_path
+    )
+    archive_path = (
+        preview.sandbox_archive_path
+        if preview.direction == "real_to_sandbox"
+        else preview.real_archive_path
+    )
+    direction_label = (
+        "real Mods -> sandbox Mods"
+        if preview.direction == "real_to_sandbox"
+        else "sandbox Mods -> REAL Mods"
+    )
+    if pt_br:
+        direction_label = (
+            "Mods reais -> Mods sandbox"
+            if preview.direction == "real_to_sandbox"
+            else "Mods sandbox -> Mods reais"
+        )
+    lines = [
+        (
+            "Reveja a sincronização da comparação para a linha selecionada."
+            if pt_br
+            else "Review compare sync for the selected row."
+        ),
+        "",
+        preview.review.message,
+        "",
+        (
+            "Executar sincronização agora?"
+            if pt_br
+            else "Execute sync now?"
+        ),
+        f"{'Linha' if pt_br else 'Row'}: {entry_name}",
+        f"{'Direção' if pt_br else 'Direction'}: {direction_label}",
+        f"{'Origem' if pt_br else 'Source'}: {source_path}",
+        f"{'Destino' if pt_br else 'Destination'}: {target_path}",
+        f"{'Raiz do arquivo' if pt_br else 'Archive root'}: {archive_path}",
+        f"{'Entradas' if pt_br else 'Entries'}: {preview.review.summary.total_entry_count}",
+        f"{'Novos alvos' if pt_br else 'New targets'}: {install_new_count}",
+        f"{'Substituições com arquivo' if pt_br else 'Archive-aware replace'}: {len(replace_entries)}",
+        "",
+        (
+            "Esta é uma sincronização explícita da Comparação, não uma cópia cega."
+            if pt_br
+            else "This is an explicit Compare sync, not a blind copy."
+        ),
+        (
+            "Conflitos são resolvidos arquivando o alvo atual antes da substituição."
+            if pt_br
+            else "Conflicts are handled by archiving the current target before replacement."
+        ),
+    ]
+    if replace_entries:
+        lines.append("")
+        lines.append(
+            "Alvos conflitantes" if pt_br else "Conflicting targets"
+        )
+        lines.extend(f"- {entry.target_path.name}" for entry in replace_entries[:5])
+        remaining_count = len(replace_entries) - min(len(replace_entries), 5)
+        if remaining_count > 0:
+            lines.append(
+                f"- ... e mais {remaining_count}"
+                if pt_br
+                else f"- ... and {remaining_count} more"
+            )
+    return "\n".join(lines)
+
+
+def _build_compare_mods_sync_result_text(result: CompareModsSyncResult) -> str:
+    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+    source_path = result.real_mods_path if result.direction == "real_to_sandbox" else result.sandbox_mods_path
+    target_path = result.sandbox_mods_path if result.direction == "real_to_sandbox" else result.real_mods_path
+    archive_path = (
+        result.sandbox_archive_path
+        if result.direction == "real_to_sandbox"
+        else result.real_archive_path
+    )
+    direction_label = (
+        "Mods reais -> Mods sandbox"
+        if result.direction == "real_to_sandbox"
+        else "Mods sandbox -> Mods reais"
+    ) if pt_br else (
+        "real Mods -> sandbox Mods"
+        if result.direction == "real_to_sandbox"
+        else "sandbox Mods -> REAL Mods"
+    )
+    lines = [
+        "Resultado da sincronização da comparação" if pt_br else "Compare sync result",
+        f"{'Direção' if pt_br else 'Direction'}: {direction_label}",
+        f"{'Origem' if pt_br else 'Source'}: {source_path}",
+        f"{'Destino' if pt_br else 'Destination'}: {target_path}",
+        f"{'Raiz do arquivo' if pt_br else 'Archive root'}: {archive_path}",
+        f"{'Alvos sincronizados' if pt_br else 'Synced targets'}: {len(result.synced_target_paths)}",
+        (
+            f"{'Substituições com arquivo' if pt_br else 'Archive-aware replacements'}: "
+            f"{len(result.replaced_target_paths)}"
+        ),
+    ]
+    if result.source_mod_paths:
+        lines.append("Pastas de origem" if pt_br else "Source mod folders")
+        lines.extend(f"- {path}" for path in result.source_mod_paths)
+    if result.synced_target_paths:
+        lines.append("Pastas de destino" if pt_br else "Target mod folders")
+        lines.extend(f"- {path}" for path in result.synced_target_paths)
+    if result.archived_target_paths:
+        lines.append("Alvos arquivados" if pt_br else "Archived targets")
+        lines.extend(f"- {path}" for path in result.archived_target_paths)
+    lines.append("")
+    lines.append(
+        "A comparação foi atualizada depois da sincronização."
+        if pt_br
+        else "Compare was refreshed after sync."
+    )
+    lines.append(
+        "A recuperação desta sincronização explícita foi registrada no histórico de instalação."
+        if pt_br
+        else "Recovery for this explicit sync was recorded in install history."
     )
     return "\n".join(lines)
 

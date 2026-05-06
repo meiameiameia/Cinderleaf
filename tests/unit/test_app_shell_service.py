@@ -3090,22 +3090,22 @@ def test_compare_real_and_sandbox_mods_reports_presence_and_version_states(
 
     assert result.real_mods_path == real_mods
     assert result.sandbox_mods_path == sandbox_mods
-    assert by_key["sample.onlyreal"].state == "only_in_real"
-    assert by_key["sample.onlyreal"].real_mod is not None
-    assert by_key["sample.onlyreal"].sandbox_mod is None
-    assert by_key["sample.onlysandbox"].state == "only_in_sandbox"
-    assert by_key["sample.onlysandbox"].real_mod is None
-    assert by_key["sample.onlysandbox"].sandbox_mod is not None
-    assert by_key["sample.same"].state == "same_version"
-    assert by_key["sample.same"].real_mod is not None
-    assert by_key["sample.same"].sandbox_mod is not None
-    assert by_key["sample.same"].real_mod.version == "1.2.0"
-    assert by_key["sample.same"].sandbox_mod.version == "1.2.0"
-    assert by_key["sample.mismatch"].state == "version_mismatch"
-    assert by_key["sample.mismatch"].real_mod is not None
-    assert by_key["sample.mismatch"].sandbox_mod is not None
-    assert by_key["sample.mismatch"].real_mod.version == "1.0.0"
-    assert by_key["sample.mismatch"].sandbox_mod.version == "2.0.0"
+    assert by_key["component:uid:sample.onlyreal"].state == "only_in_real"
+    assert by_key["component:uid:sample.onlyreal"].real_mod is not None
+    assert by_key["component:uid:sample.onlyreal"].sandbox_mod is None
+    assert by_key["component:uid:sample.onlysandbox"].state == "only_in_sandbox"
+    assert by_key["component:uid:sample.onlysandbox"].real_mod is None
+    assert by_key["component:uid:sample.onlysandbox"].sandbox_mod is not None
+    assert by_key["component:uid:sample.same"].state == "same_version"
+    assert by_key["component:uid:sample.same"].real_mod is not None
+    assert by_key["component:uid:sample.same"].sandbox_mod is not None
+    assert by_key["component:uid:sample.same"].real_mod.version == "1.2.0"
+    assert by_key["component:uid:sample.same"].sandbox_mod.version == "1.2.0"
+    assert by_key["component:uid:sample.mismatch"].state == "version_mismatch"
+    assert by_key["component:uid:sample.mismatch"].real_mod is not None
+    assert by_key["component:uid:sample.mismatch"].sandbox_mod is not None
+    assert by_key["component:uid:sample.mismatch"].real_mod.version == "1.0.0"
+    assert by_key["component:uid:sample.mismatch"].sandbox_mod.version == "2.0.0"
     assert [entry.state for entry in result.entries] == [
         "only_in_real",
         "only_in_sandbox",
@@ -3132,13 +3132,93 @@ def test_compare_real_and_sandbox_mods_marks_duplicate_unique_id_as_ambiguous(
 
     assert len(result.entries) == 1
     entry = result.entries[0]
-    assert entry.match_key == "sample.duplicate"
+    assert entry.match_key == "component:uid:sample.duplicate"
     assert entry.state == "ambiguous_match"
     assert entry.real_mod is not None
     assert entry.sandbox_mod is not None
     assert entry.note is not None
-    assert "real Mods has 2 folders with this UniqueID" in entry.note
+    assert "real Mods grouped 2 related families into this compare row" in entry.note
     assert entry.unique_id == "Sample.Duplicate"
+
+
+def test_compare_real_and_sandbox_mods_groups_linked_family_entries_into_one_row(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    shared_update_key = ("CurseForge:1016623",)
+
+    _create_mod(
+        real_mods,
+        "[CC] Weather Wonders - Beta",
+        "Kana.WeatherWonders.CC",
+        version="1.5.3-beta",
+        name="[CC] Weather Wonders - Beta",
+        update_keys=shared_update_key,
+    )
+    _create_mod(
+        real_mods,
+        "[DLL] Weather Wonders - Beta",
+        "Kana.WeatherWonders.DLL",
+        version="1.5.3-beta",
+        name="[DLL] Weather Wonders - Beta",
+        update_keys=shared_update_key,
+        dependencies=(("Kana.WeatherWonders.CC", True),),
+    )
+    _create_mod(
+        real_mods,
+        "[FTM] Weather Wonders - Beta",
+        "Kana.WeatherWonders.FTM",
+        version="1.5.3-beta",
+        name="[FTM] Weather Wonders - Beta",
+        update_keys=shared_update_key,
+        dependencies=(("Kana.WeatherWonders.CC", True),),
+    )
+
+    _create_mod(
+        sandbox_mods,
+        "[CC] Weather Wonders - Beta",
+        "Kana.WeatherWonders.CC",
+        version="1.4.10-stable",
+        name="[CC] Weather Wonders - Beta",
+        update_keys=shared_update_key,
+    )
+    _create_mod(
+        sandbox_mods,
+        "[DLL] Weather Wonders - Beta",
+        "Kana.WeatherWonders.DLL",
+        version="1.4.10-stable",
+        name="[DLL] Weather Wonders - Beta",
+        update_keys=shared_update_key,
+        dependencies=(("Kana.WeatherWonders.CC", True),),
+    )
+    _create_mod(
+        sandbox_mods,
+        "[FTM] Weather Wonders - Beta",
+        "Kana.WeatherWonders.FTM",
+        version="1.4.10-stable",
+        name="[FTM] Weather Wonders - Beta",
+        update_keys=shared_update_key,
+        dependencies=(("Kana.WeatherWonders.CC", True),),
+    )
+
+    result = service.compare_real_and_sandbox_mods(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert len(result.entries) == 1
+    entry = result.entries[0]
+    assert entry.name == "Weather Wonders - Beta (+2 more)"
+    assert entry.state == "version_mismatch"
+    assert entry.grouped is True
+    assert len(entry.real_member_mods) == 3
+    assert len(entry.sandbox_member_mods) == 3
+    assert entry.real_mod is not None
+    assert entry.sandbox_mod is not None
+    assert entry.real_mod.version == "1.5.3-beta"
+    assert entry.sandbox_mod.version == "1.4.10-stable"
 
 
 def test_build_mods_compare_text_includes_category_guide_and_unique_ids(tmp_path: Path) -> None:
@@ -3805,6 +3885,194 @@ def test_promote_installed_mods_from_sandbox_to_real_replaces_conflicting_target
     assert operation.entries[0].action == OVERWRITE_WITH_ARCHIVE
     assert operation.entries[0].target_exists_before is True
     assert operation.entries[0].archive_path == archived_target
+
+
+def test_build_compare_mods_sync_preview_targets_existing_counterpart_path_for_version_mismatch(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_mod = _create_mod(real_mods, "WeatherWondersStable", "Kana.WeatherWonders.CC", version="1.5.3-beta")
+    sandbox_mod = _create_mod(
+        sandbox_mods,
+        "WeatherWondersSandbox",
+        "Kana.WeatherWonders.CC",
+        version="1.4.10-stable",
+    )
+
+    preview = service.build_compare_mods_sync_preview(
+        direction="real_to_sandbox",
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        source_mod_folder_path_text=str(real_mod),
+        target_mod_folder_path_text=str(sandbox_mod),
+        existing_config=None,
+    )
+
+    assert preview.direction == "real_to_sandbox"
+    assert preview.review.allowed is True
+    assert len(preview.plan.entries) == 1
+    entry = preview.plan.entries[0]
+    assert entry.target_path == sandbox_mod
+    assert entry.action == OVERWRITE_WITH_ARCHIVE
+    assert entry.archive_path is not None
+    assert entry.archive_path.parent == sandbox_mods.parent / ".sdvmm-sandbox-archive"
+
+
+def test_build_compare_mods_sync_preview_targets_existing_real_counterpart_for_sandbox_to_real(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_mod = _create_mod(real_mods, "WeatherWondersLive", "Kana.WeatherWonders.CC", version="1.4.10-stable")
+    sandbox_mod = _create_mod(
+        sandbox_mods,
+        "WeatherWondersTest",
+        "Kana.WeatherWonders.CC",
+        version="1.5.3-beta",
+    )
+
+    preview = service.build_compare_mods_sync_preview(
+        direction="sandbox_to_real",
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        source_mod_folder_path_text=str(sandbox_mod),
+        target_mod_folder_path_text=str(real_mod),
+        existing_config=None,
+    )
+
+    assert preview.direction == "sandbox_to_real"
+    assert preview.review.allowed is True
+    assert len(preview.plan.entries) == 1
+    entry = preview.plan.entries[0]
+    assert entry.target_path == real_mod
+    assert entry.action == OVERWRITE_WITH_ARCHIVE
+    assert entry.archive_path is not None
+    assert entry.archive_path.parent == real_mods.parent / ".sdvmm-real-archive"
+
+
+def test_build_compare_mods_sync_preview_groups_linked_compare_family_targets(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    shared_update_key = ("CurseForge:1016623",)
+    real_cc = _create_mod(
+        real_mods,
+        "[CC] Weather Wonders - Beta",
+        "Kana.WeatherWonders.CC",
+        version="1.5.3-beta",
+        update_keys=shared_update_key,
+    )
+    real_dll = _create_mod(
+        real_mods,
+        "[DLL] Weather Wonders - Beta",
+        "Kana.WeatherWonders.DLL",
+        version="1.5.3-beta",
+        update_keys=shared_update_key,
+        dependencies=(("Kana.WeatherWonders.CC", True),),
+    )
+    sandbox_cc = _create_mod(
+        sandbox_mods,
+        "[CC] Weather Wonders - Beta - Old",
+        "Kana.WeatherWonders.CC",
+        version="1.4.10-stable",
+        update_keys=shared_update_key,
+    )
+    sandbox_dll = _create_mod(
+        sandbox_mods,
+        "[DLL] Weather Wonders - Beta - Old",
+        "Kana.WeatherWonders.DLL",
+        version="1.4.10-stable",
+        update_keys=shared_update_key,
+        dependencies=(("Kana.WeatherWonders.CC", True),),
+    )
+
+    preview = service.build_compare_mods_sync_preview(
+        direction="real_to_sandbox",
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        source_mod_folder_path_text=str(real_cc),
+        target_mod_folder_path_text=str(sandbox_cc),
+        source_mod_folder_path_texts=(str(real_cc), str(real_dll)),
+        target_mod_folder_path_texts=(str(sandbox_cc), str(sandbox_dll)),
+        existing_config=None,
+    )
+
+    assert preview.review.allowed is True
+    assert preview.source_mod_paths == (real_cc, real_dll)
+    assert len(preview.plan.entries) == 2
+    assert {entry.target_path for entry in preview.plan.entries} == {sandbox_cc, sandbox_dll}
+    assert all(entry.action == OVERWRITE_WITH_ARCHIVE for entry in preview.plan.entries)
+
+
+def test_execute_compare_mods_sync_preview_replaces_existing_sandbox_counterpart_and_refreshes_compare(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_mod = _create_mod(real_mods, "WeatherWondersStable", "Kana.WeatherWonders.CC", version="1.5.3-beta")
+    (real_mod / "dev.txt").write_text("real", encoding="utf-8")
+    sandbox_mod = _create_mod(
+        sandbox_mods,
+        "WeatherWondersSandbox",
+        "Kana.WeatherWonders.CC",
+        version="1.4.10-stable",
+    )
+    (sandbox_mod / "dev.txt").write_text("sandbox", encoding="utf-8")
+
+    preview = service.build_compare_mods_sync_preview(
+        direction="real_to_sandbox",
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        source_mod_folder_path_text=str(real_mod),
+        target_mod_folder_path_text=str(sandbox_mod),
+        existing_config=None,
+    )
+    result = service.execute_compare_mods_sync_preview(preview)
+
+    assert result.direction == "real_to_sandbox"
+    assert result.synced_target_paths == (sandbox_mod,)
+    assert result.replaced_target_paths == (sandbox_mod,)
+    assert len(result.archived_target_paths) == 1
+    archived_target = result.archived_target_paths[0]
+    assert archived_target.parent == sandbox_mods.parent / ".sdvmm-sandbox-archive"
+    assert (sandbox_mod / "dev.txt").read_text(encoding="utf-8") == "real"
+    assert (archived_target / "dev.txt").read_text(encoding="utf-8") == "sandbox"
+    by_key = {entry.match_key: entry for entry in result.compare_result.entries}
+    assert by_key["component:uid:kana.weatherwonders.cc"].state == "same_version"
+    assert by_key["component:uid:kana.weatherwonders.cc"].sandbox_mod is not None
+    assert by_key["component:uid:kana.weatherwonders.cc"].sandbox_mod.folder_path == sandbox_mod
+
+    history = service.load_install_operation_history()
+    assert len(history.operations) == 1
+    operation = history.operations[0]
+    assert operation.destination_kind == INSTALL_TARGET_SANDBOX_MODS
+    assert operation.destination_mods_path == sandbox_mods
+    assert operation.installed_targets == (sandbox_mod,)
+    assert operation.archived_targets == (archived_target,)
+    assert operation.entries[0].target_path == sandbox_mod
+    assert operation.entries[0].action == OVERWRITE_WITH_ARCHIVE
 
 
 def test_promote_installed_mods_from_sandbox_to_real_rolls_back_earlier_live_writes_on_later_failure(

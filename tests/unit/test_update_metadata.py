@@ -286,6 +286,36 @@ def test_curseforge_provider_uses_smapi_metadata_for_up_to_date_version() -> Non
     assert status.remote_link.page_url == "https://www.curseforge.com/stardewvalley/mods/weather-wonders"
 
 
+def test_curseforge_provider_keeps_installed_version_when_smapi_reports_no_valid_versions() -> None:
+    mod = _mod(
+        unique_id="Kana.WeatherWonders.CC",
+        version="1.5.3-beta",
+        update_keys=("CurseForge:1016623",),
+    )
+    inventory = _inventory((mod,))
+    fetcher = StubFetcher(
+        payloads={
+            SMAPI_MODS_API_URL: [
+                {
+                    "id": "Kana.WeatherWonders.CC",
+                    "metadata": {"id": []},
+                    "errors": ["The CurseForge mod with ID '1016623' has no valid versions."],
+                }
+            ]
+        }
+    )
+
+    report = check_updates_for_inventory(inventory, fetcher=fetcher)
+
+    status = report.statuses[0]
+    assert status.state == "up_to_date"
+    assert status.remote_version == "1.5.3-beta"
+    assert status.remote_link is not None
+    assert status.remote_link.provider == "curseforge"
+    assert status.remote_link.page_url == "https://www.curseforge.com/projects/1016623"
+    assert "temporarily unavailable" in (status.message or "")
+
+
 def test_nexus_missing_api_key_is_reported_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(NEXUS_API_KEY_ENV, raising=False)
 
@@ -860,6 +890,51 @@ def test_provider_fallback_uses_nexus_when_github_fails(
     assert status.remote_link is not None
     assert status.remote_link.provider == "nexus"
     assert status.remote_requirements_state == "requirements_absent"
+
+
+def test_github_provider_falls_back_to_smapi_metadata_when_repo_is_missing() -> None:
+    mod = _mod(
+        unique_id="gg.chaldea.SprinklersPlusPlus",
+        version="3.0.0",
+        update_keys=("GitHub:Just-Chaldea/SprinklersPlusPlus",),
+    )
+    inventory = _inventory((mod,))
+    fetcher = StubFetcher(
+        payloads={
+            SMAPI_MODS_API_URL: [
+                {
+                    "id": "gg.chaldea.SprinklersPlusPlus",
+                    "metadata": {
+                        "id": ["gg.chaldea.SprinklersPlusPlus"],
+                        "name": "Sprinklers Plus Plus",
+                        "nexusID": 45261,
+                        "gitHubRepo": "Just-Chaldea/SprinklersPlusPlus",
+                        "main": {
+                            "version": "3.0.0",
+                            "url": "https://www.nexusmods.com/stardewvalley/mods/45261",
+                        },
+                    },
+                    "errors": ["Found no GitHub repository for this ID."],
+                }
+            ],
+        },
+        error_by_url={
+            "https://api.github.com/repos/Just-Chaldea/SprinklersPlusPlus/releases/latest": MetadataFetchError(
+                REQUEST_FAILURE,
+                "HTTP 404: not found",
+            )
+        },
+    )
+
+    report = check_updates_for_inventory(inventory, fetcher=fetcher)
+
+    status = report.statuses[0]
+    assert status.state == "up_to_date"
+    assert status.remote_version == "3.0.0"
+    assert status.remote_link is not None
+    assert status.remote_link.provider == "github"
+    assert status.remote_link.page_url == "https://www.nexusmods.com/stardewvalley/mods/45261"
+    assert fetcher.post_calls[0][0] == SMAPI_MODS_API_URL
 
 
 def test_remote_requirements_are_exposed_when_provider_payload_includes_them(

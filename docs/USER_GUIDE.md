@@ -1,6 +1,8 @@
 # Cinderleaf User Guide
 
-This is the easy-to-read guide for the current `1.6.0` working line.
+This is the easy-to-read guide for the current `1.6.0` working line from source.
+
+The latest packaged public release is still `1.5.0`.
 
 If you want the short version first, read the main [README](../README.md).
 

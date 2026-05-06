@@ -359,6 +359,9 @@ class ModsCompareEntry:
     state: ModsCompareState
     real_mod: InstalledMod | None
     sandbox_mod: InstalledMod | None
+    real_member_mods: tuple[InstalledMod, ...] = tuple()
+    sandbox_member_mods: tuple[InstalledMod, ...] = tuple()
+    grouped: bool = False
     note: str | None = None
 
 

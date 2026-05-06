@@ -431,6 +431,35 @@ class SandboxModsPromotionResult:
     inventory: ModsInventory
 
 
+CompareModsSyncDirection = Literal["real_to_sandbox", "sandbox_to_real"]
+
+
+@dataclass(frozen=True, slots=True)
+class CompareModsSyncPreview:
+    direction: CompareModsSyncDirection
+    plan: SandboxInstallPlan
+    review: InstallExecutionReview
+    real_mods_path: Path
+    sandbox_mods_path: Path
+    real_archive_path: Path
+    sandbox_archive_path: Path
+    source_mod_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CompareModsSyncResult:
+    direction: CompareModsSyncDirection
+    real_mods_path: Path
+    sandbox_mods_path: Path
+    real_archive_path: Path
+    sandbox_archive_path: Path
+    source_mod_paths: tuple[Path, ...]
+    synced_target_paths: tuple[Path, ...]
+    archived_target_paths: tuple[Path, ...]
+    replaced_target_paths: tuple[Path, ...]
+    compare_result: ModsCompareResult
+
+
 @dataclass(frozen=True, slots=True)
 class InstallTargetSafetyDecision:
     allowed: bool
@@ -2405,6 +2434,242 @@ class AppShellService:
             sandbox_mods_path=sandbox_mods_path,
             source_mod_paths=source_paths,
             synced_target_paths=tuple(synced_target_paths),
+        )
+
+    def build_compare_mods_sync_preview(
+        self,
+        *,
+        direction: CompareModsSyncDirection,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        source_mod_folder_path_text: str = "",
+        target_mod_folder_path_text: str = "",
+        source_mod_folder_path_texts: Iterable[str] = (),
+        target_mod_folder_path_texts: Iterable[str] = (),
+        existing_config: AppConfig | None = None,
+    ) -> CompareModsSyncPreview:
+        (
+            real_mods_path,
+            sandbox_mods_path,
+            real_archive_path,
+            sandbox_archive_path,
+            source_paths,
+            target_override_paths,
+            source_inventory,
+        ) = self._resolve_compare_mods_sync_context(
+            direction=direction,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            source_mod_folder_path_text=source_mod_folder_path_text,
+            target_mod_folder_path_text=target_mod_folder_path_text,
+            source_mod_folder_path_texts=source_mod_folder_path_texts,
+            target_mod_folder_path_texts=target_mod_folder_path_texts,
+            existing_config=existing_config,
+        )
+        archive_path = (
+            sandbox_archive_path if direction == "real_to_sandbox" else real_archive_path
+        )
+        target_mods_path = sandbox_mods_path if direction == "real_to_sandbox" else real_mods_path
+        destination_kind = (
+            INSTALL_TARGET_SANDBOX_MODS
+            if direction == "real_to_sandbox"
+            else INSTALL_TARGET_CONFIGURED_REAL_MODS
+        )
+        plan = self._build_compare_mods_sync_plan(
+            direction=direction,
+            source_mods_path=real_mods_path if direction == "real_to_sandbox" else sandbox_mods_path,
+            target_mods_path=target_mods_path,
+            archive_path=archive_path,
+            source_paths=source_paths,
+            source_inventory=source_inventory,
+            destination_kind=destination_kind,
+            target_override_paths=target_override_paths or None,
+        )
+        review = self.review_install_execution(plan)
+        return CompareModsSyncPreview(
+            direction=direction,
+            plan=plan,
+            review=review,
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            real_archive_path=real_archive_path,
+            sandbox_archive_path=sandbox_archive_path,
+            source_mod_paths=source_paths,
+        )
+
+    def execute_compare_mods_sync_preview(
+        self,
+        preview: CompareModsSyncPreview,
+    ) -> CompareModsSyncResult:
+        if not preview.review.allowed:
+            raise AppShellError(preview.review.message)
+
+        target_mods_path = (
+            preview.sandbox_mods_path
+            if preview.direction == "real_to_sandbox"
+            else preview.real_mods_path
+        )
+        archive_path = (
+            preview.sandbox_archive_path
+            if preview.direction == "real_to_sandbox"
+            else preview.real_archive_path
+        )
+        target_label = (
+            "sandbox Mods"
+            if preview.direction == "real_to_sandbox"
+            else "REAL Mods"
+        )
+        _ensure_archive_root_service(archive_path)
+        staging_root = target_mods_path / f".sdvmm-compare-sync-stage-{uuid4().hex[:10]}"
+        applied_entries: list[SandboxInstallPlanEntry] = []
+        installed_targets: list[Path] = []
+        archived_targets: list[Path] = []
+        replaced_targets: list[Path] = []
+        try:
+            staging_root.mkdir(parents=False, exist_ok=False)
+
+            for entry in preview.plan.entries:
+                staged_target = staging_root / entry.target_path.name
+                shutil.copytree(Path(entry.source_root_path), staged_target)
+
+            for entry in preview.plan.entries:
+                staged_target = staging_root / entry.target_path.name
+                if entry.action == INSTALL_NEW:
+                    try:
+                        staged_target.rename(entry.target_path)
+                    except OSError as exc:
+                        raise AppShellError(
+                            "Compare sync failed while creating a new "
+                            f"{target_label} target: {entry.target_path}: {exc}"
+                        ) from exc
+                    installed_targets.append(entry.target_path)
+                    applied_entries.append(entry)
+                    continue
+
+                if entry.action == OVERWRITE_WITH_ARCHIVE:
+                    if entry.archive_path is None:
+                        raise AppShellError(
+                            "Compare sync preview is invalid: overwrite entry is missing "
+                            f"archive path for {entry.target_path}."
+                        )
+                    try:
+                        _overwrite_target_with_archive_service(
+                            staged_target=staged_target,
+                            target_path=entry.target_path,
+                            archive_path=entry.archive_path,
+                        )
+                    except SandboxInstallError as exc:
+                        raise AppShellError(f"Compare sync failed: {exc}") from exc
+                    installed_targets.append(entry.target_path)
+                    archived_targets.append(entry.archive_path)
+                    replaced_targets.append(entry.target_path)
+                    applied_entries.append(entry)
+                    continue
+
+                raise AppShellError(
+                    f"Compare sync preview contains a blocked entry: {entry.target_path}"
+                )
+
+            real_inventory = _scan_inventory_with_archive_exclusions(
+                preview.real_mods_path,
+                archive_path=preview.real_archive_path,
+            )
+            sandbox_inventory = _scan_inventory_with_archive_exclusions(
+                preview.sandbox_mods_path,
+                archive_path=preview.sandbox_archive_path,
+            )
+            target_inventory = (
+                sandbox_inventory
+                if preview.direction == "real_to_sandbox"
+                else real_inventory
+            )
+            result = SandboxInstallResult(
+                plan=preview.plan,
+                installed_targets=tuple(sorted(installed_targets, key=lambda path: path.name.lower())),
+                archived_targets=tuple(sorted(archived_targets, key=lambda path: path.name.lower())),
+                scan_context_path=target_mods_path,
+                inventory=target_inventory,
+                destination_kind=preview.plan.destination_kind,
+            )
+            self._record_completed_install_operation(plan=preview.plan, result=result)
+        except (AppShellError, SandboxInstallError, OSError) as exc:
+            if not applied_entries:
+                raise _normalize_compare_sync_error(exc) from exc
+
+            rollback_errors = self._rollback_compare_mods_sync_entries(tuple(applied_entries))
+            (
+                remaining_entries,
+                remaining_installed_targets,
+                remaining_archived_targets,
+            ) = self._remaining_compare_mods_sync_state(tuple(applied_entries))
+            if not remaining_entries:
+                raise AppShellError(
+                    f"{_normalize_compare_sync_error(exc)} "
+                    "Compare sync rollback restored the prior inventory state."
+                ) from exc
+
+            partial_plan = replace(
+                preview.plan,
+                entries=remaining_entries,
+                plan_warnings=preview.plan.plan_warnings
+                + (
+                    "Partial compare sync failure left remaining inventory changes after rollback.",
+                    "Recovery inspection depends on this recorded partial compare sync state.",
+                ),
+            )
+            partial_record_error: AppShellError | None = None
+            try:
+                self._record_install_operation_state(
+                    plan=partial_plan,
+                    installed_targets=remaining_installed_targets,
+                    archived_targets=remaining_archived_targets,
+                )
+            except AppShellError as record_exc:
+                partial_record_error = record_exc
+
+            rollback_detail = ""
+            if rollback_errors:
+                rollback_detail = " Rollback details: " + "; ".join(rollback_errors)
+
+            if partial_record_error is None:
+                raise AppShellError(
+                    f"{_normalize_compare_sync_error(exc)} "
+                    "Compare sync rollback could not fully restore the prior inventory state. "
+                    "Remaining changes were recorded in install history for recovery inspection."
+                    f"{rollback_detail}"
+                ) from exc
+
+            raise AppShellError(
+                f"{_normalize_compare_sync_error(exc)} "
+                "Compare sync rollback could not fully restore the prior inventory state, and "
+                "recording partial install history failed. Manual recovery is required. "
+                f"Recording error: {partial_record_error}.{rollback_detail}"
+            ) from exc
+        finally:
+            if staging_root.exists():
+                shutil.rmtree(staging_root, ignore_errors=True)
+
+        compare_result = _build_mods_compare_result(
+            real_mods_path=preview.real_mods_path,
+            sandbox_mods_path=preview.sandbox_mods_path,
+            real_inventory=real_inventory,
+            sandbox_inventory=sandbox_inventory,
+        )
+        return CompareModsSyncResult(
+            direction=preview.direction,
+            real_mods_path=preview.real_mods_path,
+            sandbox_mods_path=preview.sandbox_mods_path,
+            real_archive_path=preview.real_archive_path,
+            sandbox_archive_path=preview.sandbox_archive_path,
+            source_mod_paths=preview.source_mod_paths,
+            synced_target_paths=tuple(sorted(installed_targets, key=lambda path: path.name.lower())),
+            archived_target_paths=tuple(sorted(archived_targets, key=lambda path: path.name.lower())),
+            replaced_target_paths=tuple(sorted(replaced_targets, key=lambda path: path.name.lower())),
+            compare_result=compare_result,
         )
 
     def set_sandbox_mod_enabled_state(
@@ -5893,6 +6158,116 @@ class AppShellService:
         )
         return real_mods_path, sandbox_mods_path, archive_path, source_paths, source_inventory
 
+    def _resolve_compare_mods_sync_context(
+        self,
+        *,
+        direction: CompareModsSyncDirection,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        source_mod_folder_path_text: str,
+        target_mod_folder_path_text: str,
+        source_mod_folder_path_texts: Iterable[str],
+        target_mod_folder_path_texts: Iterable[str],
+        existing_config: AppConfig | None,
+    ) -> tuple[Path, Path, Path, Path, tuple[Path, ...], dict[str, Path], ModsInventory]:
+        source_path_texts = tuple(str(path_text).strip() for path_text in source_mod_folder_path_texts if str(path_text).strip())
+        target_path_texts = tuple(str(path_text).strip() for path_text in target_mod_folder_path_texts if str(path_text).strip())
+        real_mods_path, sandbox_mods_path = self._resolve_distinct_real_and_sandbox_mods_paths(
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+            missing_real_message="Configured real Mods directory is required for Compare sync.",
+            missing_sandbox_message="Sandbox Mods directory is required for Compare sync.",
+            same_path_message=(
+                "Compare sync is blocked: sandbox Mods path matches the configured real Mods path."
+            ),
+        )
+        real_archive_path = self._resolve_archive_path_for_source(
+            source_kind=ARCHIVE_SOURCE_REAL,
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+        sandbox_archive_path = self._resolve_archive_path_for_source(
+            source_kind=ARCHIVE_SOURCE_SANDBOX,
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+
+        if direction == "real_to_sandbox":
+            source_paths = self._resolve_selected_mod_paths(
+                mods_path=real_mods_path,
+                selected_mod_folder_paths_text=source_path_texts or (source_mod_folder_path_text,),
+                empty_selection_message="Select at least one real-side Compare row folder to sync.",
+            )
+            source_inventory = scan_mods_directory(
+                real_mods_path,
+                excluded_paths=(real_mods_path / _LEGACY_ARCHIVE_DIRNAME,),
+            )
+            target_inventory = _scan_inventory_with_archive_exclusions(
+                sandbox_mods_path,
+                archive_path=sandbox_archive_path,
+            )
+            return (
+                real_mods_path,
+                sandbox_mods_path,
+                real_archive_path,
+                sandbox_archive_path,
+                source_paths,
+                self._resolve_compare_sync_target_overrides(
+                    source_paths=source_paths,
+                    target_paths=self._resolve_selected_mod_paths(
+                        mods_path=sandbox_mods_path,
+                        selected_mod_folder_paths_text=target_path_texts
+                        or ((target_mod_folder_path_text,) if target_mod_folder_path_text.strip() else ()),
+                        empty_selection_message="",
+                    ) if target_path_texts or target_mod_folder_path_text.strip() else tuple(),
+                    source_inventory=source_inventory,
+                    target_inventory=target_inventory,
+                ),
+                source_inventory,
+            )
+
+        source_paths = self._resolve_selected_mod_paths(
+            mods_path=sandbox_mods_path,
+            selected_mod_folder_paths_text=source_path_texts or (source_mod_folder_path_text,),
+            empty_selection_message="Select at least one sandbox-side Compare row folder to sync.",
+        )
+        source_inventory = scan_mods_directory(
+            sandbox_mods_path,
+            excluded_paths=(sandbox_mods_path / _LEGACY_ARCHIVE_DIRNAME,),
+        )
+        target_inventory = _scan_inventory_with_archive_exclusions(
+            real_mods_path,
+            archive_path=real_archive_path,
+        )
+        return (
+            real_mods_path,
+            sandbox_mods_path,
+            real_archive_path,
+            sandbox_archive_path,
+            source_paths,
+            self._resolve_compare_sync_target_overrides(
+                source_paths=source_paths,
+                target_paths=self._resolve_selected_mod_paths(
+                    mods_path=real_mods_path,
+                    selected_mod_folder_paths_text=target_path_texts
+                    or ((target_mod_folder_path_text,) if target_mod_folder_path_text.strip() else ()),
+                    empty_selection_message="",
+                ) if target_path_texts or target_mod_folder_path_text.strip() else tuple(),
+                source_inventory=source_inventory,
+                target_inventory=target_inventory,
+            ),
+            source_inventory,
+        )
+
     def _resolve_distinct_real_and_sandbox_mods_paths(
         self,
         *,
@@ -5921,6 +6296,83 @@ class AppShellService:
             raise AppShellError(same_path_message)
 
         return real_mods_path, sandbox_mods_path
+
+    def _resolve_compare_sync_target_overrides(
+        self,
+        *,
+        source_paths: tuple[Path, ...],
+        target_paths: tuple[Path, ...],
+        source_inventory: ModsInventory,
+        target_inventory: ModsInventory,
+    ) -> dict[str, Path]:
+        if not source_paths or not target_paths:
+            return {}
+
+        source_mods_by_path = {
+            str(mod.folder_path): mod
+            for mod in source_inventory.mods
+            if str(mod.folder_path) in {str(path) for path in source_paths}
+        }
+        target_mods_by_path = {
+            str(mod.folder_path): mod
+            for mod in target_inventory.mods
+            if str(mod.folder_path) in {str(path) for path in target_paths}
+        }
+        remaining_target_paths = list(target_paths)
+        overrides: dict[str, Path] = {}
+
+        target_paths_by_unique_id: dict[str, list[Path]] = {}
+        for target_path in target_paths:
+            target_mod = target_mods_by_path.get(str(target_path))
+            if target_mod is None:
+                continue
+            target_unique_id = canonicalize_unique_id(target_mod.unique_id)
+            if not target_unique_id:
+                continue
+            target_paths_by_unique_id.setdefault(target_unique_id, []).append(target_path)
+
+        for source_path in source_paths:
+            source_mod = source_mods_by_path.get(str(source_path))
+            if source_mod is None:
+                continue
+            source_unique_id = canonicalize_unique_id(source_mod.unique_id)
+            if not source_unique_id:
+                continue
+            matched_paths = target_paths_by_unique_id.get(source_unique_id, [])
+            if len(matched_paths) != 1:
+                continue
+            target_path = matched_paths[0]
+            if target_path not in remaining_target_paths:
+                continue
+            overrides[str(source_path)] = target_path
+            remaining_target_paths.remove(target_path)
+
+        unmatched_source_paths = [
+            path for path in source_paths if str(path) not in overrides
+        ]
+        for source_path in tuple(unmatched_source_paths):
+            source_mod = source_mods_by_path.get(str(source_path))
+            if source_mod is None:
+                continue
+            related_targets = [
+                candidate
+                for candidate in remaining_target_paths
+                if (
+                    (target_mod := target_mods_by_path.get(str(candidate))) is not None
+                    and _compare_mod_relationship_matches(source_mod, target_mod)
+                )
+            ]
+            if len(related_targets) != 1:
+                continue
+            target_path = related_targets[0]
+            overrides[str(source_path)] = target_path
+            remaining_target_paths.remove(target_path)
+
+        unmatched_source_paths = [path for path in source_paths if str(path) not in overrides]
+        if len(unmatched_source_paths) == 1 and len(remaining_target_paths) == 1:
+            overrides[str(unmatched_source_paths[0])] = remaining_target_paths[0]
+
+        return overrides
 
     def _build_sandbox_mods_promotion_plan(
         self,
@@ -6016,6 +6468,218 @@ class AppShellService:
             dependency_findings=tuple(),
             remote_requirements=tuple(),
             destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        )
+
+    def _build_compare_mods_sync_plan(
+        self,
+        *,
+        direction: CompareModsSyncDirection,
+        source_mods_path: Path,
+        target_mods_path: Path,
+        archive_path: Path,
+        source_paths: tuple[Path, ...],
+        source_inventory: ModsInventory,
+        destination_kind: InstallTargetKind,
+        target_override_paths: dict[str, Path] | None = None,
+    ) -> SandboxInstallPlan:
+        selected_mods_by_path = {
+            str(mod.folder_path): mod
+            for mod in source_inventory.mods
+            if str(mod.folder_path) in {str(path) for path in source_paths}
+        }
+        target_overrides = target_override_paths or {}
+        entries: list[SandboxInstallPlanEntry] = []
+        has_replace_entries = False
+        source_label = "real Mods" if direction == "real_to_sandbox" else "sandbox Mods"
+        target_label = "sandbox Mods" if direction == "real_to_sandbox" else "REAL Mods"
+
+        for source_path in source_paths:
+            target_path = target_overrides.get(str(source_path), target_mods_path / source_path.name)
+            target_exists = target_path.exists()
+            archive_target_path: Path | None = None
+            action = INSTALL_NEW
+            warnings = [
+                f"Explicit Compare sync will copy from {source_label} into {target_label}.",
+            ]
+            source_mod = selected_mods_by_path.get(str(source_path))
+            if source_mod is None:
+                manifest_result = parse_manifest_file(source_path / "manifest.json", source_path)
+                if manifest_result.manifest is None:
+                    raise AppShellError(
+                        "Could not resolve a manifest for the selected Compare sync source folder."
+                    )
+                source_name = manifest_result.manifest.name
+                source_unique_id = manifest_result.manifest.unique_id
+                source_version = manifest_result.manifest.version
+                source_manifest_path = str(source_path / "manifest.json")
+            else:
+                source_name = source_mod.name
+                source_unique_id = source_mod.unique_id
+                source_version = source_mod.version
+                source_manifest_path = str(source_mod.manifest_path)
+
+            if target_exists:
+                has_replace_entries = True
+                action = OVERWRITE_WITH_ARCHIVE
+                archive_target_path = _build_archive_destination_service(
+                    archive_root=archive_path,
+                    target_folder_name=target_path.name,
+                )
+                warnings.append(
+                    f"Existing {target_label} target will be archived before replacement."
+                )
+
+            entries.append(
+                SandboxInstallPlanEntry(
+                    name=source_name,
+                    unique_id=source_unique_id,
+                    version=source_version,
+                    source_package_path=source_path,
+                    source_manifest_path=source_manifest_path,
+                    source_root_path=str(source_path),
+                    target_path=target_path,
+                    action=action,
+                    target_exists=target_exists,
+                    archive_path=archive_target_path,
+                    can_install=True,
+                    warnings=tuple(warnings),
+                )
+            )
+
+        entries.sort(key=lambda item: (item.target_path.name.lower(), item.unique_id.casefold()))
+        plan_warnings = [
+            f"Compare sync writes into the {target_label} path.",
+        ]
+        if has_replace_entries:
+            plan_warnings.append(
+                f"Conflicting {target_label} targets will be archived before replacement."
+            )
+            plan_warnings.append(
+                "Recovery remains per-entry and depends on recorded archive history."
+            )
+
+        return SandboxInstallPlan(
+            package_path=_compare_sync_history_source_marker(
+                direction=direction,
+                source_mods_path=source_mods_path,
+                source_paths=source_paths,
+            ),
+            sandbox_mods_path=target_mods_path,
+            sandbox_archive_path=archive_path,
+            entries=tuple(entries),
+            package_findings=tuple(),
+            package_warnings=tuple(),
+            plan_warnings=tuple(plan_warnings),
+            dependency_findings=tuple(),
+            remote_requirements=tuple(),
+            destination_kind=destination_kind,
+        )
+
+    def _rollback_compare_mods_sync_entries(
+        self,
+        entries: tuple[SandboxInstallPlanEntry, ...],
+    ) -> tuple[str, ...]:
+        errors: list[str] = []
+        for entry in reversed(entries):
+            if entry.action == INSTALL_NEW:
+                if not entry.target_path.exists():
+                    continue
+                try:
+                    _remove_path_for_promotion_rollback(entry.target_path)
+                except OSError as exc:
+                    errors.append(
+                        f"could not remove synced target {entry.target_path}: {exc}"
+                    )
+                continue
+
+            if entry.action == OVERWRITE_WITH_ARCHIVE:
+                archive_path = entry.archive_path
+                if entry.target_path.exists():
+                    try:
+                        _remove_path_for_promotion_rollback(entry.target_path)
+                    except OSError as exc:
+                        errors.append(
+                            f"could not remove replaced target {entry.target_path}: {exc}"
+                        )
+                        continue
+
+                if archive_path is None:
+                    errors.append(
+                        f"missing archive path for rollback of {entry.target_path}"
+                    )
+                    continue
+                if not archive_path.exists():
+                    errors.append(
+                        f"archived target is missing for rollback of {entry.target_path}: "
+                        f"{archive_path}"
+                    )
+                    continue
+                try:
+                    archive_path.rename(entry.target_path)
+                except OSError as exc:
+                    errors.append(
+                        f"could not restore archived target {archive_path} -> "
+                        f"{entry.target_path}: {exc}"
+                    )
+        return tuple(errors)
+
+    def _remaining_compare_mods_sync_state(
+        self,
+        entries: tuple[SandboxInstallPlanEntry, ...],
+    ) -> tuple[
+        tuple[SandboxInstallPlanEntry, ...],
+        tuple[Path, ...],
+        tuple[Path, ...],
+    ]:
+        remaining_entries: list[SandboxInstallPlanEntry] = []
+        installed_targets: list[Path] = []
+        archived_targets: list[Path] = []
+
+        for entry in entries:
+            if entry.action == INSTALL_NEW:
+                if not entry.target_path.exists():
+                    continue
+                remaining_entries.append(
+                    replace(
+                        entry,
+                        warnings=entry.warnings
+                        + (
+                            "Partial compare sync failure: rollback did not remove this target.",
+                        ),
+                    )
+                )
+                installed_targets.append(entry.target_path)
+                continue
+
+            if entry.action != OVERWRITE_WITH_ARCHIVE:
+                continue
+
+            archive_exists = entry.archive_path is not None and entry.archive_path.exists()
+            target_exists = entry.target_path.exists()
+            if not archive_exists and not target_exists:
+                continue
+
+            remaining_entries.append(
+                replace(
+                    entry,
+                    warnings=entry.warnings
+                    + (
+                        "Partial compare sync failure: rollback did not fully restore this target.",
+                    ),
+                )
+            )
+            if target_exists:
+                installed_targets.append(entry.target_path)
+            if archive_exists and entry.archive_path is not None:
+                archived_targets.append(entry.archive_path)
+
+        remaining_entries.sort(
+            key=lambda item: (item.target_path.name.lower(), item.unique_id.casefold())
+        )
+        return (
+            tuple(remaining_entries),
+            tuple(sorted(installed_targets, key=lambda path: path.name.lower())),
+            tuple(sorted(archived_targets, key=lambda path: path.name.lower())),
         )
 
     def _rollback_sandbox_mods_promotion_entries(
@@ -9333,6 +9997,18 @@ def _promotion_history_source_marker(
     return sandbox_mods_path / ".sdvmm-sandbox-promotion-selection"
 
 
+def _compare_sync_history_source_marker(
+    *,
+    direction: CompareModsSyncDirection,
+    source_mods_path: Path,
+    source_paths: tuple[Path, ...],
+) -> Path:
+    if len(source_paths) == 1:
+        return source_paths[0]
+    suffix = "real-to-sandbox" if direction == "real_to_sandbox" else "sandbox-to-real"
+    return source_mods_path / f".sdvmm-compare-sync-{suffix}-selection"
+
+
 def _sorted_unique_ids(values: Iterable[str]) -> tuple[str, ...]:
     unique = {str(value) for value in values if str(value).strip()}
     return tuple(sorted(unique, key=str.casefold))
@@ -9345,38 +10021,103 @@ def _build_mods_compare_result(
     real_inventory: ModsInventory,
     sandbox_inventory: ModsInventory,
 ) -> ModsCompareResult:
-    real_groups = _group_installed_mods_for_compare(real_inventory.mods)
-    sandbox_groups = _group_installed_mods_for_compare(sandbox_inventory.mods)
-    all_keys = sorted(set(real_groups) | set(sandbox_groups), key=str.casefold)
+    real_groups = _build_compare_inventory_groups(
+        inventory=real_inventory,
+        root=real_mods_path,
+    )
+    sandbox_groups = _build_compare_inventory_groups(
+        inventory=sandbox_inventory,
+        root=sandbox_mods_path,
+    )
     entries: list[ModsCompareEntry] = []
+    real_matches: dict[int, set[int]] = {index: set() for index in range(len(real_groups))}
+    sandbox_matches: dict[int, set[int]] = {index: set() for index in range(len(sandbox_groups))}
+    for real_index, real_group in enumerate(real_groups):
+        for sandbox_index, sandbox_group in enumerate(sandbox_groups):
+            if not _compare_inventory_groups_match(real_group, sandbox_group):
+                continue
+            real_matches[real_index].add(sandbox_index)
+            sandbox_matches[sandbox_index].add(real_index)
 
-    for key in all_keys:
-        real_group = real_groups.get(key, tuple())
-        sandbox_group = sandbox_groups.get(key, tuple())
-        if len(real_group) > 1 or len(sandbox_group) > 1:
-            reference_mod = (real_group or sandbox_group)[0]
-            notes: list[str] = []
-            if len(real_group) > 1:
-                notes.append(f"real Mods has {len(real_group)} folders with this UniqueID")
-            if len(sandbox_group) > 1:
-                notes.append(f"sandbox Mods has {len(sandbox_group)} folders with this UniqueID")
+    visited_real: set[int] = set()
+    visited_sandbox: set[int] = set()
+    total_components = len(real_groups) + len(sandbox_groups)
+    for component_index in range(total_components):
+        queue: list[tuple[str, int]] = []
+        if component_index < len(real_groups):
+            if component_index in visited_real:
+                continue
+            queue.append(("real", component_index))
+        else:
+            sandbox_index = component_index - len(real_groups)
+            if sandbox_index in visited_sandbox:
+                continue
+            queue.append(("sandbox", sandbox_index))
+
+        component_real_indices: set[int] = set()
+        component_sandbox_indices: set[int] = set()
+        while queue:
+            side, index = queue.pop()
+            if side == "real":
+                if index in visited_real:
+                    continue
+                visited_real.add(index)
+                component_real_indices.add(index)
+                queue.extend(("sandbox", match_index) for match_index in real_matches[index])
+                continue
+            if index in visited_sandbox:
+                continue
+            visited_sandbox.add(index)
+            component_sandbox_indices.add(index)
+            queue.extend(("real", match_index) for match_index in sandbox_matches[index])
+
+        component_real_groups = tuple(real_groups[index] for index in sorted(component_real_indices))
+        component_sandbox_groups = tuple(
+            sandbox_groups[index] for index in sorted(component_sandbox_indices)
+        )
+        if not component_real_groups and not component_sandbox_groups:
+            continue
+
+        real_member_mods = tuple(
+            mod
+            for group in component_real_groups
+            for mod in group.member_mods
+        )
+        sandbox_member_mods = tuple(
+            mod
+            for group in component_sandbox_groups
+            for mod in group.member_mods
+        )
+        real_mod = component_real_groups[0].primary_mod if component_real_groups else None
+        sandbox_mod = component_sandbox_groups[0].primary_mod if component_sandbox_groups else None
+        reference_group = component_real_groups[0] if component_real_groups else component_sandbox_groups[0]
+        reference_mod = reference_group.primary_mod
+
+        ambiguous_notes: list[str] = []
+        if len(component_real_groups) > 1:
+            ambiguous_notes.append(
+                f"real Mods grouped {len(component_real_groups)} related families into this compare row"
+            )
+        if len(component_sandbox_groups) > 1:
+            ambiguous_notes.append(
+                f"sandbox Mods grouped {len(component_sandbox_groups)} related families into this compare row"
+            )
+        if ambiguous_notes:
             entries.append(
                 ModsCompareEntry(
-                    match_key=key,
+                    match_key=f"component:{reference_group.match_key}",
                     unique_id=reference_mod.unique_id,
-                    name=reference_mod.name,
+                    name=reference_group.display_name,
                     state="ambiguous_match",
-                    real_mod=real_group[0] if real_group else None,
-                    sandbox_mod=sandbox_group[0] if sandbox_group else None,
-                    note=". ".join(notes) + ".",
+                    real_mod=real_mod,
+                    sandbox_mod=sandbox_mod,
+                    real_member_mods=real_member_mods,
+                    sandbox_member_mods=sandbox_member_mods,
+                    grouped=(len(real_member_mods) > 1 or len(sandbox_member_mods) > 1),
+                    note=". ".join(ambiguous_notes) + ".",
                 )
             )
             continue
-
-        real_mod = real_group[0] if real_group else None
-        sandbox_mod = sandbox_group[0] if sandbox_group else None
-        reference_mod = real_mod or sandbox_mod
-        assert reference_mod is not None
 
         if real_mod is None:
             state = "only_in_sandbox"
@@ -9389,12 +10130,15 @@ def _build_mods_compare_result(
 
         entries.append(
             ModsCompareEntry(
-                match_key=key,
+                match_key=f"component:{reference_group.match_key}",
                 unique_id=reference_mod.unique_id,
-                name=reference_mod.name,
+                name=reference_group.display_name,
                 state=state,
                 real_mod=real_mod,
                 sandbox_mod=sandbox_mod,
+                real_member_mods=real_member_mods,
+                sandbox_member_mods=sandbox_member_mods,
+                grouped=(len(real_member_mods) > 1 or len(sandbox_member_mods) > 1),
             )
         )
 
@@ -9415,24 +10159,325 @@ def _build_mods_compare_result(
     )
 
 
-def _group_installed_mods_for_compare(
-    mods: tuple[InstalledMod, ...],
-) -> dict[str, tuple[InstalledMod, ...]]:
-    grouped: dict[str, list[InstalledMod]] = {}
-    for mod in mods:
-        key = canonicalize_unique_id(mod.unique_id)
-        if not key:
+@dataclass(frozen=True, slots=True)
+class _CompareInventoryGroup:
+    match_key: str
+    display_name: str
+    primary_mod: InstalledMod
+    member_mods: tuple[InstalledMod, ...]
+    order_index: int
+
+
+def _build_compare_inventory_groups(
+    *,
+    inventory: ModsInventory,
+    root: Path,
+) -> tuple[_CompareInventoryGroup, ...]:
+    indexed_mods = tuple(enumerate(inventory.mods))
+    row_by_path: dict[str, tuple[int, InstalledMod]] = {
+        _compare_inventory_path_lookup_key(mod.folder_path): (index, mod)
+        for index, mod in indexed_mods
+    }
+    grouped_rows: list[_CompareInventoryGroup] = []
+    consumed_mod_paths: set[str] = set()
+    expected_root_key = _compare_inventory_path_lookup_key(root)
+
+    for finding in inventory.scan_entry_findings:
+        if finding.kind not in {DIRECT_MOD, NESTED_MOD_CONTAINER, MULTI_MOD_CONTAINER}:
             continue
-        grouped.setdefault(key, []).append(mod)
-    return {
-        key: tuple(
-            sorted(
-                group,
-                key=lambda entry: (entry.name.casefold(), str(entry.folder_path).casefold()),
+        entry_path = Path(os.path.abspath(os.path.normpath(str(finding.entry_path.expanduser()))))
+        if _compare_inventory_path_lookup_key(entry_path.parent) != expected_root_key:
+            continue
+        matched_rows: list[tuple[int, InstalledMod]] = []
+        for mod_path in finding.mod_paths:
+            row = row_by_path.get(_compare_inventory_path_lookup_key(mod_path))
+            if row is None:
+                continue
+            matched_rows.append(row)
+        if not matched_rows:
+            continue
+        if finding.kind == DIRECT_MOD and len(matched_rows) == 1:
+            continue
+
+        member_mods = tuple(
+            mod
+            for _, mod in sorted(
+                matched_rows,
+                key=lambda entry: _compare_inventory_group_member_sort_key(entry[1]),
             )
         )
-        for key, group in grouped.items()
+        primary_mod = member_mods[0]
+        grouped_rows.append(
+            _CompareInventoryGroup(
+                match_key=_compare_inventory_group_match_key(member_mods),
+                display_name=_compare_inventory_group_display_name(member_mods),
+                primary_mod=primary_mod,
+                member_mods=member_mods,
+                order_index=min(index for index, _ in matched_rows),
+            )
+        )
+        consumed_mod_paths.update(
+            _compare_inventory_path_lookup_key(mod.folder_path) for mod in member_mods
+        )
+
+    top_level_candidates = [
+        (index, mod)
+        for index, mod in indexed_mods
+        if _compare_inventory_path_lookup_key(mod.folder_path) not in consumed_mod_paths
+        and _compare_inventory_path_lookup_key(mod.folder_path.parent) == expected_root_key
+    ]
+    adjacency: dict[str, set[str]] = {}
+    candidate_rows_by_key: dict[str, tuple[int, InstalledMod]] = {}
+    for candidate in top_level_candidates:
+        index, mod = candidate
+        mod_key = _compare_inventory_path_lookup_key(mod.folder_path)
+        candidate_rows_by_key[mod_key] = (index, mod)
+        adjacency.setdefault(mod_key, set())
+    candidate_keys = tuple(candidate_rows_by_key.keys())
+    for index, left_key in enumerate(candidate_keys):
+        _, left_mod = candidate_rows_by_key[left_key]
+        left_update_keys = _compare_inventory_effective_update_keys(left_mod)
+        for right_key in candidate_keys[index + 1 :]:
+            _, right_mod = candidate_rows_by_key[right_key]
+            right_update_keys = _compare_inventory_effective_update_keys(right_mod)
+            has_shared_update_key = bool(left_update_keys & right_update_keys)
+            has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
+            shares_base_name = (
+                _compare_inventory_group_base_name(left_mod).casefold()
+                == _compare_inventory_group_base_name(right_mod).casefold()
+            )
+            shares_family_identity = _compare_mods_share_family_identity(left_mod, right_mod)
+            has_direct_dependency_link = _compare_inventory_has_direct_dependency_link(left_mod, right_mod)
+            if not has_direct_dependency_link and not shares_family_identity:
+                continue
+            if not (
+                has_shared_update_key
+                or (has_single_sided_update_key and (shares_base_name or shares_family_identity))
+                or (not left_update_keys and not right_update_keys and shares_family_identity)
+            ):
+                continue
+            adjacency[left_key].add(right_key)
+            adjacency[right_key].add(left_key)
+
+    visited: set[str] = set()
+    for mod_key in candidate_keys:
+        if mod_key in visited:
+            continue
+        stack = [mod_key]
+        component: list[str] = []
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            component.append(current)
+            stack.extend(adjacency.get(current, ()))
+        if len(component) <= 1:
+            continue
+        matched_rows = [candidate_rows_by_key[key] for key in component]
+        member_mods = tuple(
+            mod
+            for _, mod in sorted(
+                matched_rows,
+                key=lambda entry: _compare_inventory_group_member_sort_key(entry[1]),
+            )
+        )
+        primary_mod = member_mods[0]
+        grouped_rows.append(
+            _CompareInventoryGroup(
+                match_key=_compare_inventory_group_match_key(member_mods),
+                display_name=_compare_inventory_group_display_name(member_mods),
+                primary_mod=primary_mod,
+                member_mods=member_mods,
+                order_index=min(index for index, _ in matched_rows),
+            )
+        )
+        consumed_mod_paths.update(
+            _compare_inventory_path_lookup_key(mod.folder_path) for mod in member_mods
+        )
+
+    for index, mod in indexed_mods:
+        mod_key = _compare_inventory_path_lookup_key(mod.folder_path)
+        if mod_key in consumed_mod_paths:
+            continue
+        grouped_rows.append(
+            _CompareInventoryGroup(
+                match_key=_compare_inventory_group_match_key((mod,)),
+                display_name=mod.name,
+                primary_mod=mod,
+                member_mods=(mod,),
+                order_index=index,
+            )
+        )
+
+    return tuple(sorted(grouped_rows, key=lambda entry: entry.order_index))
+
+
+def _compare_inventory_groups_match(
+    left: _CompareInventoryGroup,
+    right: _CompareInventoryGroup,
+) -> bool:
+    left_update_keys = {
+        update_key
+        for mod in left.member_mods
+        for update_key in _compare_inventory_effective_update_keys(mod)
     }
+    right_update_keys = {
+        update_key
+        for mod in right.member_mods
+        for update_key in _compare_inventory_effective_update_keys(mod)
+    }
+    if left_update_keys & right_update_keys:
+        return True
+
+    left_unique_ids = {
+        canonicalize_unique_id(mod.unique_id)
+        for mod in left.member_mods
+        if canonicalize_unique_id(mod.unique_id)
+    }
+    right_unique_ids = {
+        canonicalize_unique_id(mod.unique_id)
+        for mod in right.member_mods
+        if canonicalize_unique_id(mod.unique_id)
+    }
+    if left_unique_ids & right_unique_ids:
+        return True
+
+    for left_mod in left.member_mods:
+        for right_mod in right.member_mods:
+            if _compare_mod_relationship_matches(left_mod, right_mod):
+                return True
+    return False
+
+
+def _compare_mod_relationship_matches(left: InstalledMod, right: InstalledMod) -> bool:
+    shares_family_identity = _compare_mods_share_family_identity(left, right)
+    has_direct_dependency_link = _compare_inventory_has_direct_dependency_link(left, right)
+    if not shares_family_identity and not has_direct_dependency_link:
+        return False
+
+    left_update_keys = _compare_inventory_effective_update_keys(left)
+    right_update_keys = _compare_inventory_effective_update_keys(right)
+    has_shared_update_key = bool(left_update_keys & right_update_keys)
+    has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
+    shares_base_name = (
+        _compare_inventory_group_base_name(left).casefold()
+        == _compare_inventory_group_base_name(right).casefold()
+    )
+    return bool(
+        has_shared_update_key
+        or (has_single_sided_update_key and (shares_base_name or shares_family_identity))
+        or (not left_update_keys and not right_update_keys and shares_family_identity)
+    )
+
+
+def _compare_inventory_path_lookup_key(path: Path) -> str:
+    return os.path.abspath(os.path.normpath(str(path.expanduser()))).casefold()
+
+
+def _compare_inventory_group_member_sort_key(mod: InstalledMod) -> tuple[int, str, str]:
+    prefers_primary = 1 if mod.name.startswith("[") or mod.folder_path.name.startswith("[") else 0
+    return (prefers_primary, mod.name.casefold(), str(mod.folder_path).casefold())
+
+
+def _compare_inventory_group_base_name(mod: InstalledMod) -> str:
+    name = mod.name.strip()
+    while name.startswith("[") and "]" in name:
+        _, _, remainder = name.partition("]")
+        stripped = remainder.strip()
+        if not stripped:
+            break
+        name = stripped
+    suffix_start = name.rfind(" (")
+    if suffix_start > 0 and name.endswith(")"):
+        return name[:suffix_start].strip()
+    return name
+
+
+def _compare_inventory_group_display_name(member_mods: tuple[InstalledMod, ...]) -> str:
+    primary_mod = member_mods[0]
+    base_names = {
+        _compare_inventory_group_base_name(mod) for mod in member_mods if mod.name.strip()
+    }
+    if len(base_names) == 1:
+        primary_name = next(iter(base_names))
+    else:
+        primary_name = primary_mod.name
+    if len(member_mods) == 1:
+        return primary_name
+    return f"{primary_name} (+{len(member_mods) - 1} more)"
+
+
+def _compare_inventory_group_normalized_family_name(mod: InstalledMod) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _compare_inventory_group_base_name(mod).casefold())
+
+
+def _compare_mods_share_family_identity(left: InstalledMod, right: InstalledMod) -> bool:
+    left_id = canonicalize_unique_id(left.unique_id)
+    right_id = canonicalize_unique_id(right.unique_id)
+    if not left_id or not right_id:
+        return False
+    has_unique_id_family = left_id.startswith(f"{right_id}.") or right_id.startswith(f"{left_id}.")
+    if not has_unique_id_family:
+        return False
+
+    left_name = _compare_inventory_group_normalized_family_name(left)
+    right_name = _compare_inventory_group_normalized_family_name(right)
+    if not left_name or not right_name:
+        return False
+    return left_name.startswith(right_name) or right_name.startswith(left_name)
+
+
+def _compare_inventory_normalized_update_keys(mod: InstalledMod) -> set[str]:
+    return {key.strip().casefold() for key in mod.update_keys if key.strip()}
+
+
+def _compare_inventory_effective_update_keys(mod: InstalledMod) -> set[str]:
+    return {
+        key for key in _compare_inventory_normalized_update_keys(mod) if key != "nexus:-1"
+    }
+
+
+def _compare_inventory_has_direct_dependency_link(left: InstalledMod, right: InstalledMod) -> bool:
+    left_id = canonicalize_unique_id(left.unique_id)
+    right_id = canonicalize_unique_id(right.unique_id)
+    if not left_id or not right_id:
+        return False
+    left_deps = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in left.dependencies
+        if dependency.unique_id.strip()
+    }
+    right_deps = {
+        canonicalize_unique_id(dependency.unique_id)
+        for dependency in right.dependencies
+        if dependency.unique_id.strip()
+    }
+    return right_id in left_deps or left_id in right_deps
+
+
+def _compare_inventory_group_match_key(member_mods: tuple[InstalledMod, ...]) -> str:
+    update_keys = sorted(
+        {
+            update_key
+            for mod in member_mods
+            for update_key in _compare_inventory_effective_update_keys(mod)
+        }
+    )
+    if update_keys:
+        return f"update:{'|'.join(update_keys)}"
+
+    canonical_unique_ids = sorted(
+        {
+            canonicalize_unique_id(mod.unique_id)
+            for mod in member_mods
+            if canonicalize_unique_id(mod.unique_id)
+        }
+    )
+    if canonical_unique_ids:
+        return f"uid:{'|'.join(canonical_unique_ids)}"
+
+    return f"name:{_compare_inventory_group_display_name(member_mods).casefold()}"
 
 
 def _mods_compare_state_label(state: str) -> str:
@@ -9713,6 +10758,16 @@ def _normalize_sandbox_promotion_error(
     if isinstance(exc, SandboxInstallError):
         return AppShellError(f"Sandbox promotion failed: {exc}")
     return AppShellError(f"Sandbox promotion failed: {exc}")
+
+
+def _normalize_compare_sync_error(
+    exc: AppShellError | SandboxInstallError | OSError,
+) -> AppShellError:
+    if isinstance(exc, AppShellError):
+        return exc
+    if isinstance(exc, SandboxInstallError):
+        return AppShellError(f"Compare sync failed: {exc}")
+    return AppShellError(f"Compare sync failed: {exc}")
 
 
 def _remove_path_for_promotion_rollback(path: Path) -> None:
