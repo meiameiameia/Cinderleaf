@@ -17,6 +17,7 @@ from sdvmm.domain.package_codes import PackageFindingKind
 from sdvmm.domain.remote_requirement_codes import RemoteRequirementState
 from sdvmm.domain.scan_codes import ScanEntryKind
 from sdvmm.domain.smapi_log_codes import (
+    SMAPI_LOG_MISSING_DEPENDENCY,
     SmapiLogFindingKind,
     SmapiLogSourceKind,
     SmapiLogStatusState,
@@ -100,6 +101,7 @@ class SmapiUpdateStatus:
 AppUpdateState = Literal[
     "update_available",
     "up_to_date",
+    "newer_than_latest",
     "unable_to_determine",
 ]
 
@@ -178,6 +180,26 @@ class SmapiLogReport:
     @property
     def missing_dependency_target_count(self) -> int:
         return len(self.actionable_missing_dependency_targets)
+
+    @property
+    def missing_dependency_finding_count(self) -> int:
+        return sum(
+            1
+            for finding in self.findings
+            if finding.kind == SMAPI_LOG_MISSING_DEPENDENCY
+        )
+
+    @property
+    def has_unidentified_missing_dependencies(self) -> bool:
+        """The log reported missing dependencies we could not resolve to targets.
+
+        Reporting "no missing dependencies" in this state would be false
+        reassurance, so callers must distinguish it from a genuinely clean log.
+        """
+        return (
+            self.missing_dependency_finding_count > 0
+            and not self.actionable_missing_dependency_targets
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +281,7 @@ class ModManifest:
     version: str
     dependencies: tuple[ManifestDependency, ...]
     update_keys: tuple[str, ...] = tuple()
+    content_pack_for: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +307,7 @@ class InstalledMod:
     manifest_path: Path
     dependencies: tuple[ManifestDependency, ...]
     update_keys: tuple[str, ...] = tuple()
+    content_pack_for: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -706,12 +730,23 @@ InstallRecoveryActionCode = Literal[
 InstallRecoveryReviewDecisionCode = Literal[
     "removal_ready",
     "removal_target_missing",
+    "removal_target_changed",
     "restore_ready",
     "restore_archive_missing",
+    "restore_target_missing",
+    "restore_target_changed",
+    "restore_archive_changed",
     "entry_not_recoverable",
 ]
 
-RecoveryExecutionOutcome = Literal["completed", "failed", "failed_partial"]
+RecoveryExecutionOutcome = Literal[
+    "in_progress",
+    "completed",
+    "rolled_back",
+    "partial",
+    "failed",
+    "failed_partial",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -751,6 +786,24 @@ class SandboxInstallPlanEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class InstallPathSnapshot:
+    path: Path
+    resolved_path: Path
+    identity: tuple[int, int] | None
+    digest: str | None
+    ancestors: tuple[tuple[Path, int, int], ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
+class InstallPlanIntegrity:
+    packages: tuple[InstallPathSnapshot, ...]
+    targets: tuple[InstallPathSnapshot, ...]
+    mods_root: InstallPathSnapshot
+    archive_root: InstallPathSnapshot
+    manifests: tuple[InstallPathSnapshot, ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxInstallPlan:
     package_path: Path
     sandbox_mods_path: Path
@@ -763,6 +816,8 @@ class SandboxInstallPlan:
     remote_requirements: tuple[RemoteRequirementGuidance, ...] = tuple()
     destination_kind: str = "sandbox_mods"
     package_paths: tuple[Path, ...] = tuple()
+    integrity: InstallPlanIntegrity | None = None
+    protected_mods_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -816,6 +871,8 @@ class InstallOperationEntryRecord:
     target_exists_before: bool
     can_install: bool
     warnings: tuple[str, ...]
+    installed_target_digest: str | None = None
+    archived_target_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -829,6 +886,9 @@ class InstallOperationRecord:
     installed_targets: tuple[Path, ...]
     archived_targets: tuple[Path, ...]
     entries: tuple[InstallOperationEntryRecord, ...]
+    outcome_status: str = "completed"
+    failure_message: str | None = None
+    journal_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -847,6 +907,8 @@ class InstallRecoveryPlanEntry:
     recoverable: bool
     message: str
     warnings: tuple[str, ...] = tuple()
+    expected_target_digest: str | None = None
+    expected_archive_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -871,6 +933,8 @@ class InstallRecoveryExecutionReviewEntry:
     executable: bool
     decision_code: InstallRecoveryReviewDecisionCode
     message: str
+    target_snapshot: InstallPathSnapshot | None = None
+    archive_snapshot: InstallPathSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -903,6 +967,8 @@ class InstallRecoveryExecutionResult:
     destination_mods_path: Path
     scan_context_path: Path
     inventory: ModsInventory
+    retained_archive_paths: tuple[Path, ...] = tuple()
+    journal_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -927,6 +993,8 @@ class RecoveryExecutionRecord:
     restored_target_paths: tuple[Path, ...]
     outcome_status: RecoveryExecutionOutcome
     failure_message: str | None = None
+    retained_archive_paths: tuple[Path, ...] = tuple()
+    journal_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

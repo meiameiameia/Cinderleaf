@@ -11,7 +11,10 @@ from typing import Literal
 import pytest
 
 import sdvmm.app.shell_service as shell_service_module
+from sdvmm.app.i18n import LANGUAGE_PORTUGUESE_BRAZIL
+from sdvmm.app.i18n import UiLocalizer
 from sdvmm.app.i18n import get_active_ui_localizer
+from sdvmm.app.i18n import set_active_ui_localizer
 import sdvmm.services.sandbox_installer as sandbox_installer_module
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
@@ -79,6 +82,7 @@ from sdvmm.services.app_state_store import (
     save_update_source_intent_overlay,
     update_source_intent_overlay_file,
 )
+from sdvmm.services.install_integrity import snapshot_path
 
 
 def _assert_contains_any_casefold(text: str, *candidates: str) -> None:
@@ -1168,6 +1172,7 @@ def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp
         sandbox_mods_path=sandbox_mods,
         sandbox_archive_path=sandbox_archive,
         real_archive_path=real_archive,
+        nexus_api_key="secret-nexus-key",
     )
     save_app_config(state_file, config)
     save_app_config(state_file, config)
@@ -1284,15 +1289,24 @@ def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp
         "common per-mod config artifacts" in item
         for item in manifest["intentionally_not_included"]
     )
+    assert any(
+        "Nexus API credential" in item
+        for item in manifest["intentionally_not_included"]
+    )
     exported_config = load_app_config(result.bundle_path / "manager-state" / "app-state.json")
     assert exported_config is not None
     assert exported_config.mods_path == real_mods
     assert exported_config.sandbox_mods_path == sandbox_mods
     assert exported_config.real_archive_path == real_archive
     assert exported_config.sandbox_archive_path == sandbox_archive
+    assert exported_config.nexus_api_key is None
+    persisted_config = load_app_config(state_file)
+    assert persisted_config is not None
+    assert persisted_config.nexus_api_key == "secret-nexus-key"
     summary_text = result.summary_path.read_text(encoding="utf-8")
     assert "Cinderleaf backup export" in summary_text
     assert "Only the artifact groups selected in the export dialog are included" in summary_text
+    assert "The Nexus API credential" in summary_text
 
 
 def test_export_backup_bundle_can_create_zip_artifact(tmp_path: Path) -> None:
@@ -3526,7 +3540,7 @@ def test_get_sandbox_dev_launch_readiness_blocks_matching_real_mods_path(tmp_pat
     )
 
     assert readiness.ready is False
-    assert "matches the configured real Mods path" in readiness.message
+    assert "neither may contain the other" in readiness.message
 
 
 def test_launch_game_sandbox_dev_uses_smapi_with_sandbox_mods_override(
@@ -4589,7 +4603,7 @@ def test_build_sandbox_install_plan_blocks_target_matching_configured_real_mods(
 
     with pytest.raises(
         AppShellError,
-        match="(matches configured real Mods path|coincide com o caminho configurado dos Mods reais)",
+        match="neither may contain the other",
     ):
         service.build_sandbox_install_plan(
             str(package),
@@ -5219,6 +5233,81 @@ def test_review_install_execution_blocks_plan_with_blocked_entries(tmp_path: Pat
     assert _summary_action_counts(review.summary)[BLOCKED] == 1
 
 
+def test_review_install_execution_messages_are_localized_for_portuguese(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    blocked_plan = _summary_plan(
+        tmp_path,
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        entries=(
+            _summary_entry(
+                tmp_path,
+                name="Blocked Mod",
+                unique_id="Sample.Blocked",
+                action=BLOCKED,
+                can_install=False,
+                warnings=("Dependency missing.",),
+            ),
+        ),
+    )
+    real_plan = _summary_plan(
+        tmp_path,
+        destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        entries=(
+            _summary_entry(tmp_path, name="New Mod", unique_id="Sample.New", action=INSTALL_NEW),
+        ),
+    )
+
+    set_active_ui_localizer(UiLocalizer.from_preference(LANGUAGE_PORTUGUESE_BRAZIL))
+
+    blocked_review = service.review_install_execution(blocked_plan)
+    real_review = service.review_install_execution(real_plan)
+
+    # These two messages reach the status strip and the Details dump, so English
+    # here is a visible language leak on the primary install screen.
+    assert blocked_review.decision_code == "blocked_entries_present"
+    assert blocked_review.message.startswith("O plano de instalação está bloqueado:")
+    assert "1 entrada não pode ser executada" in blocked_review.message
+    assert "Install plan is blocked" not in blocked_review.message
+
+    assert real_review.decision_code == "real_approval_required"
+    assert real_review.message.startswith("A instalação nos Mods reais afeta")
+    assert "confirmação explícita" in real_review.message
+    assert "Explicit approval is required" not in real_review.message
+
+
+def test_review_install_execution_blocked_message_uses_real_plurals(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    plan = _summary_plan(
+        tmp_path,
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        entries=(
+            _summary_entry(
+                tmp_path,
+                name="Blocked One",
+                unique_id="Sample.BlockedOne",
+                action=BLOCKED,
+                can_install=False,
+                warnings=("Dependency missing.",),
+            ),
+            _summary_entry(
+                tmp_path,
+                name="Blocked Two",
+                unique_id="Sample.BlockedTwo",
+                action=BLOCKED,
+                can_install=False,
+                warnings=("Dependency missing.",),
+            ),
+        ),
+    )
+
+    review = service.review_install_execution(plan)
+
+    assert "2 entries cannot be executed" in review.message
+    assert "(s)" not in review.message
+
+
 def test_review_install_execution_allows_mixed_action_plan_when_no_entries_blocked(
     tmp_path: Path,
 ) -> None:
@@ -5455,10 +5544,13 @@ def test_execute_sandbox_install_plan_surfaces_install_history_recording_failure
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
     )
 
-    with pytest.raises(AppShellError, match="Install completed, but recording install history failed"):
+    with pytest.raises(AppShellError, match="Installation stopped before changing any Mods"):
         service.execute_sandbox_install_plan(plan)
 
-    assert (sandbox / "Mod" / "file.txt").read_text(encoding="utf-8") == "hello"
+    assert not (sandbox / "Mod").exists()
+    journals = list(archive_root.glob(".sdvmm-install-*.json"))
+    assert len(journals) == 1
+    assert json.loads(journals[0].read_text(encoding="utf-8"))["status"] == "rolled_back"
     assert service.load_install_operation_history().operations == tuple()
 
 
@@ -7380,6 +7472,7 @@ def test_review_install_recovery_execution_allows_existing_remove_target(
     tmp_path: Path,
 ) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
+    _create_mod(tmp_path / "SandboxMods", "New Mod", "Sample.New")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7392,7 +7485,6 @@ def test_review_install_recovery_execution_allows_existing_remove_target(
         ),
     )
     recovery_plan = service.derive_install_operation_recovery_plan(operation)
-    recovery_plan.entries[0].target_path.mkdir(parents=True, exist_ok=True)
 
     review = service.review_install_recovery_execution(recovery_plan)
 
@@ -7431,14 +7523,16 @@ def test_review_install_recovery_execution_marks_missing_remove_target_stale(
     assert review.summary.non_executable_entry_count == 1
     assert review.summary.stale_entry_count == 1
     assert review.entries[0].decision_code == "removal_target_missing"
-    assert "Removal target is missing" in review.entries[0].message
+    assert "installed mod folder is missing" in review.entries[0].message
 
 
 def test_review_install_recovery_execution_allows_existing_archive_restore_source(
     tmp_path: Path,
 ) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
-    archive_path = tmp_path / "Archive" / "Existing Mod-old"
+    archive_path = tmp_path / "SandboxArchive" / "Existing Mod-old"
+    _create_mod(tmp_path / "SandboxMods", "Existing Mod", "Sample.Exists")
+    _create_archived_entry(archive_path, unique_id="Sample.Exists", version="0.9.0")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7453,7 +7547,6 @@ def test_review_install_recovery_execution_allows_existing_archive_restore_sourc
         archived_targets=(archive_path,),
     )
     recovery_plan = service.derive_install_operation_recovery_plan(operation)
-    archive_path.mkdir(parents=True, exist_ok=True)
 
     review = service.review_install_recovery_execution(recovery_plan)
 
@@ -7470,7 +7563,8 @@ def test_review_install_recovery_execution_marks_missing_archive_restore_source_
     tmp_path: Path,
 ) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
-    archive_path = tmp_path / "Archive" / "Missing-old"
+    archive_path = tmp_path / "SandboxArchive" / "Missing-old"
+    _create_mod(tmp_path / "SandboxMods", "Existing Mod", "Sample.Exists")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7493,14 +7587,16 @@ def test_review_install_recovery_execution_marks_missing_archive_restore_source_
     assert review.summary.non_executable_entry_count == 1
     assert review.summary.stale_entry_count == 1
     assert review.entries[0].decision_code == "restore_archive_missing"
-    assert "Archive source is missing" in review.entries[0].message
+    assert "original archived copy is missing" in review.entries[0].message
 
 
 def test_review_install_recovery_execution_reports_mixed_counts_and_blocked_state(
     tmp_path: Path,
 ) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
-    archive_path = tmp_path / "Archive" / "Existing Mod-old"
+    archive_path = tmp_path / "SandboxArchive" / "Existing Mod-old"
+    _create_mod(tmp_path / "SandboxMods", "New Mod", "Sample.New")
+    _create_mod(tmp_path / "SandboxMods", "Existing Mod", "Sample.Exists")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7529,7 +7625,6 @@ def test_review_install_recovery_execution_reports_mixed_counts_and_blocked_stat
         archived_targets=(archive_path,),
     )
     recovery_plan = service.derive_install_operation_recovery_plan(operation)
-    recovery_plan.entries[0].target_path.mkdir(parents=True, exist_ok=True)
 
     review = service.review_install_recovery_execution(recovery_plan)
 
@@ -7541,7 +7636,7 @@ def test_review_install_recovery_execution_reports_mixed_counts_and_blocked_stat
     assert review.summary.stale_entry_count == 1
     assert review.summary.involves_archive_restore is False
     assert len(review.summary.warnings) == 2
-    assert any("Archive source is missing" in warning for warning in review.summary.warnings)
+    assert any("original archived copy is missing" in warning for warning in review.summary.warnings)
     assert any("not safely recoverable" in warning for warning in review.summary.warnings)
 
 
@@ -7629,6 +7724,9 @@ def test_execute_install_recovery_review_removes_existing_target(tmp_path: Path)
     assert result.executed_entry_count == 1
     assert result.removed_target_paths == (target_path,)
     assert result.restored_target_paths == tuple()
+    assert len(result.retained_archive_paths) == 1
+    assert result.retained_archive_paths[0].exists()
+    assert result.journal_path is not None and result.journal_path.exists()
     assert result.destination_kind == INSTALL_TARGET_SANDBOX_MODS
     assert result.destination_mods_path == destination_mods
     assert result.scan_context_path == destination_mods
@@ -7645,6 +7743,8 @@ def test_execute_install_recovery_review_removes_existing_target(tmp_path: Path)
     assert history.operations[0].executed_entry_count == 1
     assert history.operations[0].removed_target_paths == (target_path,)
     assert history.operations[0].restored_target_paths == tuple()
+    assert history.operations[0].retained_archive_paths == result.retained_archive_paths
+    assert history.operations[0].journal_path == result.journal_path
     assert history.operations[0].failure_message is None
 
 
@@ -7671,17 +7771,23 @@ def test_execute_install_recovery_review_surfaces_completed_recording_failure(
     )
     recovery_plan = service.derive_install_operation_recovery_plan(operation)
     review = service.review_install_recovery_execution(recovery_plan)
-    monkeypatch.setattr(
-        shell_service_module,
-        "append_recovery_execution_record",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
-    )
+    original_save = shell_service_module.save_recovery_execution_history
 
-    with pytest.raises(AppShellError, match="Recovery completed, but recording recovery history failed"):
+    def fail_completed_record(path, history):
+        if history.operations[-1].outcome_status == "completed":
+            raise AppStateStoreError("disk full")
+        original_save(path, history)
+
+    monkeypatch.setattr(shell_service_module, "save_recovery_execution_history", fail_completed_record)
+
+    with pytest.raises(AppShellError, match="Recovery stopped and could not be fully rolled back"):
         service.execute_install_recovery_review(review)
 
     assert target_path.exists() is False
-    assert service.load_recovery_execution_history().operations == tuple()
+    record, = service.load_recovery_execution_history().operations
+    assert record.outcome_status == "partial"
+    assert len(record.retained_archive_paths) == 1
+    assert record.retained_archive_paths[0].exists()
 
 
 def test_execute_install_recovery_review_restores_existing_archive_source(tmp_path: Path) -> None:
@@ -7695,6 +7801,7 @@ def test_execute_install_recovery_review_restores_existing_archive_source(tmp_pa
         unique_id="Sample.Exists",
         version="1.0.0",
     )
+    current_target = _create_mod(destination_mods, "Existing Mod", "Sample.Exists")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7718,6 +7825,9 @@ def test_execute_install_recovery_review_restores_existing_archive_source(tmp_pa
     assert result.restored_target_paths == (restored_target,)
     assert restored_target.exists() is True
     assert archived_path.exists() is False
+    assert current_target in result.restored_target_paths
+    assert len(result.retained_archive_paths) == 1
+    assert result.retained_archive_paths[0].exists()
     assert len(result.inventory.mods) == 1
     assert result.inventory.mods[0].unique_id == "Sample.Exists"
 
@@ -7742,6 +7852,7 @@ def test_execute_install_recovery_review_runs_mixed_executable_plan(tmp_path: Pa
         unique_id="Sample.Exists",
         version="1.0.0",
     )
+    _create_mod(destination_mods, "Existing Mod", "Sample.Exists")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7773,62 +7884,12 @@ def test_execute_install_recovery_review_runs_mixed_executable_plan(tmp_path: Pa
     assert result.destination_mods_path == destination_mods
     assert removable_target.exists() is False
     assert restored_target.exists() is True
+    assert len(result.retained_archive_paths) == 2
     assert len(result.inventory.mods) == 1
     assert result.inventory.mods[0].unique_id == "Sample.Exists"
 
 
-def test_execute_install_recovery_review_records_partial_failure_after_first_action(
-    tmp_path: Path,
-) -> None:
-    service = AppShellService(state_file=tmp_path / "app-state.json")
-    destination_mods = tmp_path / "SandboxMods"
-    archive_root = tmp_path / "SandboxArchive"
-    destination_mods.mkdir()
-    archive_root.mkdir()
-    removable_target = _create_mod(destination_mods, "New Mod", "Sample.New")
-    archived_path = _create_archived_entry(
-        archive_root / "Existing Mod__sdvmm_archive_001",
-        unique_id="Sample.Exists",
-        version="1.0.0",
-    )
-    _create_mod(destination_mods, "Existing Mod", "Sample.DestinationConflict")
-    operation = _install_operation_record(
-        tmp_path,
-        entries=(
-            _install_operation_entry(
-                tmp_path,
-                name="New Mod",
-                unique_id="Sample.New",
-                action=INSTALL_NEW,
-            ),
-            _install_operation_entry(
-                tmp_path,
-                name="Existing Mod",
-                unique_id="Sample.Exists",
-                action=OVERWRITE_WITH_ARCHIVE,
-                archive_path=archived_path,
-            ),
-        ),
-    )
-    recovery_plan = service.derive_install_operation_recovery_plan(operation)
-    review = service.review_install_recovery_execution(recovery_plan)
-
-    with pytest.raises(AppShellError, match="Restore target already exists"):
-        service.execute_install_recovery_review(review)
-
-    history = service.load_recovery_execution_history()
-    assert len(history.operations) == 1
-    assert history.operations[0].recovery_execution_id is not None
-    assert history.operations[0].related_install_operation_id == operation.operation_id
-    assert history.operations[0].outcome_status == "failed_partial"
-    assert history.operations[0].executed_entry_count == 1
-    assert history.operations[0].removed_target_paths == (removable_target,)
-    assert history.operations[0].restored_target_paths == tuple()
-    assert history.operations[0].failure_message is not None
-    assert "Restore target already exists" in history.operations[0].failure_message
-
-
-def test_execute_install_recovery_review_surfaces_partial_change_recording_failure(
+def test_execute_install_recovery_review_rolls_back_first_action_when_second_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7843,7 +7904,7 @@ def test_execute_install_recovery_review_surfaces_partial_change_recording_failu
         unique_id="Sample.Exists",
         version="1.0.0",
     )
-    _create_mod(destination_mods, "Existing Mod", "Sample.DestinationConflict")
+    existing_target = _create_mod(destination_mods, "Existing Mod", "Sample.Exists")
     operation = _install_operation_record(
         tmp_path,
         entries=(
@@ -7864,21 +7925,93 @@ def test_execute_install_recovery_review_surfaces_partial_change_recording_failu
     )
     recovery_plan = service.derive_install_operation_recovery_plan(operation)
     review = service.review_install_recovery_execution(recovery_plan)
-    monkeypatch.setattr(
-        shell_service_module,
-        "append_recovery_execution_record",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
-    )
+    original_rename = Path.rename
 
-    with pytest.raises(
-        AppShellError,
-        match="Recovery failed after filesystem changes, and recording recovery history also failed",
-    ):
+    def fail_archive_restore(path, destination):
+        if path == archived_path and Path(destination) == existing_target:
+            raise OSError("synthetic second recovery failure")
+        return original_rename(path, destination)
+
+    monkeypatch.setattr(Path, "rename", fail_archive_restore)
+
+    with pytest.raises(AppShellError, match="All changes from this recovery attempt were rolled back"):
         service.execute_install_recovery_review(review)
 
-    assert removable_target.exists() is False
+    history = service.load_recovery_execution_history()
+    assert len(history.operations) == 1
+    assert history.operations[0].recovery_execution_id is not None
+    assert history.operations[0].related_install_operation_id == operation.operation_id
+    assert history.operations[0].outcome_status == "rolled_back"
+    assert history.operations[0].executed_entry_count == 0
+    assert history.operations[0].removed_target_paths == tuple()
+    assert history.operations[0].restored_target_paths == tuple()
+    assert history.operations[0].failure_message is not None
+    assert "synthetic second recovery failure" in history.operations[0].failure_message
+    assert removable_target.exists()
+    assert existing_target.exists()
+    assert archived_path.exists()
+
+
+def test_execute_install_recovery_review_preserves_files_when_rollback_recording_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    destination_mods = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    destination_mods.mkdir()
+    archive_root.mkdir()
+    removable_target = _create_mod(destination_mods, "New Mod", "Sample.New")
+    archived_path = _create_archived_entry(
+        archive_root / "Existing Mod__sdvmm_archive_001",
+        unique_id="Sample.Exists",
+        version="1.0.0",
+    )
+    existing_target = _create_mod(destination_mods, "Existing Mod", "Sample.Exists")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="New Mod",
+                unique_id="Sample.New",
+                action=INSTALL_NEW,
+            ),
+            _install_operation_entry(
+                tmp_path,
+                name="Existing Mod",
+                unique_id="Sample.Exists",
+                action=OVERWRITE_WITH_ARCHIVE,
+                archive_path=archived_path,
+            ),
+        ),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    review = service.review_install_recovery_execution(recovery_plan)
+    original_rename = Path.rename
+    original_save = shell_service_module.save_recovery_execution_history
+
+    def fail_archive_restore(path, destination):
+        if path == archived_path and Path(destination) == existing_target:
+            raise OSError("synthetic second recovery failure")
+        return original_rename(path, destination)
+
+    def fail_rolled_back_record(path, history):
+        if history.operations[-1].outcome_status == "rolled_back":
+            raise AppStateStoreError("disk full")
+        original_save(path, history)
+
+    monkeypatch.setattr(Path, "rename", fail_archive_restore)
+    monkeypatch.setattr(shell_service_module, "save_recovery_execution_history", fail_rolled_back_record)
+
+    with pytest.raises(AppShellError, match="All changes from this recovery attempt were rolled back"):
+        service.execute_install_recovery_review(review)
+
+    assert removable_target.exists()
+    assert existing_target.exists()
     assert archived_path.exists() is True
-    assert service.load_recovery_execution_history().operations == tuple()
+    record, = service.load_recovery_execution_history().operations
+    assert record.outcome_status == "in_progress"
 
 
 def test_build_sandbox_plan_defaults_archive_path_when_empty(tmp_path: Path) -> None:
@@ -7965,6 +8098,36 @@ def test_check_updates_applies_smapi_update_alert_for_missing_source_mod(tmp_pat
     assert status.remote_link.page_url == "https://www.nexusmods.com/stardewvalley/mods/45283"
 
 
+class _NoMatchSmapiFallbackFetcher:
+    """Deterministic stand-in for the network fetcher.
+
+    With no Nexus API key configured, the Nexus provider now falls back to
+    SMAPI's keyless mods endpoint (see NexusProviderAdapter.fetch_payload)
+    instead of giving up immediately. This stub simulates that fallback
+    genuinely having no data for the mod, so the check still resolves
+    deterministically to "metadata_unavailable" without ever touching the
+    real network.
+    """
+
+    def fetch_json(
+        self,
+        url: str,
+        timeout_seconds: float,
+        headers=None,
+    ) -> dict[str, object]:
+        raise AssertionError(f"unexpected direct fetch_json call for {url}")
+
+    def post_json(
+        self,
+        url: str,
+        payload,
+        timeout_seconds: float,
+        headers=None,
+    ) -> dict[str, object]:
+        mod_id = payload["mods"][0]["id"]
+        return {"mods": [{"id": mod_id}]}
+
+
 def test_check_updates_marks_metadata_unavailable_for_nexus_link(
     tmp_path: Path,
     mods_case_path,
@@ -7974,13 +8137,14 @@ def test_check_updates_marks_metadata_unavailable_for_nexus_link(
     service = AppShellService(state_file=tmp_path / "app-state.json")
     inventory = service.scan(str(mods_case_path("update_keys_manifest")))
 
-    report = service.check_updates(inventory)
+    report = service.check_updates(inventory, fetcher=_NoMatchSmapiFallbackFetcher())
 
     assert len(report.statuses) == 1
     assert report.statuses[0].state == "metadata_unavailable"
     assert report.statuses[0].remote_link is not None
     assert report.statuses[0].remote_link.provider == "nexus"
-    assert "[missing_api_key]" in (report.statuses[0].message or "")
+    assert "[unexpected_provider_response]" in (report.statuses[0].message or "")
+    assert "SMAPI fallback" in (report.statuses[0].message or "")
 
 
 def test_check_updates_passes_resolved_nexus_key_to_metadata_service(
@@ -9232,18 +9396,29 @@ def _install_operation_entry(
     can_install: bool = True,
     warnings: tuple[str, ...] = tuple(),
 ) -> InstallOperationEntryRecord:
+    target_path = tmp_path / "SandboxMods" / name
+    target_digest = snapshot_path(target_path).digest if target_path.exists() else "recorded-target-digest"
+    archive_digest = (
+        snapshot_path(archive_path).digest
+        if archive_path is not None and archive_path.exists()
+        else "recorded-archive-digest"
+        if archive_path is not None
+        else None
+    )
     return InstallOperationEntryRecord(
         name=name,
         unique_id=unique_id,
         version="1.0.0",
         action=action,
-        target_path=tmp_path / "SandboxMods" / name,
+        target_path=target_path,
         archive_path=archive_path,
         source_manifest_path=str(tmp_path / "package" / name / "manifest.json"),
         source_root_path=str(tmp_path / "package" / name),
         target_exists_before=action == OVERWRITE_WITH_ARCHIVE,
         can_install=can_install,
         warnings=warnings,
+        installed_target_digest=target_digest,
+        archived_target_digest=archive_digest,
     )
 
 

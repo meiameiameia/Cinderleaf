@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -425,7 +426,7 @@ def test_load_install_operation_history_without_ids_still_loads_compatibly(tmp_p
     history_file.write_text(
         json.dumps(
             {
-                "version": INSTALL_OPERATION_HISTORY_VERSION,
+                "version": 1,
                 "operations": [
                     {
                         "timestamp": "2026-03-13T12:00:00Z",
@@ -465,7 +466,11 @@ def test_load_install_operation_history_without_ids_still_loads_compatibly(tmp_p
 
 def test_recovery_execution_history_round_trip(tmp_path: Path) -> None:
     history_file = tmp_path / "state" / RECOVERY_EXECUTION_HISTORY_FILENAME
-    operation = _recovery_execution_record(tmp_path)
+    operation = replace(
+        _recovery_execution_record(tmp_path),
+        retained_archive_paths=(tmp_path / "SandboxArchive" / "SampleMod__sdvmm_archive_002",),
+        journal_path=tmp_path / "SandboxArchive" / ".sdvmm-recovery-test.json",
+    )
     history = RecoveryExecutionHistory(operations=(operation,))
 
     save_recovery_execution_history(history_file, history)
@@ -479,6 +484,23 @@ def test_recovery_execution_history_round_trip(tmp_path: Path) -> None:
     assert payload["operations"][0]["related_install_operation_id"] == operation.related_install_operation_id
     assert payload["operations"][0]["destination_kind"] == operation.destination_kind
     assert payload["operations"][0]["outcome_status"] == "completed"
+    assert payload["operations"][0]["retained_archive_paths"] == [
+        str(operation.retained_archive_paths[0])
+    ]
+    assert payload["operations"][0]["journal_path"] == str(operation.journal_path)
+
+
+def test_recovery_execution_history_v1_loads_without_new_recovery_fields(tmp_path: Path) -> None:
+    history_file = tmp_path / RECOVERY_EXECUTION_HISTORY_FILENAME
+    operation = _recovery_execution_record(tmp_path)
+    save_recovery_execution_history(history_file, RecoveryExecutionHistory((operation,)))
+    payload = json.loads(history_file.read_text(encoding="utf-8"))
+    payload["version"] = 1
+    payload["operations"][0].pop("retained_archive_paths")
+    payload["operations"][0].pop("journal_path")
+    history_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert load_recovery_execution_history(history_file) == RecoveryExecutionHistory((operation,))
 
 
 def test_remote_metadata_cache_round_trip(tmp_path: Path) -> None:
@@ -745,6 +767,8 @@ def _install_operation_record(tmp_path: Path, *, package_name: str = "sample.zip
                 target_exists_before=False,
                 can_install=True,
                 warnings=tuple(),
+                installed_target_digest="installed-digest",
+                archived_target_digest=None,
             ),
         ),
     )

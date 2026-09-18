@@ -18,6 +18,7 @@ import zipfile
 
 from sdvmm.app.i18n import get_active_ui_localizer
 from sdvmm.domain.models import (
+    InstallPathSnapshot,
     ArchivedModEntry,
     ArchiveCleanupPlan,
     ArchiveCleanupResult,
@@ -122,6 +123,7 @@ from sdvmm.services.app_state_store import (
     recovery_execution_history_file,
     remote_metadata_cache_file,
     save_install_operation_history,
+    save_recovery_execution_history,
     save_real_mod_profile_catalog,
     sandbox_mod_profile_catalog_file,
     save_app_config,
@@ -152,6 +154,7 @@ from sdvmm.services.dependency_preflight import (
     summarize_missing_required_dependencies,
 )
 from sdvmm.services.sandbox_installer import (
+    InstallTransactionState,
     SandboxFileLockError,
     SandboxInstallError,
     _build_archive_destination as _build_archive_destination_service,
@@ -160,6 +163,15 @@ from sdvmm.services.sandbox_installer import (
     build_sandbox_install_plan as build_sandbox_install_plan_service,
     execute_sandbox_install_plan as execute_sandbox_install_plan_service,
     remove_mod_to_archive as remove_mod_to_archive_service,
+)
+from sdvmm.services.install_integrity import (
+    paths_overlap, validate_integrity, InstallIntegrityError, snapshot_manifest_context,
+    snapshot_path,
+)
+from sdvmm.services.install_recovery import (
+    InstallRecoveryTransactionError,
+    RecoveryTransactionState,
+    execute_install_recovery_transaction,
 )
 from sdvmm.services.archive_manager import (
     allocate_archive_destination,
@@ -170,6 +182,7 @@ from sdvmm.services.archive_manager import (
     restore_archived_mod_entry,
 )
 from sdvmm.services.update_metadata import (
+    JsonMetadataFetcher,
     check_updates_for_inventory_with_cache,
     NEXUS_API_KEY_ENV,
     check_nexus_connection,
@@ -263,6 +276,8 @@ class _InstallPlanRuntime:
     destination_mods_path: Path
     destination_archive_path: Path
     installed_inventory: ModsInventory
+    protected_mods_path: Path | None = None
+    manifest_context: tuple[InstallPathSnapshot, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)
@@ -816,6 +831,7 @@ class AppShellService:
             install_target=install_target,
             existing_config=existing_config,
         )
+        backup_config = replace(export_config, nexus_api_key=None)
 
         real_mods_source = self._resolve_existing_export_source(
             export_config.mods_path,
@@ -1006,7 +1022,7 @@ class AppShellService:
             if selection.include_manager_state:
                 save_app_config(
                     export_work_root / "manager-state" / self._state_file.name,
-                    export_config,
+                    backup_config,
                 )
             for item in plan:
                 if item.key == "app_state":
@@ -1171,6 +1187,16 @@ class AppShellService:
     ) -> RestoreImportExecutionReview:
         return _build_restore_import_execution_review(planning_result)
 
+    def restore_import_execution_write_targets(
+        self,
+        planning_result: RestoreImportPlanningResult,
+    ) -> tuple[tuple[Path, Path | None], ...]:
+        """Paths a reviewed restore/import writes, each with its archive destination if replaced."""
+        mod_actions, config_actions, _ = _build_restore_import_execution_actions(planning_result)
+        return tuple(
+            (action.destination_path, action.archive_destination_path) for action in mod_actions
+        ) + tuple((action.destination_path, None) for action in config_actions)
+
     def execute_restore_import(
         self,
         planning_result: RestoreImportPlanningResult,
@@ -1317,6 +1343,9 @@ class AppShellService:
             _derive_install_operation_recovery_entry(operation, entry)
             for entry in operation.entries
         )
+        if operation.outcome_status != "completed":
+            entries = tuple(replace(entry, action="not_recoverable", recoverable=False,
+                message=get_active_ui_localizer().text("install.integrity.manual_recovery")) for entry in entries)
         warnings = tuple(entry.message for entry in entries if not entry.recoverable)
         recoverable_entry_count = sum(1 for entry in entries if entry.recoverable)
         non_recoverable_entry_count = len(entries) - recoverable_entry_count
@@ -1345,19 +1374,33 @@ class AppShellService:
         stale_entry_count = sum(
             1
             for entry in entries
-            if entry.decision_code in {"removal_target_missing", "restore_archive_missing"}
+            if entry.decision_code in {
+                "removal_target_missing",
+                "removal_target_changed",
+                "restore_target_missing",
+                "restore_target_changed",
+                "restore_archive_missing",
+                "restore_archive_changed",
+            }
         )
         warnings = tuple(entry.message for entry in entries if not entry.executable)
         allowed = non_executable_entry_count == 0
+        # This message is shown in the recovery confirmation, so it follows the
+        # interface language rather than mixing English with a localized noun.
+        localizer = get_active_ui_localizer()
         if allowed:
-            message = (
-                f"Recovery plan is ready: {executable_entry_count} "
-                f"{_entry_count_label(executable_entry_count)} can be executed."
+            message = localizer.text(
+                "recovery.review.ready.one"
+                if executable_entry_count == 1
+                else "recovery.review.ready.other",
+                count=executable_entry_count,
             )
         else:
-            message = (
-                f"Recovery plan is blocked: {non_executable_entry_count} "
-                f"{_entry_count_label(non_executable_entry_count)} cannot be executed safely."
+            message = localizer.text(
+                "recovery.review.blocked.one"
+                if non_executable_entry_count == 1
+                else "recovery.review.blocked.other",
+                count=non_executable_entry_count,
             )
         return InstallRecoveryExecutionReview(
             plan=plan,
@@ -1393,86 +1436,66 @@ class AppShellService:
                 critical=False,
             )
             raise AppShellError(review.message)
+        operation_id = _new_operation_id("recovery")
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-        removed_target_paths: list[Path] = []
-        restored_target_paths: list[Path] = []
-        destination_mods_path = review.plan.operation.destination_mods_path
-        destination_kind = review.plan.operation.destination_kind
-        archive_path = review.plan.operation.archive_path
-
-        try:
-            for entry_review in review.entries:
-                if not entry_review.executable:
-                    raise AppShellError(entry_review.message)
-
-                plan_entry = entry_review.plan_entry
-                try:
-                    if plan_entry.action == "remove_installed_target":
-                        _remove_recovery_target(plan_entry.target_path)
-                        removed_target_paths.append(plan_entry.target_path)
-                        continue
-
-                    if plan_entry.action == "restore_from_archive":
-                        if plan_entry.archive_path is None:
-                            raise AppShellError(
-                                f"Archive source is missing for restoring {plan_entry.name}."
-                            )
-                        restored_target = restore_archived_mod_entry(
-                            archive_root=archive_path,
-                            archived_path=plan_entry.archive_path,
-                            destination_mods_root=destination_mods_path,
-                            destination_folder_name=plan_entry.target_path.name,
-                        )
-                        restored_target_paths.append(restored_target)
-                        continue
-                except ArchiveManagerError as exc:
-                    raise AppShellError(f"Recovery execution failed: {exc}") from exc
-                except OSError as exc:
-                    raise AppShellError(f"Recovery execution failed: {exc}") from exc
-
-                raise AppShellError(
-                    f"Recovery execution failed: unsupported action {plan_entry.action!r}."
-                )
-
-            try:
-                inventory = _scan_inventory_with_archive_exclusions(
-                    destination_mods_path,
-                    archive_path=archive_path,
-                )
-            except OSError as exc:
-                raise AppShellError(f"Recovery execution scan failed: {exc}") from exc
-
-            result = InstallRecoveryExecutionResult(
-                review=review,
-                executed_entry_count=len(review.entries),
-                removed_target_paths=tuple(removed_target_paths),
-                restored_target_paths=tuple(restored_target_paths),
-                destination_kind=destination_kind,
-                destination_mods_path=destination_mods_path,
-                scan_context_path=destination_mods_path,
-                inventory=inventory,
-            )
-        except AppShellError as exc:
-            outcome_status = "failed_partial" if (removed_target_paths or restored_target_paths) else "failed"
+        def record_progress(progress: RecoveryTransactionState) -> None:
             self._record_recovery_execution_attempt(
                 review=review,
-                outcome_status=outcome_status,
-                removed_target_paths=tuple(removed_target_paths),
-                restored_target_paths=tuple(restored_target_paths),
-                failure_message=str(exc),
-                critical=bool(removed_target_paths or restored_target_paths),
+                outcome_status=progress.outcome_status,
+                removed_target_paths=progress.removed_target_paths,
+                restored_target_paths=progress.restored_target_paths,
+                retained_archive_paths=progress.retained_archive_paths,
+                journal_path=progress.journal_path,
+                failure_message=progress.failure_message,
+                critical=True,
+                recovery_execution_id=operation_id,
+                timestamp=timestamp,
             )
-            raise
 
-        self._record_recovery_execution_attempt(
+        try:
+            transaction = execute_install_recovery_transaction(
+                entries=review.entries,
+                mods_root=review.plan.operation.destination_mods_path,
+                archive_root=review.plan.operation.archive_path,
+                on_progress=record_progress,
+            )
+        except InstallRecoveryTransactionError as exc:
+            if exc.progress is None:
+                self._record_recovery_execution_attempt(
+                    review=review,
+                    outcome_status="failed",
+                    removed_target_paths=tuple(),
+                    restored_target_paths=tuple(),
+                    failure_message=str(exc),
+                    critical=False,
+                )
+                raise AppShellError(
+                    get_active_ui_localizer().text("recovery.integrity.prewrite_failed"),
+                    detail_message=str(exc),
+                ) from exc
+            key = (
+                "recovery.integrity.partial"
+                if exc.progress.outcome_status == "partial"
+                else "recovery.integrity.rolled_back"
+            )
+            raise AppShellError(
+                get_active_ui_localizer().text(key),
+                detail_message=f"{exc.progress.failure_message}\n{exc.progress.journal_path}",
+            ) from exc
+
+        return InstallRecoveryExecutionResult(
             review=review,
-            outcome_status="completed",
-            removed_target_paths=result.removed_target_paths,
-            restored_target_paths=result.restored_target_paths,
-            failure_message=None,
-            critical=True,
+            executed_entry_count=len(review.entries),
+            removed_target_paths=transaction.removed_target_paths,
+            restored_target_paths=transaction.restored_target_paths,
+            destination_kind=review.plan.operation.destination_kind,
+            destination_mods_path=review.plan.operation.destination_mods_path,
+            scan_context_path=review.plan.operation.destination_mods_path,
+            inventory=transaction.inventory,
+            retained_archive_paths=transaction.retained_archive_paths,
+            journal_path=transaction.journal_path,
         )
-        return result
 
     def build_install_execution_summary(
         self,
@@ -1514,15 +1537,16 @@ class AppShellService:
         )
 
         if blocked_count > 0:
-            entry_label = "entry" if blocked_count == 1 else "entries"
             return InstallExecutionReview(
                 summary=summary,
                 allowed=False,
                 requires_explicit_approval=False,
                 decision_code="blocked_entries_present",
-                message=(
-                    f"Install plan is blocked: {blocked_count} {entry_label} cannot be executed. "
-                    "Resolve blocked entries before running install."
+                message=get_active_ui_localizer().text(
+                    "install.review.blocked_one"
+                    if blocked_count == 1
+                    else "install.review.blocked_many",
+                    count=blocked_count,
                 ),
             )
 
@@ -1649,6 +1673,8 @@ class AppShellService:
         mods_path = self._resolve_mods_path(mods_dir_text, game_path)
 
         sandbox_mods_path = self._parse_optional_directory(sandbox_mods_path_text)
+        if sandbox_mods_path is not None and paths_overlap(mods_path, sandbox_mods_path):
+            raise AppShellError(get_active_ui_localizer().text("install.integrity.overlap"))
         sandbox_archive_path: Path | None = None
         if sandbox_mods_path is not None:
             sandbox_archive_path = self._parse_and_validate_sandbox_archive_path(
@@ -4452,6 +4478,7 @@ class AppShellService:
         nexus_api_key_text: str = "",
         existing_config: AppConfig | None = None,
         smapi_log_report: SmapiLogReport | None = None,
+        fetcher: JsonMetadataFetcher | None = None,
     ) -> ModUpdateReport:
         nexus_api_key = self._resolve_nexus_api_key(
             nexus_api_key_text=nexus_api_key_text,
@@ -4462,6 +4489,7 @@ class AppShellService:
         try:
             report, updated_cache = check_updates_for_inventory_with_cache(
                 inventory,
+                fetcher=fetcher,
                 nexus_api_key=nexus_api_key,
                 update_source_intent_overlay=update_source_intent_overlay,
                 persisted_remote_metadata_cache=remote_metadata_cache,
@@ -4518,7 +4546,7 @@ class AppShellService:
                 max_results=max_results,
             )
         except DiscoveryServiceError as exc:
-            raise AppShellError(f"Could not search mod discovery index: [{exc.reason}] {exc.message}") from exc
+            raise AppShellError(f"Could not search mod discovery index: {exc.message}") from exc
         except OSError as exc:
             raise AppShellError(f"Could not search mod discovery index: {exc}") from exc
 
@@ -5025,10 +5053,15 @@ class AppShellService:
         )
 
         try:
+            manifest_context = snapshot_manifest_context(
+                destination_context.destination_mods_path, destination_context.destination_archive_path,
+            )
             installed_inventory = _scan_inventory_with_archive_exclusions(
                 destination_context.destination_mods_path,
                 archive_path=destination_context.destination_archive_path,
             )
+        except InstallIntegrityError as exc:
+            raise AppShellError(get_active_ui_localizer().text("install.integrity.unverifiable"), detail_message=str(exc)) from exc
         except OSError as exc:
             raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
 
@@ -5037,6 +5070,8 @@ class AppShellService:
             destination_mods_path=destination_context.destination_mods_path,
             destination_archive_path=destination_context.destination_archive_path,
             installed_inventory=installed_inventory,
+            protected_mods_path=(destination_context.configured_real_mods_path if install_target == INSTALL_TARGET_SANDBOX_MODS else None),
+            manifest_context=manifest_context,
         )
 
     def _build_install_plan_for_package_base(
@@ -5085,6 +5120,8 @@ class AppShellService:
                 plan,
                 remote_requirements=remote_requirements,
                 destination_kind=install_target,
+                protected_mods_path=planning_runtime.protected_mods_path,
+                integrity=replace(plan.integrity, manifests=planning_runtime.manifest_context),
             )
         except (SandboxInstallError, zipfile.BadZipFile, ArchiveToolError, ValueError) as exc:
             raise AppShellError(str(exc)) from exc
@@ -5161,6 +5198,10 @@ class AppShellService:
                 requirement for plan in plans for requirement in plan.remote_requirements
             ),
             destination_kind=destination_kind,
+            integrity=(replace(first_plan.integrity,
+                packages=tuple(item for plan in plans for item in plan.integrity.packages),
+                targets=tuple(item for plan in plans for item in plan.integrity.targets),
+            ) if all(plan.integrity is not None for plan in plans) else None),
         )
 
     def _apply_install_dependency_preflight(
@@ -5264,15 +5305,38 @@ class AppShellService:
         if review.requires_explicit_approval and not confirm_real_destination:
             raise AppShellError(review.message)
 
+        operation_id = _new_operation_id("install")
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        def record_progress(progress: InstallTransactionState) -> None:
+            self._record_install_operation_state(
+                plan=plan, installed_targets=progress.installed_targets,
+                archived_targets=progress.archived_targets, operation_id=operation_id,
+                timestamp=timestamp, outcome_status=progress.outcome_status,
+                failure_message=progress.failure_message, journal_path=progress.journal_path,
+                installed_target_digests=progress.installed_target_digests,
+                archived_target_digests=progress.archived_target_digests,
+            )
+
         try:
-            result = execute_sandbox_install_plan_service(plan)
+            validate_integrity(plan)
+            result = execute_sandbox_install_plan_service(plan, on_progress=record_progress)
             completed_result = replace(result, destination_kind=plan.destination_kind)
-            self._record_completed_install_operation(plan=plan, result=completed_result)
             return completed_result
+        except InstallIntegrityError as exc:
+            raise AppShellError(get_active_ui_localizer().text("install.integrity.changed"), detail_message=str(exc)) from exc
         except SandboxFileLockError as exc:
+            if exc.progress is not None and exc.progress.outcome_status == "partial":
+                raise AppShellError(get_active_ui_localizer().text("install.integrity.partial"),
+                    detail_message=f"{exc.progress.failure_message}\n{exc.progress.journal_path}") from exc
             raise AppShellError(str(exc), detail_message=exc.technical_detail) from exc
         except SandboxInstallError as exc:
-            raise AppShellError(str(exc)) from exc
+            if exc.progress is not None:
+                key = "install.integrity.partial" if exc.progress.outcome_status == "partial" else "install.integrity.rolled_back"
+                raise AppShellError(get_active_ui_localizer().text(key), detail_message=f"{exc.progress.failure_message}\n{exc.progress.journal_path}") from exc
+            raise AppShellError(
+                get_active_ui_localizer().text("install.integrity.prewrite_failed"),
+                detail_message=str(exc),
+            ) from exc
         except OSError as exc:
             raise AppShellError(f"Sandbox install failed: {exc}") from exc
 
@@ -5830,16 +5894,10 @@ class AppShellService:
             )
 
         if install_target == INSTALL_TARGET_SANDBOX_MODS:
-            if _paths_deterministically_match(destination_mods_path, configured_real_mods_path):
+            if paths_overlap(destination_mods_path, configured_real_mods_path):
                 return InstallTargetSafetyDecision(
                     allowed=False,
-                    message=(
-                        "O destino sandbox da instalação coincide com o caminho configurado dos Mods reais. "
-                        "Selecione o destino sandbox ou escolha um caminho diferente."
-                        if pt_br
-                        else "Sandbox install target matches configured real Mods path. "
-                        "Select sandbox destination or choose a different path."
-                    ),
+                    message=get_active_ui_localizer().text("install.integrity.overlap"),
                     requires_explicit_confirmation=False,
                 )
 
@@ -5998,6 +6056,11 @@ class AppShellService:
         )
         if sandbox_mods_path is None:
             raise AppShellError("Sandbox Mods directory is required for sandbox dev launch.")
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text, existing_config=existing_config,
+        )
+        if real_mods_path is not None and paths_overlap(sandbox_mods_path, real_mods_path):
+            raise AppShellError(get_active_ui_localizer().text("install.integrity.overlap"))
         sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
         catalog = self.load_sandbox_mod_profiles()
         active_mods_path, updated_catalog, _ = self._resolve_selected_sandbox_profile_path(
@@ -6012,7 +6075,7 @@ class AppShellService:
             configured_mods_path_text=configured_mods_path_text,
             existing_config=existing_config,
         )
-        if real_mods_path is not None and _paths_deterministically_match(
+        if real_mods_path is not None and paths_overlap(
             active_mods_path,
             real_mods_path,
         ):
@@ -6292,8 +6355,8 @@ class AppShellService:
         if sandbox_mods_path is None:
             raise AppShellError(missing_sandbox_message)
 
-        if _paths_deterministically_match(real_mods_path, sandbox_mods_path):
-            raise AppShellError(same_path_message)
+        if paths_overlap(real_mods_path, sandbox_mods_path):
+            raise AppShellError(get_active_ui_localizer().text("install.integrity.overlap"))
 
         return real_mods_path, sandbox_mods_path
 
@@ -7912,6 +7975,7 @@ class AppShellService:
             "intentionally_not_included": [
                 "Game binaries, Steam files, and SMAPI runtime executables.",
                 "Watcher download folders and other unmanaged download cache locations.",
+                "The Nexus API credential is excluded from the portable app-state snapshot.",
                 "Only common per-mod config artifacts inside installed Mods trees are included in this stage; other external mod-created state folders are not yet covered.",
                 "Transient UI state such as current selections, filters, and pending plans.",
                 "Stardew save files remain backup-only and may still need manual restore steps.",
@@ -7960,10 +8024,36 @@ class AppShellService:
         plan: SandboxInstallPlan,
         installed_targets: tuple[Path, ...],
         archived_targets: tuple[Path, ...],
+        operation_id: str | None = None,
+        timestamp: str | None = None,
+        outcome_status: str = "completed",
+        failure_message: str | None = None,
+        journal_path: Path | None = None,
+        installed_target_digests: tuple[tuple[Path, str], ...] = tuple(),
+        archived_target_digests: tuple[tuple[Path, str], ...] = tuple(),
     ) -> None:
+        installed_digest_by_path = dict(installed_target_digests)
+        archived_digest_by_path = dict(archived_target_digests)
+        for target in installed_targets:
+            if target in installed_digest_by_path:
+                continue
+            try:
+                installed_digest_by_path[target] = snapshot_path(target).digest or ""
+            except (OSError, InstallIntegrityError):
+                pass
+        for archived in archived_targets:
+            if archived in archived_digest_by_path:
+                continue
+            try:
+                archived_digest_by_path[archived] = snapshot_path(archived).digest or ""
+            except (OSError, InstallIntegrityError):
+                pass
         operation = InstallOperationRecord(
-            operation_id=_new_operation_id("install"),
-            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            operation_id=operation_id or _new_operation_id("install"),
+            timestamp=timestamp or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            outcome_status=outcome_status,
+            failure_message=failure_message,
+            journal_path=journal_path,
             package_path=plan.package_path,
             destination_kind=plan.destination_kind,
             destination_mods_path=plan.sandbox_mods_path,
@@ -7983,13 +8073,27 @@ class AppShellService:
                     target_exists_before=entry.target_exists,
                     can_install=entry.can_install,
                     warnings=entry.warnings,
+                    installed_target_digest=installed_digest_by_path.get(entry.target_path) or None,
+                    archived_target_digest=(
+                        archived_digest_by_path.get(entry.archive_path) or None
+                        if entry.archive_path is not None
+                        else None
+                    ),
                 )
                 for entry in plan.entries
             ),
         )
         try:
-            append_install_operation_record(self._install_operation_history_file, operation)
+            history = load_install_operation_history(self._install_operation_history_file)
+            if operation_id is not None and any(item.operation_id == operation_id for item in history.operations):
+                save_install_operation_history(self._install_operation_history_file, InstallOperationHistory(
+                    operations=tuple(operation if item.operation_id == operation_id else item for item in history.operations),
+                ))
+            else:
+                append_install_operation_record(self._install_operation_history_file, operation)
         except (AppStateStoreError, OSError) as exc:
+            if operation_id is not None:
+                raise AppShellError(get_active_ui_localizer().text("install.integrity.history_failed"), detail_message=str(exc)) from exc
             raise AppShellError(
                 "Install completed, but recording install history failed: "
                 f"{exc}. Recovery inspection depends on recorded install history."
@@ -8004,10 +8108,14 @@ class AppShellService:
         restored_target_paths: tuple[Path, ...],
         failure_message: str | None,
         critical: bool,
+        retained_archive_paths: tuple[Path, ...] = tuple(),
+        journal_path: Path | None = None,
+        recovery_execution_id: str | None = None,
+        timestamp: str | None = None,
     ) -> None:
         record = RecoveryExecutionRecord(
-            recovery_execution_id=_new_operation_id("recovery"),
-            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            recovery_execution_id=recovery_execution_id or _new_operation_id("recovery"),
+            timestamp=timestamp or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             related_install_operation_id=review.plan.operation.operation_id,
             related_install_operation_timestamp=review.plan.operation.timestamp,
             related_install_package_path=review.plan.operation.package_path,
@@ -8018,9 +8126,23 @@ class AppShellService:
             restored_target_paths=restored_target_paths,
             outcome_status=outcome_status,
             failure_message=failure_message,
+            retained_archive_paths=retained_archive_paths,
+            journal_path=journal_path,
         )
         try:
-            append_recovery_execution_record(self._recovery_execution_history_file, record)
+            history = load_recovery_execution_history(self._recovery_execution_history_file)
+            if recovery_execution_id is not None and any(
+                item.recovery_execution_id == recovery_execution_id for item in history.operations
+            ):
+                save_recovery_execution_history(
+                    self._recovery_execution_history_file,
+                    RecoveryExecutionHistory(operations=tuple(
+                        record if item.recovery_execution_id == recovery_execution_id else item
+                        for item in history.operations
+                    )),
+                )
+            else:
+                append_recovery_execution_record(self._recovery_execution_history_file, record)
         except (AppStateStoreError, OSError) as exc:
             if not critical:
                 # Blocked/no-op recovery paths have not changed files, so the primary
@@ -8035,8 +8157,9 @@ class AppShellService:
                 ) from exc
 
             raise AppShellError(
-                "Recovery failed after filesystem changes, and recording recovery history also failed: "
-                f"{exc}. Original recovery error: {failure_message or 'unknown'}"
+                "Recovery safety history could not be saved: "
+                f"{exc}. Transaction status: {outcome_status}. "
+                f"Recovery detail: {failure_message or 'unknown'}"
             ) from exc
 
 
@@ -10733,13 +10856,15 @@ def _build_sandbox_install_review_message(summary: InstallExecutionSummary) -> s
 
 
 def _build_real_install_review_message(summary: InstallExecutionSummary) -> str:
-    message = (
-        f"Real Mods install targets {summary.total_entry_count} "
-        f"{_entry_count_label(summary.total_entry_count)} in {summary.destination_mods_path}. "
-        "Explicit approval is required before execution."
+    localizer = get_active_ui_localizer()
+    message = localizer.text(
+        "install.review.real_targets",
+        count=summary.total_entry_count,
+        entry_label=_entry_count_label(summary.total_entry_count),
+        path=summary.destination_mods_path,
     )
     if summary.has_existing_targets_to_replace or summary.has_archive_writes:
-        message += " Inspect archive/replace actions carefully."
+        message += f" {localizer.text('install.review.inspect_archive_replace_carefully')}"
     return message
 
 
@@ -11107,6 +11232,7 @@ def build_backup_bundle_export_text(result: BackupBundleExportResult) -> str:
             "This export intentionally does not include:",
             "- Game binaries, Steam files, or SMAPI runtime executables.",
             "- Watcher download folders or unmanaged caches.",
+            "- The Nexus API credential; configure it again on a restored installation.",
             "- Only the artifact groups selected in the export dialog are included; unselected groups are recorded as not_present in the manifest.",
             "- Transient UI state such as selections, filters, or pending plans.",
             "- Stardew save files may still need manual restore steps after export.",
@@ -11119,8 +11245,21 @@ def _derive_install_operation_recovery_entry(
     operation: InstallOperationRecord,
     entry: InstallOperationEntryRecord,
 ) -> InstallRecoveryPlanEntry:
+    localizer = get_active_ui_localizer()
     if entry.action == INSTALL_NEW:
         if _operation_record_contains_path(operation.installed_targets, entry.target_path):
+            if entry.installed_target_digest is None:
+                return InstallRecoveryPlanEntry(
+                    name=entry.name,
+                    unique_id=entry.unique_id,
+                    version=entry.version,
+                    action="not_recoverable",
+                    target_path=entry.target_path,
+                    archive_path=entry.archive_path,
+                    recoverable=False,
+                    message=localizer.text("recovery.integrity.missing_seal"),
+                    warnings=entry.warnings,
+                )
             return InstallRecoveryPlanEntry(
                 name=entry.name,
                 unique_id=entry.unique_id,
@@ -11131,6 +11270,7 @@ def _derive_install_operation_recovery_entry(
                 recoverable=True,
                 message=f"Remove installed target recorded for {entry.name}.",
                 warnings=entry.warnings,
+                expected_target_digest=entry.installed_target_digest,
             )
         return InstallRecoveryPlanEntry(
             name=entry.name,
@@ -11178,6 +11318,18 @@ def _derive_install_operation_recovery_entry(
                 ),
                 warnings=entry.warnings,
             )
+        if entry.installed_target_digest is None or entry.archived_target_digest is None:
+            return InstallRecoveryPlanEntry(
+                name=entry.name,
+                unique_id=entry.unique_id,
+                version=entry.version,
+                action="not_recoverable",
+                target_path=entry.target_path,
+                archive_path=entry.archive_path,
+                recoverable=False,
+                message=localizer.text("recovery.integrity.missing_seal"),
+                warnings=entry.warnings,
+            )
         return InstallRecoveryPlanEntry(
             name=entry.name,
             unique_id=entry.unique_id,
@@ -11188,6 +11340,8 @@ def _derive_install_operation_recovery_entry(
             recoverable=True,
             message=f"Restore archived target recorded for {entry.name}.",
             warnings=entry.warnings,
+            expected_target_digest=entry.installed_target_digest,
+            expected_archive_digest=entry.archived_target_digest,
         )
 
     return InstallRecoveryPlanEntry(
@@ -11213,34 +11367,82 @@ def _operation_record_contains_path(paths: tuple[Path, ...], expected: Path) -> 
 def _review_install_recovery_entry(
     entry: InstallRecoveryPlanEntry,
 ) -> InstallRecoveryExecutionReviewEntry:
+    localizer = get_active_ui_localizer()
     if entry.action == "remove_installed_target":
-        if entry.target_path.exists():
+        if not entry.target_path.exists():
             return InstallRecoveryExecutionReviewEntry(
                 plan_entry=entry,
-                executable=True,
-                decision_code="removal_ready",
-                message=f"Removal target exists for {entry.name}.",
+                executable=False,
+                decision_code="removal_target_missing",
+                message=localizer.text("recovery.integrity.target_missing", path=entry.target_path),
+            )
+        try:
+            target_snapshot = snapshot_path(entry.target_path)
+        except (OSError, InstallIntegrityError):
+            target_snapshot = None
+        if target_snapshot is None or target_snapshot.digest != entry.expected_target_digest:
+            return InstallRecoveryExecutionReviewEntry(
+                plan_entry=entry,
+                executable=False,
+                decision_code="removal_target_changed",
+                message=localizer.text("recovery.integrity.target_changed", path=entry.target_path),
+                target_snapshot=target_snapshot,
             )
         return InstallRecoveryExecutionReviewEntry(
             plan_entry=entry,
-            executable=False,
-            decision_code="removal_target_missing",
-            message=f"Removal target is missing for {entry.name}.",
+            executable=True,
+            decision_code="removal_ready",
+            message=localizer.text("recovery.integrity.remove_ready", name=entry.name),
+            target_snapshot=target_snapshot,
         )
 
     if entry.action == "restore_from_archive":
-        if entry.archive_path is not None and entry.archive_path.exists():
+        if not entry.target_path.exists():
             return InstallRecoveryExecutionReviewEntry(
                 plan_entry=entry,
-                executable=True,
-                decision_code="restore_ready",
-                message=f"Archive source exists for restoring {entry.name}.",
+                executable=False,
+                decision_code="restore_target_missing",
+                message=localizer.text("recovery.integrity.target_missing", path=entry.target_path),
+            )
+        if entry.archive_path is None or not entry.archive_path.exists():
+            return InstallRecoveryExecutionReviewEntry(
+                plan_entry=entry,
+                executable=False,
+                decision_code="restore_archive_missing",
+                message=localizer.text("recovery.integrity.archive_missing", path=entry.archive_path),
+            )
+        try:
+            target_snapshot = snapshot_path(entry.target_path)
+        except (OSError, InstallIntegrityError):
+            target_snapshot = None
+        if target_snapshot is None or target_snapshot.digest != entry.expected_target_digest:
+            return InstallRecoveryExecutionReviewEntry(
+                plan_entry=entry,
+                executable=False,
+                decision_code="restore_target_changed",
+                message=localizer.text("recovery.integrity.target_changed", path=entry.target_path),
+                target_snapshot=target_snapshot,
+            )
+        try:
+            archive_snapshot = snapshot_path(entry.archive_path)
+        except (OSError, InstallIntegrityError):
+            archive_snapshot = None
+        if archive_snapshot is None or archive_snapshot.digest != entry.expected_archive_digest:
+            return InstallRecoveryExecutionReviewEntry(
+                plan_entry=entry,
+                executable=False,
+                decision_code="restore_archive_changed",
+                message=localizer.text("recovery.integrity.archive_changed", path=entry.archive_path),
+                target_snapshot=target_snapshot,
+                archive_snapshot=archive_snapshot,
             )
         return InstallRecoveryExecutionReviewEntry(
             plan_entry=entry,
-            executable=False,
-            decision_code="restore_archive_missing",
-            message=f"Archive source is missing for restoring {entry.name}.",
+            executable=True,
+            decision_code="restore_ready",
+            message=localizer.text("recovery.integrity.restore_ready", name=entry.name),
+            target_snapshot=target_snapshot,
+            archive_snapshot=archive_snapshot,
         )
 
     return InstallRecoveryExecutionReviewEntry(
@@ -11249,13 +11451,6 @@ def _review_install_recovery_entry(
         decision_code="entry_not_recoverable",
         message=entry.message,
     )
-
-
-def _remove_recovery_target(target_path: Path) -> None:
-    if target_path.is_dir():
-        shutil.rmtree(target_path)
-        return
-    target_path.unlink()
 
 
 def _annotate_archive_retention_entries(

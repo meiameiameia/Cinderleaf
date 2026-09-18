@@ -24,9 +24,11 @@ from sdvmm.domain.models import (
 from sdvmm.domain.update_codes import LOCAL_PRIVATE_MOD
 
 APP_STATE_VERSION = 1
-INSTALL_OPERATION_HISTORY_VERSION = 1
+# v2 records unfinished/partial operations. Older Cinderleaf builds must reject
+# these records rather than treating an interrupted write as a completed install.
+INSTALL_OPERATION_HISTORY_VERSION = 2
 INSTALL_OPERATION_HISTORY_FILENAME = "install-operation-history.json"
-RECOVERY_EXECUTION_HISTORY_VERSION = 1
+RECOVERY_EXECUTION_HISTORY_VERSION = 2
 RECOVERY_EXECUTION_HISTORY_FILENAME = "recovery-execution-history.json"
 REMOTE_METADATA_CACHE_VERSION = 1
 REMOTE_METADATA_CACHE_FILENAME = "update-metadata-cache.json"
@@ -178,7 +180,7 @@ def load_install_operation_history(history_file: Path) -> InstallOperationHistor
 
     raw = _load_json_object(history_file=history_file, subject="install-operation history")
     version = raw.get("version")
-    if version != INSTALL_OPERATION_HISTORY_VERSION:
+    if version not in {1, INSTALL_OPERATION_HISTORY_VERSION}:
         raise AppStateStoreError(
             "Unsupported install-operation history version: "
             f"{version!r}; expected {INSTALL_OPERATION_HISTORY_VERSION}"
@@ -187,7 +189,10 @@ def load_install_operation_history(history_file: Path) -> InstallOperationHistor
     operations_raw = raw.get("operations")
     if not isinstance(operations_raw, list):
         raise AppStateStoreError("operations must be an array")
-
+    if version == INSTALL_OPERATION_HISTORY_VERSION:
+        for index, item in enumerate(operations_raw):
+            if not isinstance(item, dict) or not item.get("outcome_status"):
+                raise AppStateStoreError(f"operations[{index}].outcome_status is required in history v2")
     operations = tuple(_parse_install_operation(item, index) for index, item in enumerate(operations_raw))
     return InstallOperationHistory(operations=operations)
 
@@ -221,7 +226,7 @@ def load_recovery_execution_history(history_file: Path) -> RecoveryExecutionHist
 
     raw = _load_json_object(history_file=history_file, subject="recovery-execution history")
     version = raw.get("version")
-    if version != RECOVERY_EXECUTION_HISTORY_VERSION:
+    if version not in {1, RECOVERY_EXECUTION_HISTORY_VERSION}:
         raise AppStateStoreError(
             "Unsupported recovery-execution history version: "
             f"{version!r}; expected {RECOVERY_EXECUTION_HISTORY_VERSION}"
@@ -230,6 +235,15 @@ def load_recovery_execution_history(history_file: Path) -> RecoveryExecutionHist
     operations_raw = raw.get("operations")
     if not isinstance(operations_raw, list):
         raise AppStateStoreError("operations must be an array")
+    if version == RECOVERY_EXECUTION_HISTORY_VERSION:
+        valid_outcomes = {
+            "in_progress", "completed", "rolled_back", "partial", "failed", "failed_partial",
+        }
+        for index, item in enumerate(operations_raw):
+            if not isinstance(item, dict) or item.get("outcome_status") not in valid_outcomes:
+                raise AppStateStoreError(
+                    f"operations[{index}].outcome_status is required in recovery history v2"
+                )
 
     operations = tuple(
         _parse_recovery_execution_record(item, index) for index, item in enumerate(operations_raw)
@@ -488,6 +502,9 @@ def _serialize_install_operation(operation: InstallOperationRecord) -> dict[str,
         "archive_path": str(operation.archive_path),
         "installed_targets": [str(path) for path in operation.installed_targets],
         "archived_targets": [str(path) for path in operation.archived_targets],
+        "outcome_status": operation.outcome_status,
+        "failure_message": operation.failure_message,
+        "journal_path": str(operation.journal_path) if operation.journal_path is not None else None,
         "entries": [
             {
                 "name": entry.name,
@@ -501,6 +518,8 @@ def _serialize_install_operation(operation: InstallOperationRecord) -> dict[str,
                 "target_exists_before": entry.target_exists_before,
                 "can_install": entry.can_install,
                 "warnings": list(entry.warnings),
+                "installed_target_digest": entry.installed_target_digest,
+                "archived_target_digest": entry.archived_target_digest,
             }
             for entry in operation.entries
         ],
@@ -514,8 +533,15 @@ def _parse_install_operation(data: object, index: int) -> InstallOperationRecord
     entries_raw = data.get("entries")
     if not isinstance(entries_raw, list):
         raise AppStateStoreError(f"operations[{index}].entries must be an array")
+    outcome = _optional_non_empty_string(data, "outcome_status", prefix=f"operations[{index}]") or "completed"
+    if outcome not in {"completed", "in_progress", "rolled_back", "partial"}:
+        raise AppStateStoreError(f"operations[{index}].outcome_status is not supported")
+    journal_path = _optional_non_empty_string(data, "journal_path", prefix=f"operations[{index}]")
 
     return InstallOperationRecord(
+        outcome_status=outcome,
+        failure_message=_optional_non_empty_string(data, "failure_message", prefix=f"operations[{index}]"),
+        journal_path=Path(journal_path) if journal_path is not None else None,
         operation_id=_optional_non_empty_string(data, "operation_id", prefix=f"operations[{index}]"),
         timestamp=_require_non_empty_string(data, "timestamp", prefix=f"operations[{index}]"),
         package_path=Path(
@@ -566,6 +592,8 @@ def _parse_install_operation_entry(
         raise AppStateStoreError(f"{prefix}.warnings must be an array of strings")
 
     archive_path = _optional_non_empty_string(data, "archive_path", prefix=prefix)
+    installed_digest = _optional_non_empty_string(data, "installed_target_digest", prefix=prefix)
+    archived_digest = _optional_non_empty_string(data, "archived_target_digest", prefix=prefix)
     version_raw = data.get("version")
     if isinstance(version_raw, str) and version_raw.strip():
         version = version_raw
@@ -583,6 +611,8 @@ def _parse_install_operation_entry(
         target_exists_before=_require_bool(data, "target_exists_before", prefix=prefix),
         can_install=_require_bool(data, "can_install", prefix=prefix),
         warnings=tuple(warnings_raw),
+        installed_target_digest=installed_digest,
+        archived_target_digest=archived_digest,
     )
 
 
@@ -604,6 +634,8 @@ def _serialize_recovery_execution_record(operation: RecoveryExecutionRecord) -> 
         "restored_target_paths": [str(path) for path in operation.restored_target_paths],
         "outcome_status": operation.outcome_status,
         "failure_message": operation.failure_message,
+        "retained_archive_paths": [str(path) for path in operation.retained_archive_paths],
+        "journal_path": str(operation.journal_path) if operation.journal_path is not None else None,
     }
 
 
@@ -621,6 +653,7 @@ def _parse_recovery_execution_record(data: object, index: int) -> RecoveryExecut
         "failure_message",
         prefix=f"operations[{index}]",
     )
+    journal_path = _optional_non_empty_string(data, "journal_path", prefix=f"operations[{index}]")
     executed_entry_count = _require_int(
         data,
         "executed_entry_count",
@@ -674,6 +707,15 @@ def _parse_recovery_execution_record(data: object, index: int) -> RecoveryExecut
             prefix=f"operations[{index}]",
         ),
         failure_message=failure_message,
+        retained_archive_paths=(
+            _parse_path_array(
+                data.get("retained_archive_paths"),
+                prefix=f"operations[{index}].retained_archive_paths",
+            )
+            if "retained_archive_paths" in data
+            else tuple()
+        ),
+        journal_path=Path(journal_path) if journal_path is not None else None,
     )
 
 
