@@ -46,6 +46,7 @@ artifacts/
 
 # Local workflow-only files that must stay out of the public repo
 /AGENTS.md
+/CLAUDE.md
 /ARCHITECT_NOTES.md
 /.github/PULL_REQUEST_TEMPLATE.md
 

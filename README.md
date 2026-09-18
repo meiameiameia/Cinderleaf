@@ -46,7 +46,7 @@ Cinderleaf is meant to help with the normal day-to-day modding routine:
 - review installs before writing files
 - warn or block when a required dependency is missing during install planning
 - count a dependency already staged in the same install batch when that is safe
-- compare your real setup and sandbox setup without making Compare a write tool
+- compare real and sandbox, then explicitly review a one-way sync when one side should replace the other
 - auto-add already installed dependencies when you enable a mod in a custom profile
 - keep restore, rollback, and backup tools easy to find
 
@@ -59,7 +59,7 @@ The goal is not to bury you in process. The goal is to make the normal flow feel
 - `Packages`: where downloaded archives show up, either through watched folders or `Add package`
 - `Install`: the review screen before anything is written, including dependency checks before the write step
 - `Discover`: a read-only search area for finding mod pages and sources
-- `Compare`: a read-only way to check what is different between real and sandbox
+- `Compare`: review differences, select the side that should win, and approve an explicit `real -> sandbox` or `sandbox -> real` sync
 - `History`: archived copies and install rollback history in one place
 - `Setup`: folders, backups, restore/import tools, and a few extra configuration options
 
@@ -99,6 +99,7 @@ If checksum files are published with the release, verify against:
 Good to know:
 
 - this is a portable folder, not an installer
+- Cinderleaf allows one running copy at a time so two windows cannot change the same Mods folders or recovery history concurrently
 - Cinderleaf can tell you when a newer release exists, but it does not update itself automatically
 - downloads from mod sites are still manual; Cinderleaf helps after the file reaches your machine
 
@@ -149,7 +150,7 @@ These screenshots reflect the current `1.5.0` app surface.
 ## Current limits
 
 - downloads are still manual
-- `Compare` stays read-only
+- `Compare` synchronization is deliberate and selection-based; it never silently mirrors whole folders
 - Cinderleaf helps you get to review faster, but it still does not install mods silently
 - save-file export exists in backup bundles, but save restore is still manual
 - Windows is the main supported desktop path today

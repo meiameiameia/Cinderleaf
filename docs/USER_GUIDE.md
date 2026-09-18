@@ -182,9 +182,7 @@ It does **not** mean Cinderleaf is secretly creating a full isolated save-manage
 
 ## 10. Compare
 
-`Compare` is read-only.
-
-It is there so you can check what is different between your real setup and your sandbox setup.
+Running `Compare` is read-only. It shows what is different between your real setup and your sandbox setup without changing either side.
 
 Use it when you want to answer questions like:
 
@@ -192,7 +190,14 @@ Use it when you want to answer questions like:
 - what exists only in sandbox?
 - what versions do not match?
 
-It is a review tool, not a write tool.
+When you select a difference, you can choose an explicit direction:
+
+- `Sync real -> sandbox` when the live copy should replace the test side
+- `Sync sandbox -> real` when the tested copy should replace the live side
+
+Cinderleaf shows a direction-specific review before writing. The review names the source, destination, new entries, replacements, and archive location. Replaced target copies are archived and the operation is recorded in recovery history. Linked multi-folder mod families move as one logical selection.
+
+Nothing is synchronized automatically, and cancelling the review leaves both sides unchanged.
 
 ## 11. History
 
@@ -221,6 +226,47 @@ Use this when you want to:
 - apply recovery only after you have reviewed it
 
 The point is to keep restore and rollback tools together in one place instead of splitting them across two different workspace names.
+
+### If an installation fails
+
+An install review belongs to the package and destination that were checked. If the
+package, target files, or installed mod manifests change, create a new plan and review
+it again. Sandbox and real Mods folders must be separate; neither may contain the other.
+Linked folders (including Windows junctions) are not supported for archive installs.
+
+- **Failed — changes rolled back:** the batch failed, and its mod changes were undone.
+  Fix the reported problem, then create a fresh plan.
+- **Unfinished** or **Incomplete:** do not retry or delete staging folders or archives.
+  Open the operation in History and keep the recovery journal shown in its details.
+  These records require inspection before recovery; automatic recovery is disabled
+  when the outcome is uncertain. Ask for help before moving files yourself, and review
+  the journal for personal paths before sharing it.
+- **Completed:** the install and its final record succeeded. Normal reviewed recovery
+  remains available when its preflight checks pass.
+
+Ordinary batch failures trigger rollback. An app interruption, file lock during
+rollback, or failure to save the final record may instead need manual recovery.
+This is not a guarantee of automatic recovery after power loss.
+
+Recovery for a completed 1.6.0 install is content-sealed. Cinderleaf checks that the
+installed folder—and, for a replacement, its original archived copy—still match the
+operation you reviewed. If either changed, automatic recovery is blocked so newer
+player or tool changes are not overwritten. Older history entries without these
+content seals remain visible but cannot be recovered automatically.
+
+A completed recovery does not permanently delete the current mod. It moves the
+current folder into the operation's archive first, then restores the earlier copy
+when applicable. History shows the retained path and recovery journal. If a recovery
+batch fails, Cinderleaf attempts to roll back the whole batch; preserve every path
+shown in History if the result says `Incomplete`.
+
+Only one Cinderleaf window can run at a time. A second copy stops before loading the
+workspace, preventing two windows from changing the same Mods folders and history.
+
+**History compatibility:** 1.6.0 reads existing install history but writes a newer
+format. Older builds, including 1.5.0, cannot read it. Before testing 1.6.0, keep a
+backup of your manager state. Do not run an older build against the updated state or
+restore old state over a changed mod library without a recovery review.
 
 ## 12. Backup and restore
 
@@ -289,7 +335,7 @@ These habits make Cinderleaf easier to use:
 Right now, it helps to remember:
 
 - downloads are still manual
-- `Compare` is still read-only
+- `Compare` sync remains explicit and selection-based; it does not silently mirror whole folders
 - Cinderleaf helps you get to review faster, but it still does not install mods silently
 - save restore is still manual
 - Windows is still the main supported desktop path

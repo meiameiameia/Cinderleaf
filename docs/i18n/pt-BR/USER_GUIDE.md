@@ -139,13 +139,20 @@ Se der certo, você promove depois. Se der errado, o impacto fica isolado.
 
 ## 10. Comparar
 
-`Comparar` é somente leitura.
-
-Serve para revisar diferença entre real e sandbox:
+Executar `Comparar` é uma ação somente leitura. Ela mostra as diferenças entre real e sandbox sem mudar nenhum dos lados:
 
 - só no real
 - só no sandbox
 - versões diferentes
+
+Depois de selecionar uma diferença, você escolhe uma direção explícita:
+
+- `Sincronizar real -> sandbox` quando a cópia ao vivo deve substituir o lado de teste
+- `Sincronizar sandbox -> real` quando a cópia testada deve substituir o lado ao vivo
+
+Antes de escrever, o Cinderleaf mostra uma revisão específica para a direção escolhida, com origem, destino, novas entradas, substituições e local do arquivo. Cópias substituídas no destino são arquivadas, e a operação fica registrada no histórico de recuperação. Famílias de mod com várias pastas vinculadas são tratadas como uma única seleção lógica.
+
+Nada é sincronizado automaticamente. Cancelar a revisão deixa os dois lados intactos.
 
 ## 11. Histórico
 
@@ -168,6 +175,50 @@ Abas:
 - inspecionar histórico de instalação
 - revisar rollback
 - aplicar recuperação após revisão
+
+### Se uma instalação falhar
+
+A revisão vale para o pacote e o destino verificados. Se o pacote, os arquivos de
+destino ou os manifests dos mods instalados mudarem, crie e revise um novo plano.
+Sandbox e Mods reais precisam ser pastas separadas; uma não pode conter a outra.
+Pastas vinculadas (incluindo junctions do Windows) não são suportadas na instalação
+de pacotes compactados.
+
+- **Falhou — alterações desfeitas:** o lote falhou e suas alterações nos mods foram
+  desfeitas. Resolva o problema informado e crie um novo plano.
+- **Não finalizada** ou **Incompleta:** não tente novamente nem exclua pastas de
+  preparação ou arquivos de recuperação. Abra a operação no Histórico e preserve o
+  registro de recuperação indicado nos detalhes. Essas operações precisam de inspeção;
+  a recuperação automática fica desabilitada quando o resultado é incerto. Peça ajuda
+  antes de mover arquivos e confira se há caminhos pessoais no registro antes de compartilhá-lo.
+- **Concluída:** a instalação e seu registro final foram concluídos. A recuperação
+  normal, com revisão, continua disponível quando as verificações de segurança passam.
+
+Falhas comuns desfazem o lote. Uma interrupção do aplicativo, bloqueio de arquivos
+durante a recuperação ou falha ao salvar o registro final pode exigir recuperação
+manual. Não há garantia de recuperação automática após falta de energia.
+
+A recuperação de uma instalação concluída na versão 1.6.0 usa selos de conteúdo. O
+Cinderleaf confirma que a pasta instalada e, em uma substituição, a cópia original
+arquivada ainda correspondem à operação revisada. Se qualquer uma mudou, a
+recuperação automática é bloqueada para preservar alterações mais novas. Registros
+antigos sem esses selos continuam visíveis, mas não permitem recuperação automática.
+
+Uma recuperação concluída não exclui definitivamente o mod atual. Primeiro ela move
+a pasta atual para o arquivo da operação e, quando necessário, restaura a cópia
+anterior. O Histórico mostra o caminho retido e o registro da recuperação. Se um lote
+de recuperação falhar, o Cinderleaf tenta desfazer o lote inteiro; preserve todos os
+caminhos mostrados no Histórico quando o resultado for `Incompleta`.
+
+Somente uma janela do Cinderleaf pode ficar aberta por vez. Uma segunda cópia para
+antes de carregar o workspace, evitando alterações simultâneas nas mesmas pastas de
+Mods e no histórico.
+
+**Compatibilidade do Histórico:** a versão 1.6.0 lê o histórico existente, mas grava
+um formato novo. Versões anteriores, incluindo a 1.5.0, não conseguem lê-lo. Antes de
+testar a 1.6.0, guarde um backup do estado do gerenciador. Não use uma versão antiga
+com o estado atualizado nem restaure estado antigo sobre uma biblioteca de mods
+alterada sem revisar a recuperação.
 
 ## 12. Backup e restore
 
@@ -216,7 +267,7 @@ Para SMAPI, diga também se ocorreu em:
 ## 16. Limites atuais
 
 - downloads continuam manuais
-- `Comparar` continua somente leitura
+- a sincronização em `Comparar` continua explícita e baseada na seleção; ela não espelha pastas inteiras silenciosamente
 - o app acelera revisão, mas não instala silenciosamente
 - restore de save continua manual
 - Windows segue como plataforma principal

@@ -35,7 +35,7 @@ A ideia é deixar o fluxo do dia a dia mais calmo e claro, sem te prender em pro
 - `Pacotes`: entrada de arquivos por watcher ou `Adicionar pacote`
 - `Instalar`: revisão final antes de escrever no disco
 - `Descobrir`: busca somente leitura de páginas e fontes
-- `Comparar`: comparação somente leitura entre real e sandbox
+- `Comparar`: revisão das diferenças e sincronização explícita `real -> sandbox` ou `sandbox -> real` depois de confirmar o lado que deve vencer
 - `Histórico`: cópias arquivadas e histórico de instalação
 - `Configuração`: pastas, backup, restore/import e configurações extras
 
@@ -61,10 +61,13 @@ Os artefatos públicos são publicados no GitHub Releases.
 
 Se houver arquivos de checksum, valide SHA256 antes de usar.
 
+O Cinderleaf permite apenas uma cópia em execução por vez, evitando que duas janelas
+alterem simultaneamente as mesmas pastas de Mods ou o histórico de recuperação.
+
 ## Limites atuais
 
 - downloads ainda são manuais
-- `Comparar` continua somente leitura
+- a sincronização em `Comparar` é deliberada e baseada na seleção; ela nunca espelha pastas inteiras silenciosamente
 - instalação continua explícita e revisada (sem install silencioso)
 - restore de saves continua manual
 - Windows é a plataforma principal hoje
