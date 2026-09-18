@@ -6,12 +6,13 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import tomllib
 
-from PySide6.QtCore import QRectF
+from PySide6.QtCore import QLockFile, QRectF
 from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from sdvmm.app.i18n import UiLocalizer
+from sdvmm.app.crash_reporter import crash_report_directory, install_crash_reporter
+from sdvmm.app.i18n import UiLocalizer, get_active_ui_localizer
 from sdvmm.app.paths import default_app_state_file
 from sdvmm.app.shell_service import AppShellService
 from sdvmm.services.app_state_store import AppStateStoreError, load_app_config
@@ -28,6 +29,14 @@ APP_RUNTIME_ICON_NAMES = (
     "stardew-mod-manager.ico",
 )
 WINDOWS_APP_USER_MODEL_ID = "local.cinderleaf.cinderleaf"
+SINGLE_INSTANCE_LOCK_FILENAME = "cinderleaf-instance.lock"
+
+
+def _try_acquire_single_instance_lock(state_file: Path) -> QLockFile | None:
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    lock = QLockFile(str(state_file.parent / SINGLE_INSTANCE_LOCK_FILENAME))
+    lock.setStaleLockTime(0)
+    return lock if lock.tryLock(0) else None
 
 
 def _resolve_app_version() -> str:
@@ -128,6 +137,23 @@ def _configure_windows_app_identity() -> None:
         return
 
 
+def _install_crash_reporting(*, state_file: Path, app_version: str) -> None:
+    def notify(report_path: Path | None, summary: str) -> None:
+        localizer = get_active_ui_localizer()
+        message = (
+            localizer.text("app.crash.message", path=report_path, summary=summary)
+            if report_path is not None
+            else localizer.text("app.crash.message_without_file", summary=summary)
+        )
+        QMessageBox.warning(None, localizer.text("app.crash.title"), message)
+
+    install_crash_reporter(
+        report_directory=crash_report_directory(state_file),
+        app_version=app_version,
+        notify=notify,
+    )
+
+
 def main() -> int:
     _configure_windows_app_identity()
     _configure_frozen_qt_plugin_paths()
@@ -139,8 +165,10 @@ def main() -> int:
         startup_config = None
     if startup_config is not None:
         startup_language_preference = startup_config.language_preference
+    localizer = UiLocalizer.from_preference(startup_language_preference)
 
     app = QApplication(sys.argv)
+    _install_crash_reporting(state_file=state_file, app_version=_resolve_app_version())
     app.setApplicationName(APP_DISPLAY_NAME)
     app.setApplicationDisplayName(APP_DISPLAY_NAME)
     app.setApplicationVersion(_resolve_app_version())
@@ -148,16 +176,28 @@ def main() -> int:
     if app_icon is not None:
         app.setWindowIcon(app_icon)
 
+    instance_lock = _try_acquire_single_instance_lock(state_file)
+    if instance_lock is None:
+        QMessageBox.warning(
+            None,
+            localizer.text("app.single_instance.title"),
+            localizer.text("app.single_instance.message"),
+        )
+        return 2
+
     shell_service = AppShellService(state_file=state_file)
     window = MainWindow(
         shell_service=shell_service,
-        localizer=UiLocalizer.from_preference(startup_language_preference),
+        localizer=localizer,
     )
     if app_icon is not None:
         window.setWindowIcon(app_icon)
     window.show()
 
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        instance_lock.unlock()
 
 
 if __name__ == "__main__":

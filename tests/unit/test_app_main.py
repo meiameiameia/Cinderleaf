@@ -60,6 +60,20 @@ def test_resolve_runtime_icon_asset_prefers_svg_source(
     assert app_main._resolve_runtime_icon_asset_path() == assets_root / "cinderleaf-icon.svg"
 
 
+def test_single_instance_lock_rejects_second_copy_and_releases_cleanly(tmp_path: Path) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    first = app_main._try_acquire_single_instance_lock(state_file)
+    assert first is not None
+    try:
+        assert app_main._try_acquire_single_instance_lock(state_file) is None
+    finally:
+        first.unlock()
+
+    replacement = app_main._try_acquire_single_instance_lock(state_file)
+    assert replacement is not None
+    replacement.unlock()
+
+
 def test_resolve_ui_app_version_prefers_qapplication_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -78,3 +92,43 @@ def test_resolve_ui_app_version_prefers_qapplication_version(
         assert main_window._resolve_ui_app_version() == "1.1.7"
     finally:
         app.setApplicationVersion(original_version)
+
+
+def test_startup_wires_crash_reporting_to_a_localized_dialog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from sdvmm.app.i18n import LANGUAGE_PORTUGUESE_BRAZIL, UiLocalizer, set_active_ui_localizer
+
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "sdvmm.app.main.QMessageBox.warning",
+        lambda _parent, title, text: shown.append((str(title), str(text))),
+    )
+    original_hook = sys.excepthook
+    previous_localizer = None
+    try:
+        from sdvmm.app.i18n import get_active_ui_localizer
+
+        previous_localizer = get_active_ui_localizer()
+        set_active_ui_localizer(UiLocalizer.from_preference(LANGUAGE_PORTUGUESE_BRAZIL))
+        state_file = tmp_path / "sdvmm" / "app-state.json"
+        app_main._install_crash_reporting(state_file=state_file, app_version="1.6.0")
+
+        try:
+            raise RuntimeError("synthetic failure")
+        except RuntimeError:
+            sys.excepthook(*sys.exc_info())  # type: ignore[arg-type]
+    finally:
+        sys.excepthook = original_hook
+        if previous_localizer is not None:
+            set_active_ui_localizer(previous_localizer)
+
+    reports = list((tmp_path / "sdvmm" / "crash-reports").glob("crash-*.txt"))
+    assert len(reports) == 1
+    assert "RuntimeError: synthetic failure" in reports[0].read_text(encoding="utf-8")
+    assert len(shown) == 1
+    title, text = shown[0]
+    assert title == "Algo deu errado", "the dialog follows the interface language"
+    assert str(reports[0]) in text
