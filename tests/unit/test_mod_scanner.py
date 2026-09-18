@@ -96,6 +96,23 @@ def test_content_pack_for_dependency_is_visible_in_inventory(tmp_path) -> None:
     assert len(inventory.missing_required_dependencies) == 1
     assert inventory.missing_required_dependencies[0].required_by_unique_id == "Sample.ContentPack"
     assert inventory.missing_required_dependencies[0].missing_unique_id == "Pathoschild.ContentPatcher"
+    assert inventory.mods[0].content_pack_for == "Pathoschild.ContentPatcher"
+
+
+def test_regular_mod_content_pack_for_is_none_in_inventory(tmp_path) -> None:
+    mods_root = tmp_path / "Mods"
+    mods_root.mkdir()
+    regular_mod = mods_root / "RegularMod"
+    regular_mod.mkdir()
+    (regular_mod / "manifest.json").write_text(
+        '{"Name":"Regular Mod","UniqueID":"Sample.Regular","Version":"1.0.0"}',
+        encoding="utf-8",
+    )
+
+    inventory = scan_mods_directory(mods_root)
+
+    assert len(inventory.mods) == 1
+    assert inventory.mods[0].content_pack_for is None
 
 
 def test_dot_prefixed_top_level_mod_is_reported_as_disabled(tmp_path) -> None:

@@ -121,13 +121,13 @@ def test_locate_smapi_log_prefers_cinderleaf_owned_context_log_when_requested(
 def test_parse_smapi_log_text_extracts_key_troubleshooting_findings() -> None:
     log_text = "\n".join(
         (
-            "[SMAPI] SMAPI 4.5.1 with Stardew Valley 1.6.15",
-            "[WARN SMAPI] This is a warning for troubleshooting.",
-            "[ERROR SMAPI] Unhandled exception in mod loader.",
-            "[SMAPI] Skipped mods",
-            "[SMAPI]    - Fancy Pack because it needs mods which aren't installed (Pathoschild.ContentPatcher)",
-            "[SMAPI] Broken Helper failed to load because an internal error occurred.",
-            "[SMAPI] SteamAPI_Init() failed; create pipe failed.",
+            "[00:00:01 TRACE SMAPI] SMAPI 4.5.1 with Stardew Valley 1.6.15",
+            "[00:00:02 WARN SMAPI] This is a warning for troubleshooting.",
+            "[00:00:03 ERROR SMAPI] Unhandled exception in mod loader.",
+            "[00:00:04 TRACE SMAPI] Skipped mods",
+            "[00:00:05 TRACE SMAPI]    - Fancy Pack because it needs mods which aren't installed (Pathoschild.ContentPatcher)",
+            "[00:00:06 ERROR SMAPI] Broken Helper failed to load because an internal error occurred.",
+            "[00:00:07 ERROR game] SteamAPI_Init() failed; create pipe failed.",
         )
     )
 
@@ -241,6 +241,89 @@ def test_parse_smapi_log_text_keeps_dependency_target_and_required_version_separ
             source_text="Pathoschild.ContentPatcher 5.0.8 or later",
         ),
     )
+
+
+def test_parse_smapi_log_text_reads_singular_missing_dependency_phrasing() -> None:
+    log_text = "\n".join(
+        (
+            "[SMAPI] Skipped mods",
+            "[00:00:03 WARN  SMAPI]    - Fancy Pack 1.0.0 requires Pathoschild.ContentPatcher, which isn't installed.",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.missing_dependency_ids == ("Pathoschild.ContentPatcher",)
+    assert not report.has_unidentified_missing_dependencies
+
+
+def test_parse_smapi_log_text_reads_parenthetical_target_ending_with_a_period() -> None:
+    log_text = "\n".join(
+        (
+            "[SMAPI] Skipped mods",
+            "[00:00:03 WARN  SMAPI]    - Fancy Pack 1.0.0 because it requires mods "
+            "which aren't installed or working (Pathoschild.ContentPatcher).",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.missing_dependency_ids == ("Pathoschild.ContentPatcher",)
+    assert not report.has_unidentified_missing_dependencies
+
+
+def test_parse_smapi_log_text_reads_trailing_colon_dependency_list() -> None:
+    log_text = "\n".join(
+        (
+            "[SMAPI] Skipped mods",
+            "[00:00:03 WARN  SMAPI]    - Fancy Pack 1.0.0 because it needs mods "
+            "which aren't installed or working: Pathoschild.ContentPatcher, FlashShifter.SVE.",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.missing_dependency_ids == (
+        "FlashShifter.SVE",
+        "Pathoschild.ContentPatcher",
+    )
+    assert not report.has_unidentified_missing_dependencies
+
+
+def test_parse_smapi_log_text_flags_missing_dependencies_it_cannot_name() -> None:
+    log_text = "\n".join(
+        (
+            "[SMAPI] Skipped mods",
+            "[00:00:03 WARN  SMAPI]    - Fancy Pack because it needs mods which aren't installed.",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.missing_dependency_finding_count == 1
+    assert report.missing_dependencies == tuple()
+    # The log says something is missing, so the report must not read as clean.
+    assert report.has_unidentified_missing_dependencies
 
 
 def test_parse_smapi_log_text_preserves_mods_path_override_notes_for_context_detection() -> None:

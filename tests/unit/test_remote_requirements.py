@@ -41,6 +41,16 @@ class StubFetcher:
             raise MetadataFetchError(REQUEST_FAILURE, f"no payload for {url}")
         return payload
 
+    def post_json(
+        self,
+        url: str,
+        payload: Mapping[str, object],
+        timeout_seconds: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, object]:
+        _ = payload
+        return self.fetch_json(url, timeout_seconds, headers)
+
 
 def test_remote_requirements_present_for_supported_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(NEXUS_API_KEY_ENV, "test-api-key")

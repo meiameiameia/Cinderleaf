@@ -24,7 +24,6 @@ from sdvmm.domain.update_codes import (
 )
 from sdvmm.services.update_metadata import (
     AUTH_FAILURE,
-    MISSING_API_KEY,
     NEXUS_API_KEY_ENV,
     REQUEST_FAILURE,
     RESPONSE_MISSING_VERSION,
@@ -316,20 +315,79 @@ def test_curseforge_provider_keeps_installed_version_when_smapi_reports_no_valid
     assert "temporarily unavailable" in (status.message or "")
 
 
-def test_nexus_missing_api_key_is_reported_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nexus_without_api_key_uses_smapi_metadata_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv(NEXUS_API_KEY_ENV, raising=False)
 
     mod = _mod(unique_id="Sample.Nexus", version="1.0.0", update_keys=("Nexus:12345",))
     inventory = _inventory((mod,))
+    fetcher = StubFetcher(
+        payloads={
+            SMAPI_MODS_API_URL: [
+                {
+                    "id": "Sample.Nexus",
+                    "metadata": {
+                        "id": [],
+                        "main": {
+                            "version": "1.1.0",
+                            "url": "https://www.nexusmods.com/stardewvalley/mods/12345",
+                        },
+                    },
+                    "errors": [],
+                }
+            ]
+        }
+    )
 
-    report = check_updates_for_inventory(inventory, fetcher=StubFetcher())
+    report = check_updates_for_inventory(inventory, fetcher=fetcher)
 
     status = report.statuses[0]
-    assert status.state == "metadata_unavailable"
-    assert status.update_source_diagnostic == REMOTE_METADATA_LOOKUP_FAILED
-    assert f"[{MISSING_API_KEY}]" in (status.message or "")
-    assert NEXUS_API_KEY_ENV in (status.message or "")
-    assert status.remote_requirements_state == "requirements_unavailable"
+    assert status.state == "update_available"
+    assert status.remote_version == "1.1.0"
+    assert fetcher.calls == []
+    assert len(fetcher.post_calls) == 1
+    _, post_payload, _ = fetcher.post_calls[0]
+    assert post_payload["mods"][0]["updateKeys"] == ("Nexus:12345",)
+
+
+def test_nexus_keyed_request_falls_back_to_smapi_when_direct_lookup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(NEXUS_API_KEY_ENV, raising=False)
+    mod = _mod(unique_id="Sample.Nexus", version="1.0.0", update_keys=("Nexus:12345",))
+    inventory = _inventory((mod,))
+    nexus_url = "https://api.nexusmods.com/v1/games/stardewvalley/mods/12345.json"
+    fetcher = StubFetcher(
+        payloads={
+            SMAPI_MODS_API_URL: [
+                {
+                    "id": "Sample.Nexus",
+                    "metadata": {
+                        "id": [],
+                        "main": {
+                            "version": "1.0.0",
+                            "url": "https://www.nexusmods.com/stardewvalley/mods/12345",
+                        },
+                    },
+                    "errors": [],
+                }
+            ]
+        },
+        error_by_url={
+            nexus_url: MetadataFetchError(REQUEST_FAILURE, "direct Nexus lookup failed")
+        },
+    )
+
+    report = check_updates_for_inventory(
+        inventory,
+        fetcher=fetcher,
+        nexus_api_key="test-api-key",
+    )
+
+    assert report.statuses[0].state == "up_to_date"
+    assert fetcher.calls == [(nexus_url, {"apikey": "test-api-key"})]
+    assert len(fetcher.post_calls) == 1
 
 
 def test_malformed_nexus_updatekey_is_reported_explicitly() -> None:

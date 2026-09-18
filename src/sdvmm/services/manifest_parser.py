@@ -133,6 +133,11 @@ def parse_manifest_text(raw_text: str, mod_dir: Path, manifest_path: Path) -> Ma
     dependencies = _merge_dependencies(dependencies + content_pack_for_dependencies)
     warnings.extend(content_pack_for_warnings)
     update_keys = _parse_update_keys(raw_data.get("UpdateKeys"))
+    content_pack_for = (
+        content_pack_for_dependencies[0].unique_id
+        if content_pack_for_dependencies
+        else None
+    )
 
     manifest = ModManifest(
         unique_id=unique_id.strip(),
@@ -140,6 +145,7 @@ def parse_manifest_text(raw_text: str, mod_dir: Path, manifest_path: Path) -> Ma
         version=version.strip(),
         dependencies=dependencies,
         update_keys=update_keys,
+        content_pack_for=content_pack_for,
     )
 
     return ManifestParseResult(manifest=manifest, warnings=tuple(warnings))

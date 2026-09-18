@@ -107,6 +107,23 @@ def check_app_update_status(
             ),
         )
 
+    if comparison > 0:
+        return AppUpdateStatus(
+            state="newer_than_latest",
+            current_version=normalized_current_version,
+            latest_version=latest_version,
+            update_page_url=release_page_url,
+            message=_localizer_text(
+                "status.app_newer_than_latest",
+                fallback=(
+                    "Cinderleaf {installed} is newer than the latest public "
+                    "release ({latest})."
+                ),
+                installed=normalized_current_version,
+                latest=latest_version,
+            ),
+        )
+
     return AppUpdateStatus(
         state="up_to_date",
         current_version=normalized_current_version,

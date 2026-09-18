@@ -39,6 +39,7 @@ _MISSING_DEPENDENCY_PATTERNS = (
     "requires mods which aren't installed",
     "requires these mods",
     "which aren't installed",
+    "which isn't installed",
 )
 _RUNTIME_ISSUE_PATTERNS = (
     "unhandled exception",
@@ -59,20 +60,29 @@ _FAILED_TO_LOAD_RE = re.compile(
     re.IGNORECASE,
 )
 _DEPENDENCY_ID_RE = re.compile(r"\b(?=[A-Za-z0-9_.-]*[A-Za-z])[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\b")
-_TRAILING_PARENS_RE = re.compile(r"\((?P<content>[^()]+)\)\s*$")
+_TRAILING_PARENS_RE = re.compile(r"\((?P<content>[^()]+)\)[\s.;:!]*$")
 _MISSING_DEPENDENCY_INLINE_RE = re.compile(
-    r"\b(?:needs|requires)\s+(?P<content>.+?),\s+which\s+(?:isn't|aren't)\s+installed\b",
+    r"\b(?:needs|requires)\s+(?P<content>.+?),?\s+which\s+(?:isn't|aren't)\s+installed\b",
+    re.IGNORECASE,
+)
+_MISSING_DEPENDENCY_TRAILING_LIST_RE = re.compile(
+    r"\bwhich\s+(?:isn't|aren't)\s+installed(?:\s+or\s+working)?\s*:\s*(?P<content>.+)$",
     re.IGNORECASE,
 )
 _MISSING_DEPENDENCY_COLON_RE = re.compile(
     r"\b(?:missing dependencies|requires these mods)\b\s*:?\s*(?P<content>.+)$",
     re.IGNORECASE,
 )
+_DEPENDENCY_NOISE_PREFIX_RE = re.compile(r"^(?:the\s+)?mods?\b\s*", re.IGNORECASE)
 _MODS_PATH_OVERRIDE_RE = re.compile(
     r"--mods-path(?:=|\s+)(?:\"(?P<quoted>[^\"]+)\"|(?P<unquoted>.+?))(?=\s--[A-Za-z0-9_-]+|\s+\|\s*|$)",
     re.IGNORECASE,
 )
 _LOG_PREFIX_RE = re.compile(r"^\[[^\]]+\]\s*")
+_LOG_LEVEL_RE = re.compile(
+    r"^\[[^\]]*\b(?P<level>WARN(?:ING)?|ERROR|FATAL)\b[^\]]*\]",
+    re.IGNORECASE,
+)
 _MOD_UPDATE_ALERT_RE = re.compile(
     r"^(?P<name>.+?)\s+(?P<latest_version>[^\s:]+):\s+"
     r"(?P<page_url>https?://\S+)\s+\(you have (?P<installed_version>[^)]+)\)",
@@ -315,7 +325,9 @@ def parse_smapi_log_text(
             seen_mods_path_overrides.add(key)
             detected_mods_path_overrides.append(override)
 
-        lowered = line.casefold()
+        content = _strip_log_prefix(line)
+        lowered = content.casefold()
+        log_level = _log_level_from_prefix(line)
         _append_mod_update_alert_from_line(
             line_number=line_number,
             line=line,
@@ -326,7 +338,7 @@ def parse_smapi_log_text(
         if "skipped mods" in lowered:
             in_skipped_mods_block = True
 
-        if "[error" in lowered or "[fatal" in lowered:
+        if log_level in {"error", "fatal"}:
             _append_finding(
                 findings=findings,
                 counts_by_kind=counts_by_kind,
@@ -334,7 +346,7 @@ def parse_smapi_log_text(
                 line_number=line_number,
                 message=_compact_log_line(line),
             )
-        if "[warn" in lowered:
+        if log_level == "warn":
             _append_finding(
                 findings=findings,
                 counts_by_kind=counts_by_kind,
@@ -343,7 +355,7 @@ def parse_smapi_log_text(
                 message=_compact_log_line(line),
             )
 
-        skipped_mod_match = _SKIPPED_MOD_BULLET_RE.match(line)
+        skipped_mod_match = _SKIPPED_MOD_BULLET_RE.match(content)
         if in_skipped_mods_block and skipped_mod_match is not None:
             mod_name_text = skipped_mod_match.group("name").strip()
             mod_name, mod_unique_id = _extract_mod_identity(mod_name_text)
@@ -360,7 +372,7 @@ def parse_smapi_log_text(
                 findings=findings,
                 counts_by_kind=counts_by_kind,
                 line_number=line_number,
-                line=line,
+                line=content,
                 requiring_mod_name=mod_name,
                 requiring_mod_unique_id=mod_unique_id,
                 missing_dependencies=missing_dependencies,
@@ -369,7 +381,7 @@ def parse_smapi_log_text(
             )
             continue
 
-        failed_to_load_match = _FAILED_TO_LOAD_RE.match(line)
+        failed_to_load_match = _FAILED_TO_LOAD_RE.match(content)
         requiring_mod_name: str | None = None
         requiring_mod_unique_id: str | None = None
         if failed_to_load_match is not None:
@@ -393,7 +405,7 @@ def parse_smapi_log_text(
             findings=findings,
             counts_by_kind=counts_by_kind,
             line_number=line_number,
-            line=line,
+            line=content,
             requiring_mod_name=requiring_mod_name,
             requiring_mod_unique_id=requiring_mod_unique_id,
             missing_dependencies=missing_dependencies,
@@ -612,6 +624,14 @@ def _strip_log_prefix(line: str) -> str:
     return _LOG_PREFIX_RE.sub("", line.strip()).strip()
 
 
+def _log_level_from_prefix(line: str) -> str | None:
+    match = _LOG_LEVEL_RE.match(line.strip())
+    if match is None:
+        return None
+    level = match.group("level").casefold()
+    return "warn" if level.startswith("warn") else level
+
+
 def _append_missing_dependency_from_line(
     *,
     findings: list[SmapiLogFinding],
@@ -717,6 +737,10 @@ def _extract_missing_dependency_segment(line: str) -> str:
         if content:
             return content
 
+    trailing_list_match = _MISSING_DEPENDENCY_TRAILING_LIST_RE.search(line)
+    if trailing_list_match is not None:
+        return trailing_list_match.group("content").strip(" .:")
+
     inline_match = _MISSING_DEPENDENCY_INLINE_RE.search(line)
     if inline_match is not None:
         return inline_match.group("content").strip(" .:")
@@ -735,6 +759,11 @@ def _split_dependency_items(text: str) -> tuple[str, ...]:
 
 def _parse_dependency_descriptor(raw_item: str) -> tuple[str | None, str | None, str | None]:
     text = raw_item.strip().strip("-.;:")
+    if not text or _looks_like_version_only(text):
+        return None, None, None
+    # "mods", "the mod", etc. are filler from phrasings like "needs mods which
+    # aren't installed"; they name nothing, so they must not become entries.
+    text = _DEPENDENCY_NOISE_PREFIX_RE.sub("", text).strip()
     if not text or _looks_like_version_only(text):
         return None, None, None
 

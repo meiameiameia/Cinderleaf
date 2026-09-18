@@ -44,4 +44,23 @@ def test_parse_manifest_adds_required_dependency_from_content_pack_for() -> None
     dependency = parse_result.manifest.dependencies[0]
     assert dependency.unique_id == "Pathoschild.ContentPatcher"
     assert dependency.required is True
+    assert parse_result.manifest.content_pack_for == "Pathoschild.ContentPatcher"
+
+
+def test_parse_manifest_content_pack_for_is_none_when_absent() -> None:
+    parse_result = parse_manifest_text(
+        raw_text=(
+            "{"
+            '"Name":"Regular Mod",'
+            '"UniqueID":"Sample.Regular",'
+            '"Version":"1.0.0",'
+            '"Dependencies":[{"UniqueID":"Pathoschild.ContentPatcher","IsRequired":false}]'
+            "}"
+        ),
+        mod_dir=Path("/tmp/Regular"),
+        manifest_path=Path("/tmp/Regular/manifest.json"),
+    )
+
+    assert parse_result.manifest is not None
+    assert parse_result.manifest.content_pack_for is None
 

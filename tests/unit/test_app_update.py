@@ -27,6 +27,18 @@ def test_check_app_update_status_reports_up_to_date() -> None:
     assert status.latest_version == "1.1.7"
 
 
+def test_check_app_update_status_reports_newer_than_latest_public_release() -> None:
+    fetcher = _FakeFetcher(payload={"tag_name": "1.5.0"})
+
+    status = check_app_update_status(current_version="1.6.0", fetcher=fetcher)
+
+    assert status.state == "newer_than_latest"
+    assert status.current_version == "1.6.0"
+    assert status.latest_version == "1.5.0"
+    assert "1.6.0" in status.message
+    assert "1.5.0" in status.message
+
+
 def test_check_app_update_status_reports_unable_when_remote_check_fails() -> None:
     fetcher = _FakeFetcher(error=MetadataFetchError(REQUEST_FAILURE, "network unavailable"))
 

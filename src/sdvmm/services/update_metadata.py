@@ -448,14 +448,21 @@ class NexusProviderAdapter:
         timeout_seconds: float,
         nexus_api_key: str | None = None,
     ) -> dict[str, Any]:
-        _ = mod
         if not link.metadata_url:
             raise MetadataFetchError(UNEXPECTED_PROVIDER_RESPONSE, "Nexus provider has no metadata URL")
 
         api_key = normalize_nexus_api_key(nexus_api_key)
         if not api_key:
             api_key = normalize_nexus_api_key(os.getenv(NEXUS_API_KEY_ENV, ""))
+        fallback_update_key = _nexus_smapi_update_key(link)
         if not api_key:
+            if fallback_update_key is not None:
+                return _fetch_smapi_metadata_fallback(
+                    mod=mod,
+                    update_key=fallback_update_key,
+                    fetcher=fetcher,
+                    timeout_seconds=timeout_seconds,
+                )
             raise MetadataFetchError(
                 MISSING_API_KEY,
                 (
@@ -463,15 +470,40 @@ class NexusProviderAdapter:
                 ),
             )
 
-        return fetcher.fetch_json(
-            link.metadata_url,
-            timeout_seconds,
-            headers={
-                "apikey": api_key,
-            },
-        )
+        try:
+            return fetcher.fetch_json(
+                link.metadata_url,
+                timeout_seconds,
+                headers={
+                    "apikey": api_key,
+                },
+            )
+        except MetadataFetchError as exc:
+            if fallback_update_key is None:
+                raise
+            try:
+                return _fetch_smapi_metadata_fallback(
+                    mod=mod,
+                    update_key=fallback_update_key,
+                    fetcher=fetcher,
+                    timeout_seconds=timeout_seconds,
+                )
+            except MetadataFetchError:
+                raise exc
 
     def extract_version(self, payload: Mapping[str, Any]) -> str | None:
+        suggested = _extract_smapi_first_suggested_update(payload)
+        if suggested is not None:
+            version = suggested.get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+
+        metadata_entry = _extract_smapi_first_metadata_entry(payload)
+        if metadata_entry is not None:
+            version = metadata_entry.get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+
         for key in ("version", "mod_version"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
@@ -480,6 +512,18 @@ class NexusProviderAdapter:
         return _extract_generic_version(payload)
 
     def extract_page_url(self, payload: Mapping[str, Any]) -> str | None:
+        suggested = _extract_smapi_first_suggested_update(payload)
+        if suggested is not None:
+            value = suggested.get("url")
+            if isinstance(value, str) and _looks_like_url(value):
+                return value.strip()
+
+        metadata_entry = _extract_smapi_first_metadata_entry(payload)
+        if metadata_entry is not None:
+            value = metadata_entry.get("url")
+            if isinstance(value, str) and _looks_like_url(value):
+                return value.strip()
+
         value = payload.get("url")
         if isinstance(value, str) and _looks_like_url(value) and "nexusmods.com" in value.casefold():
             return value.strip()
@@ -1191,6 +1235,16 @@ def _parse_nexus_key(raw_value: str) -> tuple[str, str] | None:
         return game_domain, mod_id
 
     return None
+
+
+def _nexus_smapi_update_key(link: RemoteModLink) -> str | None:
+    parsed = _parse_nexus_key(link.key)
+    if parsed is None:
+        return None
+    game_domain, mod_id = parsed
+    if game_domain != "stardewvalley":
+        return None
+    return f"Nexus:{mod_id}"
 
 
 def _parse_curseforge_key(raw_value: str) -> str | None:

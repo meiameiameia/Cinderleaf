@@ -247,6 +247,7 @@ def _to_installed_mod(mod_dir: Path, manifest: ModManifest) -> InstalledMod:
         manifest_path=mod_dir / "manifest.json",
         dependencies=manifest.dependencies,
         update_keys=manifest.update_keys,
+        content_pack_for=manifest.content_pack_for,
     )
 
 
