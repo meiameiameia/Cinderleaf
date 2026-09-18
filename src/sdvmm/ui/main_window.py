@@ -14,10 +14,14 @@ import time
 import tomllib
 
 from PySide6.QtCore import QEvent
+from PySide6.QtCore import QItemSelectionModel
+from PySide6.QtCore import QModelIndex
 from PySide6.QtCore import QObject
 from PySide6.QtCore import QTimer
 from PySide6.QtCore import QThreadPool
 from PySide6.QtCore import QUrl
+from PySide6.QtCore import QPointF
+from PySide6.QtCore import QRect
 from PySide6.QtCore import QRectF
 from PySide6.QtCore import QSize
 from PySide6.QtCore import Qt
@@ -26,11 +30,14 @@ from PySide6.QtGui import QBrush
 from PySide6.QtGui import QColor
 from PySide6.QtGui import QFont
 from PySide6.QtGui import QIcon
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeySequence
 from PySide6.QtGui import QPainter
 from PySide6.QtGui import QImage
 from PySide6.QtGui import QPalette
 from PySide6.QtGui import QPen
 from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -43,7 +50,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QGroupBox,
     QGridLayout,
     QHeaderView,
@@ -60,6 +66,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QStyle,
+    QStyleOptionHeader,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -172,7 +179,12 @@ from sdvmm.domain.models import (
 )
 from sdvmm.domain.scan_codes import DIRECT_MOD, MULTI_MOD_CONTAINER, NESTED_MOD_CONTAINER
 from sdvmm.domain.unique_id import canonicalize_unique_id
-from sdvmm.domain.dependency_codes import SATISFIED
+from sdvmm.domain.dependency_codes import (
+    MISSING_REQUIRED_DEPENDENCY,
+    OPTIONAL_DEPENDENCY_MISSING,
+    SATISFIED,
+    UNRESOLVED_DEPENDENCY_CONTEXT,
+)
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB, DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.smapi_codes import (
@@ -187,6 +199,7 @@ from sdvmm.domain.smapi_log_codes import (
     SMAPI_LOG_FAILED_MOD,
     SMAPI_LOG_MISSING_DEPENDENCY,
     SMAPI_LOG_NOT_FOUND,
+    SMAPI_LOG_PARSED,
     SMAPI_LOG_RUNTIME_ISSUE,
     SMAPI_LOG_SOURCE_AUTO_DETECTED,
     SMAPI_LOG_UNABLE_TO_DETERMINE,
@@ -199,6 +212,8 @@ from sdvmm.domain.update_codes import (
     NO_PROVIDER_MAPPING,
     REMOTE_METADATA_LOOKUP_FAILED,
     UNSUPPORTED_UPDATE_KEY_FORMAT,
+    UPDATE_AVAILABLE,
+    UP_TO_DATE,
 )
 from sdvmm.ui.background_task import BackgroundTask
 from sdvmm.ui.archive_tab_surface import ArchiveTabSurface
@@ -206,6 +221,7 @@ from sdvmm.ui.discovery_tab_surface import DiscoveryTabSurface
 from sdvmm.ui.global_status_strip import GlobalStatusStrip
 from sdvmm.ui.plan_install_tab_surface import PlanInstallTabSurface
 from sdvmm.ui.setup_configuration_surface import SetupConfigurationSurface
+from sdvmm.ui.stitch_theme import STITCH_TOKENS
 from sdvmm.ui.stitch_theme import build_stitch_compact_widgets_stylesheet
 from sdvmm.ui.top_context_surface import TopContextSurface
 
@@ -233,6 +249,7 @@ _ROLE_MOD_TOGGLEABLE = int(Qt.ItemDataRole.UserRole) + 12
 _ROLE_MOD_TOGGLE_REASON = int(Qt.ItemDataRole.UserRole) + 13
 _ROLE_MOD_MEMBER_FOLDER_PATHS = int(Qt.ItemDataRole.UserRole) + 14
 _ROLE_MOD_IS_GROUPED = int(Qt.ItemDataRole.UserRole) + 15
+_ROLE_MOD_UPDATE_STATE_CODE = int(Qt.ItemDataRole.UserRole) + 16
 
 def _no_plan_review_summary_text() -> str:
     return get_active_ui_localizer().text("install.no_plan_summary")
@@ -388,6 +405,156 @@ class _ComboBoxWheelGuard(QObject):
         return super().eventFilter(watched, event)
 
 
+class _GeometryChangeCallback(QObject):
+    """Re-run a layout decision when a watched widget resizes or re-lays out."""
+
+    def __init__(self, callback: Callable[[], None], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._callback = callback
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.LayoutRequest):
+            self._callback()
+        return False
+
+
+class _SortIndicatorHeaderView(QHeaderView):
+    """Header that paints the sort chevron directly after its section label.
+
+    The stylesheet hides the platform indicator, which Windows styles draw above
+    the label and stylesheets can only pin to a section edge.
+    """
+
+    _CHEVRON_WIDTH = 8
+    _CHEVRON_GAP = 6
+
+    def paintSection(self, painter: QPainter, rect: QRect, logical_index: int) -> None:  # noqa: N802
+        painter.save()
+        super().paintSection(painter, rect, logical_index)
+        painter.restore()
+        if (
+            not rect.isValid()
+            or not self.isSortIndicatorShown()
+            or self.sortIndicatorSection() != logical_index
+        ):
+            return
+        option = QStyleOptionHeader()
+        self.initStyleOption(option)
+        option.rect = rect
+        option.section = logical_index
+        option.text = str(
+            self.model().headerData(logical_index, self.orientation(), Qt.ItemDataRole.DisplayRole)
+            or ""
+        )
+        option.textAlignment = self.defaultAlignment()
+        label_rect = self.style().subElementRect(QStyle.SubElement.SE_HeaderLabel, option, self)
+        text_rect = self.fontMetrics().boundingRect(
+            label_rect, int(option.textAlignment), option.text
+        )
+        # Section right padding reserves the chevron area when the label elides.
+        left = min(text_rect.right(), label_rect.right()) + self._CHEVRON_GAP
+        center_y = rect.center().y() + 0.5
+        # Ascending points up, descending points down.
+        rise = 2.0 if self.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder else -2.0
+        pen = QPen(QColor(STITCH_TOKENS["text_secondary"]), 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(pen)
+        painter.drawPolyline(
+            [
+                QPointF(left, center_y + rise),
+                QPointF(left + self._CHEVRON_WIDTH / 2, center_y - rise),
+                QPointF(left + self._CHEVRON_WIDTH, center_y + rise),
+            ]
+        )
+        painter.restore()
+
+
+class _TableWidthBalancer(QObject):
+    """Give spare viewport width to a table's name column.
+
+    Only width added automatically is ever taken back, so metadata columns keep
+    their widths and horizontal scrolling still starts once they need more room
+    than the viewport. After the owner resizes the name column by hand, that
+    width is kept as-is for the rest of the session.
+    """
+
+    def __init__(self, table: QTableWidget, column: int) -> None:
+        super().__init__(table)
+        self._table = table
+        self._column = column
+        self._auto_extra = 0
+        self._applying = False
+        self._pointer_active = False
+        self.user_sized = False
+        header = table.horizontalHeader()
+        header.sectionResized.connect(self._on_section_resized)
+        # Keep direct references: the filter must not call back into a table
+        # that is being destroyed.
+        self._table_viewport = table.viewport()
+        self._header_viewport = header.viewport()
+        self._header_viewport.installEventFilter(self)
+        self._table_viewport.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        event_type = event.type()
+        if watched is self._table_viewport:
+            if event_type == QEvent.Type.Resize:
+                self.rebalance()
+        elif watched is self._header_viewport:
+            if event_type in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+                self._pointer_active = True
+            elif event_type == QEvent.Type.MouseButtonRelease:
+                self._pointer_active = False
+        return False
+
+    def _on_section_resized(self, logical_index: int, _old_size: int, _new_size: int) -> None:
+        if self._applying:
+            return
+        if logical_index == self._column:
+            # Any external change to this column defines its new base width.
+            self._auto_extra = 0
+            if self._pointer_active:
+                self.user_sized = True
+        self.rebalance()
+
+    def rebalance(self) -> None:
+        header = self._table.horizontalHeader()
+        if self.user_sized or self._column >= header.count():
+            return
+        current = header.sectionSize(self._column)
+        base = max(current - self._auto_extra, header.minimumSectionSize())
+        other_columns = header.length() - current
+        extra = max(0, self._table.viewport().width() - other_columns - base)
+        self._auto_extra = extra
+        if base + extra != current:
+            self._applying = True
+            try:
+                header.resizeSection(self._column, base + extra)
+            finally:
+                self._applying = False
+
+
+class _ReadOnlyOutputTextEdit(QPlainTextEdit):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setReadOnly(True)
+        self.setTabChangesFocus(True)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt naming
+        if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            forward = event.key() == Qt.Key.Key_Tab and not bool(
+                event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            )
+            if self.focusNextPrevChild(forward):
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
 def _inventory_path_lookup_key(path: Path) -> str:
     return os.path.abspath(os.path.normpath(str(path.expanduser()))).casefold()
 
@@ -444,6 +611,49 @@ def _inventory_mods_share_family_identity(left: InstalledMod, right: InstalledMo
     if not left_name or not right_name:
         return False
     return left_name.startswith(right_name) or right_name.startswith(left_name)
+
+
+@dataclass(frozen=True, slots=True)
+class _InventoryLinkFacts:
+    """Per-mod values used to decide whether two library rows belong together."""
+
+    canonical_id: str
+    dependency_ids: set[str]
+    update_keys: set[str]
+    base_name: str
+    family_name: str
+
+
+def _inventory_rows_link(left: _InventoryLinkFacts, right: _InventoryLinkFacts) -> bool:
+    if not left.canonical_id or not right.canonical_id:
+        return False
+    shares_family_identity = (
+        (
+            left.canonical_id.startswith(f"{right.canonical_id}.")
+            or right.canonical_id.startswith(f"{left.canonical_id}.")
+        )
+        and bool(left.family_name)
+        and bool(right.family_name)
+        and (
+            left.family_name.startswith(right.family_name)
+            or right.family_name.startswith(left.family_name)
+        )
+    )
+    has_direct_dependency_link = (
+        right.canonical_id in left.dependency_ids or left.canonical_id in right.dependency_ids
+    )
+    if not has_direct_dependency_link and not shares_family_identity:
+        return False
+    has_shared_update_key = bool(left.update_keys & right.update_keys)
+    has_single_sided_update_key = bool(left.update_keys) != bool(right.update_keys)
+    return bool(
+        has_shared_update_key
+        or (
+            has_single_sided_update_key
+            and (left.base_name == right.base_name or shares_family_identity)
+        )
+        or (not left.update_keys and not right.update_keys and shares_family_identity)
+    )
 
 
 def _inventory_group_display_name(member_mods: tuple[InstalledMod, ...]) -> str:
@@ -553,14 +763,9 @@ def _inventory_depended_on_unique_ids(inventory: ModsInventory) -> set[str]:
 
 
 def _inventory_is_content_pack(mod: InstalledMod) -> bool:
-    if mod.name.startswith("[") or mod.folder_path.name.startswith("["):
+    if mod.content_pack_for is not None:
         return True
-    dependency_ids = {
-        canonicalize_unique_id(dependency.unique_id)
-        for dependency in mod.dependencies
-        if dependency.unique_id.strip()
-    }
-    return canonicalize_unique_id("Pathoschild.ContentPatcher") in dependency_ids
+    return mod.name.startswith("[") or mod.folder_path.name.startswith("[")
 
 
 def _inventory_row_type_label(
@@ -1220,30 +1425,49 @@ def _build_inventory_row_entries(
             candidate_rows_by_key[mod_key] = (index, mod, enabled)
             adjacency.setdefault(mod_key, set())
         candidate_keys = tuple(candidate_rows_by_key.keys())
-        for index, left_key in enumerate(candidate_keys):
-            _, left_mod, _ = candidate_rows_by_key[left_key]
-            left_update_keys = _inventory_effective_update_keys(left_mod)
-            for right_key in candidate_keys[index + 1 :]:
-                _, right_mod, _ = candidate_rows_by_key[right_key]
-                right_update_keys = _inventory_effective_update_keys(right_mod)
-                has_shared_update_key = bool(left_update_keys & right_update_keys)
-                has_single_sided_update_key = bool(left_update_keys) != bool(right_update_keys)
-                shares_base_name = (
-                    _inventory_group_base_name(left_mod).casefold()
-                    == _inventory_group_base_name(right_mod).casefold()
-                )
-                shares_family_identity = _inventory_mods_share_family_identity(left_mod, right_mod)
-                has_direct_dependency_link = _inventory_has_direct_dependency_link(left_mod, right_mod)
-                if not has_direct_dependency_link and not shares_family_identity:
-                    continue
-                if not (
-                    has_shared_update_key
-                    or (has_single_sided_update_key and (shares_base_name or shares_family_identity))
-                    or (not left_update_keys and not right_update_keys and shares_family_identity)
-                ):
-                    continue
-                adjacency[left_key].add(right_key)
-                adjacency[right_key].add(left_key)
+        # A link needs either a family UniqueID prefix or a direct dependency, so
+        # index those and check only the mods that can qualify. Comparing every
+        # pair cost hundreds of thousands of comparisons on a large library.
+        prepared: dict[str, _InventoryLinkFacts] = {}
+        keys_by_unique_id: dict[str, list[str]] = {}
+        keys_by_dependency_id: dict[str, list[str]] = {}
+        for candidate_key in candidate_keys:
+            _, candidate_mod, _ = candidate_rows_by_key[candidate_key]
+            canonical_id = canonicalize_unique_id(candidate_mod.unique_id)
+            dependency_ids = {
+                canonicalize_unique_id(dependency.unique_id)
+                for dependency in candidate_mod.dependencies
+                if dependency.unique_id.strip()
+            }
+            prepared[candidate_key] = _InventoryLinkFacts(
+                canonical_id=canonical_id,
+                dependency_ids=dependency_ids,
+                update_keys=_inventory_effective_update_keys(candidate_mod),
+                base_name=_inventory_group_base_name(candidate_mod).casefold(),
+                family_name=_inventory_group_normalized_family_name(candidate_mod),
+            )
+            if canonical_id:
+                keys_by_unique_id.setdefault(canonical_id, []).append(candidate_key)
+            for dependency_id in dependency_ids:
+                if dependency_id:
+                    keys_by_dependency_id.setdefault(dependency_id, []).append(candidate_key)
+
+        for left_key in candidate_keys:
+            left = prepared[left_key]
+            partner_keys: set[str] = set()
+            if left.canonical_id:
+                ancestor_id = left.canonical_id
+                while "." in ancestor_id:
+                    ancestor_id = ancestor_id.rpartition(".")[0]
+                    partner_keys.update(keys_by_unique_id.get(ancestor_id, ()))
+                partner_keys.update(keys_by_dependency_id.get(left.canonical_id, ()))
+            for dependency_id in left.dependency_ids:
+                partner_keys.update(keys_by_unique_id.get(dependency_id, ()))
+            partner_keys.discard(left_key)
+            for right_key in partner_keys:
+                if _inventory_rows_link(left, prepared[right_key]):
+                    adjacency[left_key].add(right_key)
+                    adjacency[right_key].add(left_key)
 
         visited: set[str] = set()
         for mod_key in candidate_keys:
@@ -1334,6 +1558,7 @@ class MainWindow(QMainWindow):
         self._current_update_report: ModUpdateReport | None = None
         self._current_mods_compare_result: ModsCompareResult | None = None
         self._current_discovery_result: ModDiscoveryResult | None = None
+        self._discovery_last_search_error: str | None = None
         self._discovery_correlations: tuple[DiscoveryContextCorrelation, ...] = tuple()
         self._real_mod_profiles: tuple[SandboxModProfile, ...] = tuple()
         self._sandbox_mod_profiles: tuple[SandboxModProfile, ...] = tuple()
@@ -1365,6 +1590,7 @@ class MainWindow(QMainWindow):
         self._last_app_update_status: AppUpdateStatus | None = None
         self._thread_pool = QThreadPool.globalInstance()
         self._active_operation_name: str | None = None
+        self._active_operation_display_label: str | None = None
         self._active_background_task: BackgroundTask | None = None
         self._active_operation_button: QWidget | None = None
         self._active_operation_button_text: str | None = None
@@ -1375,6 +1601,9 @@ class MainWindow(QMainWindow):
         self._workspace_nav_manual_override = False
         self._workspace_nav_collapsed = False
         self._workspace_nav_release_status_requested_visible = False
+        self._history_preferred_tab_index = 0
+        self._history_archives_auto_loaded = False
+        self._previous_workspace_page: QWidget | None = None
         self._startup_checks_scheduled = False
         self._startup_checks_completed = False
         self._startup_auto_scan_started = False
@@ -1688,6 +1917,10 @@ class MainWindow(QMainWindow):
         self._compare_summary_label.setObjectName("compare_summary_label")
         self._compare_summary_label.setProperty("translationKey", "compare.summary")
         self._compare_summary_label.setWordWrap(True)
+        self._compare_summary_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
         _set_auxiliary_label_style(self._compare_summary_label)
         self._compare_summary_label.setToolTip(
             self._tr("compare.summary_tooltip")
@@ -1754,6 +1987,10 @@ class MainWindow(QMainWindow):
         self._compare_category_help_label.setObjectName("compare_category_help_label")
         self._compare_category_help_label.setProperty("translationKey", "compare.category_help")
         self._compare_category_help_label.setWordWrap(True)
+        self._compare_category_help_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
         _set_auxiliary_label_style(self._compare_category_help_label)
         self._compare_category_help_label.setVisible(False)
         self._compare_results_table = QTableWidget(0, 5)
@@ -1786,14 +2023,15 @@ class MainWindow(QMainWindow):
             self._compare_results_table,
             minimum_visible_rows=8,
             minimum_section_size=64,
-            initial_widths=(230, 140, 96, 110, 240),
+            initial_widths=(200, 190, 96, 110, 150),
+            name_column=0,
         )
         self._open_remote_page_button = QPushButton(self._tr("library.open_page"))
         self._open_remote_page_button.setObjectName("inventory_open_remote_page_button")
         self._open_remote_page_button.setProperty("translationKey", "library.open_page")
         self._open_remote_page_button.setEnabled(False)
         self._open_remote_page_button.setToolTip(
-            "Select an actionable mod row to open its page."
+            self._tr("library.tooltip.select_ready_row_open_page")
         )
         self._find_source_hint_button = QPushButton(self._tr("library.find_source"))
         self._find_source_hint_button.setObjectName("inventory_find_source_hint_button")
@@ -1852,17 +2090,17 @@ class MainWindow(QMainWindow):
         self._install_target_combo = QComboBox()
         self._install_target_combo.setObjectName("plan_install_target_combo")
         self._install_target_combo.addItem(
-            "Sandbox Mods destination (safe/test)",
+            self._tr("install.target.sandbox"),
             INSTALL_TARGET_SANDBOX_MODS,
         )
         self._install_target_combo.addItem(
-            "Game Mods destination (real)",
+            self._tr("install.target.real"),
             INSTALL_TARGET_CONFIGURED_REAL_MODS,
         )
         _configure_combo_box_readability(
             self._install_target_combo,
             minimum_contents_length=24,
-            sample_text="Sandbox Mods destination (safe/test)",
+            sample_text=self._tr("install.target.sandbox"),
         )
         self._scan_target_combo = QComboBox()
         self._scan_target_combo.addItem(self._tr("library.scan_target.real"), SCAN_TARGET_CONFIGURED_REAL_MODS)
@@ -2047,10 +2285,12 @@ class MainWindow(QMainWindow):
             "plan_install_review_explanation_label"
         )
         self._plan_review_explanation_label.setWordWrap(True)
+        self._plan_review_explanation_label.setVisible(False)
         _set_auxiliary_label_style(self._plan_review_explanation_label)
         self._plan_facts_label = QLabel(_no_plan_facts_text())
         self._plan_facts_label.setObjectName("plan_install_facts_label")
         self._plan_facts_label.setWordWrap(True)
+        self._plan_facts_label.setVisible(False)
         _set_auxiliary_label_style(self._plan_facts_label)
 
         for control in (
@@ -2078,7 +2318,7 @@ class MainWindow(QMainWindow):
             self._install_history_filter_combo,
             self._archive_retention_spinbox,
         ):
-            control.setMinimumHeight(24)
+            control.setMinimumHeight(28)
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
@@ -2105,6 +2345,7 @@ class MainWindow(QMainWindow):
             minimum_visible_rows=8,
             minimum_section_size=64,
             initial_widths=(250, 220, 96, 96, 140, 180),
+            name_column=0,
         )
         self._suppress_mod_toggle_events = False
 
@@ -2137,6 +2378,7 @@ class MainWindow(QMainWindow):
             minimum_visible_rows=7,
             minimum_section_size=72,
             initial_widths=(220, 220, 150, 110, 130, 180, 170, 180),
+            name_column=0,
         )
 
         self._archive_table = QTableWidget(0, 7)
@@ -2166,75 +2408,68 @@ class MainWindow(QMainWindow):
             minimum_visible_rows=7,
             minimum_section_size=64,
             initial_widths=(120, 190, 180, 220, 190, 96, 170),
+            name_column=3,
+            start_sorted_by_name=False,
         )
 
-        self._inventory_output_box = QPlainTextEdit()
+        self._inventory_output_box = _ReadOnlyOutputTextEdit()
         self._inventory_output_box.setObjectName("inventory_output_box")
-        self._inventory_output_box.setReadOnly(True)
         self._inventory_output_box.setMinimumHeight(72)
         self._inventory_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._discovery_output_box = QPlainTextEdit()
+        self._discovery_output_box = _ReadOnlyOutputTextEdit()
         self._discovery_output_box.setObjectName("discovery_output_box")
-        self._discovery_output_box.setReadOnly(True)
         self._discovery_output_box.setMinimumHeight(104)
         self._discovery_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._compare_output_box = QPlainTextEdit()
+        self._compare_output_box = _ReadOnlyOutputTextEdit()
         self._compare_output_box.setObjectName("compare_output_box")
-        self._compare_output_box.setReadOnly(True)
         self._compare_output_box.setMinimumHeight(84)
         self._compare_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._packages_output_box = QPlainTextEdit()
+        self._packages_output_box = _ReadOnlyOutputTextEdit()
         self._packages_output_box.setObjectName("packages_output_box")
-        self._packages_output_box.setReadOnly(True)
         self._packages_output_box.setMinimumHeight(84)
         self._packages_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._archive_output_box = QPlainTextEdit()
+        self._archive_output_box = _ReadOnlyOutputTextEdit()
         self._archive_output_box.setObjectName("archive_output_box")
-        self._archive_output_box.setReadOnly(True)
         self._archive_output_box.setMinimumHeight(84)
         self._archive_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._review_output_box = QPlainTextEdit()
+        self._review_output_box = _ReadOnlyOutputTextEdit()
         self._review_output_box.setObjectName("plan_install_output_box")
-        self._review_output_box.setReadOnly(True)
         self._review_output_box.setMinimumHeight(168)
         self._review_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._recovery_output_box = QPlainTextEdit()
+        self._recovery_output_box = _ReadOnlyOutputTextEdit()
         self._recovery_output_box.setObjectName("recovery_output_box")
-        self._recovery_output_box.setReadOnly(True)
         self._recovery_output_box.setMinimumHeight(72)
         self._recovery_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
         self._findings_box = self._inventory_output_box
-        self._setup_output_box = QPlainTextEdit()
+        self._setup_output_box = _ReadOnlyOutputTextEdit()
         self._setup_output_box.setObjectName("setup_output_box")
-        self._setup_output_box.setReadOnly(True)
         self._setup_output_box.setMinimumHeight(72)
         self._setup_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._package_inspection_result_box = QPlainTextEdit()
-        self._package_inspection_result_box.setReadOnly(True)
+        self._package_inspection_result_box = _ReadOnlyOutputTextEdit()
         self._package_inspection_result_box.setMinimumHeight(92)
         self._package_inspection_result_box.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -2297,10 +2532,10 @@ class MainWindow(QMainWindow):
 
         self._status_strip_group = GlobalStatusStrip(localizer=self._localizer)
         self._status_strip_label = self._status_strip_group.current_status_label
-        self._top_context_expanded = True
-        self._top_context_toggle_button = QPushButton(self._tr("top_context.hide_details"))
+        self._top_context_expanded = False
+        self._top_context_toggle_button = QPushButton(self._tr("top_context.show_details"))
         self._top_context_toggle_button.setObjectName("top_context_toggle_button")
-        self._top_context_toggle_button.setProperty("translationKey", "top_context.hide_details")
+        self._top_context_toggle_button.setProperty("translationKey", "top_context.show_details")
         self._top_context_toggle_button.clicked.connect(self._toggle_top_context_surface)
         _set_utility_button_style(self._top_context_toggle_button)
         self._scan_context_label = QLabel(self._tr("status.not_set"))
@@ -2340,11 +2575,10 @@ class MainWindow(QMainWindow):
         )
         _set_utility_button_style(self._open_smapi_dependency_in_discover_button)
         self._open_smapi_dependency_in_discover_button.setVisible(False)
-        self._smapi_troubleshooting_details_box = QPlainTextEdit()
+        self._smapi_troubleshooting_details_box = _ReadOnlyOutputTextEdit()
         self._smapi_troubleshooting_details_box.setObjectName(
             "mods_smapi_troubleshooting_details_box"
         )
-        self._smapi_troubleshooting_details_box.setReadOnly(True)
         self._smapi_troubleshooting_details_box.setLineWrapMode(
             QPlainTextEdit.LineWrapMode.WidgetWidth
         )
@@ -2507,15 +2741,12 @@ class MainWindow(QMainWindow):
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(1)
 
-        eyebrow_label = QLabel(eyebrow)
-        eyebrow_label.setObjectName("workspace_page_eyebrow")
         title_label = QLabel(title)
         title_label.setObjectName("workspace_page_title")
         subtitle_label = QLabel(subtitle)
         subtitle_label.setObjectName("workspace_page_subtitle")
         subtitle_label.setWordWrap(True)
 
-        text_layout.addWidget(eyebrow_label)
         text_layout.addWidget(title_label)
         text_layout.addWidget(subtitle_label)
 
@@ -2592,11 +2823,10 @@ class MainWindow(QMainWindow):
         brand_text_layout.addWidget(brand_version)
 
         brand_header_layout.addWidget(brand_icon)
-        brand_header_layout.addStretch(1)
+        brand_header_layout.addWidget(brand_text_stack, 1)
         brand_header_layout.addWidget(rail_toggle_button)
 
         brand_layout.addWidget(brand_header)
-        brand_layout.addWidget(brand_text_stack)
         brand_layout.addWidget(brand_release_status)
         rail_layout.addWidget(brand_panel)
         self._workspace_nav_brand_version_label = brand_version
@@ -2621,6 +2851,7 @@ class MainWindow(QMainWindow):
         nav_buttons_layout.setSpacing(3)
 
         self._workspace_nav_buttons: dict[QWidget, QPushButton] = {}
+        self._workspace_nav_shortcuts: list[QShortcut] = []
         for index in range(context_tabs.count()):
             page = context_tabs.widget(index)
             label = context_tabs.tabText(index)
@@ -2632,21 +2863,28 @@ class MainWindow(QMainWindow):
             nav_key = str(page.property("workspaceNavKey") or label.lower())
             button.setObjectName(f"workspace_nav_button_{nav_key}")
             button.setProperty("workspaceLabel", label)
-            button.setToolTip(label)
+            shortcut_text = f"Ctrl+{index + 1}"
+            button.setProperty("workspaceShortcut", shortcut_text)
+            button.setToolTip(f"{label} ({shortcut_text})")
+            button.setAccessibleName(f"{label} ({shortcut_text})")
             button.setIcon(_workspace_nav_icon(nav_key))
             button.setIconSize(QSize(16, 16))
-            button.setFixedHeight(30)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(
                 lambda checked=False, target=page: self._context_tabs.setCurrentWidget(target)
             )
             nav_buttons_layout.addWidget(button)
             self._workspace_nav_buttons[page] = button
+
+            shortcut = QShortcut(QKeySequence(shortcut_text), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(
+                lambda target=page: self._context_tabs.setCurrentWidget(target)
+            )
+            self._workspace_nav_shortcuts.append(shortcut)
         nav_buttons_layout.addStretch(1)
         rail_layout.addWidget(nav_buttons_widget, 1)
 
-        _apply_surface_shadow(rail, blur_radius=22, y_offset=2, alpha=72)
-        _apply_surface_shadow(brand_panel, blur_radius=16, y_offset=1, alpha=52)
         self._workspace_nav_rail = rail
         self._apply_workspace_nav_state()
         return rail
@@ -2743,18 +2981,19 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 9, 10, 10)
         layout.setSpacing(6)
         layout.addWidget(self._inventory_source_intent_actions_label)
-        buttons_grid = QGridLayout()
-        buttons_grid.setContentsMargins(0, 0, 0, 0)
-        buttons_grid.setHorizontalSpacing(8)
-        buttons_grid.setVerticalSpacing(6)
-        buttons_grid.addWidget(self._mark_local_private_button, 0, 0)
-        buttons_grid.addWidget(self._disable_tracking_button, 0, 1)
-        buttons_grid.addWidget(self._manual_source_intent_button, 1, 0)
-        buttons_grid.addWidget(self._test_source_button, 1, 1)
-        buttons_grid.addWidget(self._clear_source_intent_button, 2, 0, 1, 2)
-        buttons_grid.setColumnStretch(0, 1)
-        buttons_grid.setColumnStretch(1, 1)
-        layout.addLayout(buttons_grid)
+        buttons_column = QVBoxLayout()
+        buttons_column.setContentsMargins(0, 0, 0, 0)
+        buttons_column.setSpacing(6)
+        for button in (
+            self._mark_local_private_button,
+            self._disable_tracking_button,
+            self._manual_source_intent_button,
+            self._test_source_button,
+            self._clear_source_intent_button,
+        ):
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            buttons_column.addWidget(button)
+        layout.addLayout(buttons_column)
         widget.setVisible(False)
         return widget
 
@@ -3002,6 +3241,29 @@ class MainWindow(QMainWindow):
             button.blockSignals(True)
             button.setChecked(page is current_page)
             button.blockSignals(False)
+
+    def _on_workspace_tab_changed(self, _index: int) -> None:
+        self._sync_workspace_nav_selection()
+        current_page = self._context_tabs.currentWidget()
+        entered_from_elsewhere = current_page is not self._previous_workspace_page
+        self._previous_workspace_page = current_page
+        if not entered_from_elsewhere:
+            return
+        if hasattr(self, "_history_page") and current_page is self._history_page:
+            self._on_enter_history_workspace()
+
+    def _on_enter_history_workspace(self) -> None:
+        if hasattr(self, "_history_workspace_tabs"):
+            self._history_workspace_tabs.setCurrentIndex(self._history_preferred_tab_index)
+        if self._history_archives_auto_loaded:
+            return
+        if self._config is None:
+            return
+        if self._active_operation_name is not None:
+            return
+        # The flag is set by the refresh success callback, not here: a failed
+        # refresh must stay retryable the next time History is opened.
+        self._on_refresh_archives()
 
     def _build_setup_workspace_surface(self) -> SetupConfigurationSurface:
         browse_game_button = QPushButton(self._tr("setup.choose_game"))
@@ -3276,32 +3538,31 @@ class MainWindow(QMainWindow):
         self._launch_vanilla_button.clicked.connect(self._on_launch_vanilla)
         self._launch_vanilla_button.setProperty("translationKey", "library.launch_stardew")
         _set_secondary_button_style(self._launch_vanilla_button)
-        self._launch_vanilla_button.setFixedHeight(28)
         self._launch_vanilla_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Minimum,
         )
         self._launch_smapi_button = QPushButton(self._tr("library.launch_smapi"))
         self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
         self._launch_smapi_button.setProperty("translationKey", "library.launch_smapi")
         _set_primary_button_style(self._launch_smapi_button)
-        self._launch_smapi_button.setFixedHeight(29)
         self._launch_smapi_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Minimum,
         )
         self._launch_sandbox_dev_button = QPushButton(self._tr("library.launch_sandbox"))
         self._launch_sandbox_dev_button.setObjectName("launch_sandbox_dev_button")
         self._launch_sandbox_dev_button.setProperty("translationKey", "library.launch_sandbox")
         self._launch_sandbox_dev_button.clicked.connect(self._on_launch_sandbox_dev)
         _set_secondary_button_style(self._launch_sandbox_dev_button)
-        self._launch_sandbox_dev_button.setFixedHeight(28)
         self._launch_sandbox_dev_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Minimum,
         )
         launch_actions_widget = QWidget()
         launch_actions_widget.setObjectName("mods_inventory_launch_actions_widget")
+        # Launch buttons share the tallest hint: the bold primary label is taller
+        # than its stylesheet minimum, and Fixed siblings would cap the row below it.
         launch_actions_layout = QHBoxLayout(launch_actions_widget)
         launch_actions_layout.setContentsMargins(0, 0, 0, 0)
         launch_actions_layout.setSpacing(10)
@@ -3330,7 +3591,6 @@ class MainWindow(QMainWindow):
         self._check_smapi_update_button.clicked.connect(self._on_check_smapi_update)
         self._check_smapi_update_button.setProperty("translationKey", "library.check_smapi_version")
         _set_utility_button_style(self._check_smapi_update_button)
-        self._check_smapi_update_button.setFixedHeight(24)
         self._check_smapi_update_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3338,8 +3598,7 @@ class MainWindow(QMainWindow):
         self._check_smapi_log_button = QPushButton(self._tr("library.check_smapi_log"))
         self._check_smapi_log_button.clicked.connect(self._on_check_smapi_log)
         self._check_smapi_log_button.setProperty("translationKey", "library.check_smapi_log")
-        _set_utility_button_style(self._check_smapi_log_button)
-        self._check_smapi_log_button.setFixedHeight(24)
+        _set_primary_button_style(self._check_smapi_log_button)
         self._check_smapi_log_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3348,7 +3607,6 @@ class MainWindow(QMainWindow):
         self._load_smapi_log_button.clicked.connect(self._on_load_smapi_log)
         self._load_smapi_log_button.setProperty("translationKey", "library.open_smapi_log")
         _set_utility_button_style(self._load_smapi_log_button)
-        self._load_smapi_log_button.setFixedHeight(24)
         self._load_smapi_log_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3357,7 +3615,6 @@ class MainWindow(QMainWindow):
         self._open_smapi_page_button.clicked.connect(self._on_open_smapi_page)
         self._open_smapi_page_button.setProperty("translationKey", "library.open_smapi_website")
         _set_utility_button_style(self._open_smapi_page_button)
-        self._open_smapi_page_button.setFixedHeight(24)
         self._open_smapi_page_button.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -3412,7 +3669,8 @@ class MainWindow(QMainWindow):
         inspect_group.setObjectName("packages_import_group")
         inspect_group.setProperty("translationKey", "packages.added_package")
         inspect_group.setFlat(True)
-        inspect_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # Preferred, not Maximum: wrapped notes need their height-for-width.
+        inspect_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         inspect_group.setVisible(False)
         inspect_group.setParent(packages_top_grid)
         self._package_inspection_group = inspect_group
@@ -3432,7 +3690,8 @@ class MainWindow(QMainWindow):
         watcher_group.setObjectName("packages_watcher_group")
         watcher_group.setProperty("translationKey", "packages.watched_folders")
         watcher_group.setFlat(True)
-        watcher_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # Preferred, not Maximum: wrapped notes need their height-for-width.
+        watcher_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         watcher_layout = QGridLayout(watcher_group)
         watcher_layout.setContentsMargins(12, 10, 12, 12)
         watcher_layout.setHorizontalSpacing(10)
@@ -3570,6 +3829,7 @@ class MainWindow(QMainWindow):
 
         detected_group = QGroupBox(self._tr("packages.install_target"))
         detected_group.setObjectName("packages_review_target_group")
+        self._packages_review_target_group = detected_group
         detected_group.setProperty("translationKey", "packages.install_target")
         detected_group.setFlat(True)
         detected_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -3597,6 +3857,7 @@ class MainWindow(QMainWindow):
         detected_controls_widget = QWidget()
         detected_controls_widget.setObjectName("packages_review_controls_widget")
         detected_controls_layout = QHBoxLayout(detected_controls_widget)
+        self._packages_review_controls_layout = detected_controls_layout
         detected_controls_layout.setContentsMargins(0, 0, 0, 0)
         detected_controls_layout.setSpacing(14)
 
@@ -3653,6 +3914,7 @@ class MainWindow(QMainWindow):
         queue_header_widget = QWidget()
         queue_header_widget.setObjectName("packages_queue_header_widget")
         queue_header_layout = QHBoxLayout(queue_header_widget)
+        self._packages_queue_header_layout = queue_header_layout
         queue_header_layout.setContentsMargins(0, 0, 0, 0)
         queue_header_layout.setSpacing(10)
         queue_label = QLabel(self._tr("packages.watched_package_queue"))
@@ -3682,6 +3944,14 @@ class MainWindow(QMainWindow):
             scroll_body=True,
         )
         self._packages_page = intake_page
+        self._packages_scroll_area = intake_page.findChild(
+            QScrollArea, "packages_workspace_page_scroll_area"
+        )
+        packages_arrangement_filter = _GeometryChangeCallback(
+            self._refresh_packages_panel_arrangement, self
+        )
+        intake_page.installEventFilter(packages_arrangement_filter)
+        packages_top_grid.installEventFilter(packages_arrangement_filter)
         return intake_page
 
     def _build_compare_workspace_page(self) -> QWidget:
@@ -3691,20 +3961,39 @@ class MainWindow(QMainWindow):
         compare_layout.setContentsMargins(0, 0, 0, 0)
         compare_layout.setSpacing(10)
         compare_actions_widget = QWidget()
-        compare_actions_layout = QHBoxLayout(compare_actions_widget)
+        compare_actions_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        compare_actions_widget.setObjectName("compare_actions_widget")
+        # Run/sync actions and the result view controls are separate groups:
+        # one line when both fit, otherwise the view controls wrap below.
+        compare_actions_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, compare_actions_widget)
         compare_actions_layout.setContentsMargins(0, 0, 0, 0)
         compare_actions_layout.setSpacing(10)
-        compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
-        compare_actions_layout.addWidget(self._compare_sync_real_to_sandbox_button)
-        compare_actions_layout.addWidget(self._compare_sync_sandbox_to_real_button)
+        compare_run_actions_layout = QHBoxLayout()
+        compare_run_actions_layout.setSpacing(10)
+        compare_run_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
+        compare_run_actions_layout.addWidget(self._compare_sync_real_to_sandbox_button)
+        compare_run_actions_layout.addWidget(self._compare_sync_sandbox_to_real_button)
+        compare_run_actions_layout.addStretch(1)
+        compare_view_controls_layout = QHBoxLayout()
+        compare_view_controls_layout.setSpacing(10)
         compare_show_label = _context_caption(
             self._tr("compare.show"),
             translation_key="compare.show",
         )
-        compare_actions_layout.addWidget(compare_show_label)
-        compare_actions_layout.addWidget(self._compare_category_filter_combo)
-        compare_actions_layout.addWidget(self._compare_copy_identity_button)
+        compare_view_controls_layout.addWidget(compare_show_label)
+        compare_view_controls_layout.addWidget(self._compare_category_filter_combo)
+        compare_view_controls_layout.addWidget(self._compare_copy_identity_button)
+        compare_view_controls_layout.addStretch(1)
+        compare_actions_layout.addLayout(compare_run_actions_layout)
+        compare_actions_layout.addLayout(compare_view_controls_layout)
         compare_actions_layout.addStretch(1)
+        self._compare_actions_widget = compare_actions_widget
+        self._compare_actions_layout = compare_actions_layout
+        self._compare_run_actions_layout = compare_run_actions_layout
+        self._compare_view_controls_layout = compare_view_controls_layout
         compare_layout.addWidget(compare_actions_widget)
         compare_layout.addWidget(self._compare_summary_label)
         compare_layout.addWidget(self._compare_category_help_label)
@@ -3716,7 +4005,9 @@ class MainWindow(QMainWindow):
         compare_results_layout.setContentsMargins(12, 10, 12, 12)
         compare_results_layout.setSpacing(6)
         compare_results_layout.addWidget(self._compare_results_table)
-        compare_layout.addWidget(compare_results_group, 1)
+        compare_layout.addWidget(compare_results_group, 20)
+        compare_results_group.setVisible(False)
+        self._compare_results_group = compare_results_group
         compare_output_group = QGroupBox(self._tr("compare.detail"))
         compare_output_group.setObjectName("compare_output_group")
         compare_output_group.setProperty("translationKey", "compare.detail")
@@ -3732,6 +4023,10 @@ class MainWindow(QMainWindow):
         compare_layout.addWidget(compare_output_group)
         self._compare_output_group = compare_output_group
         compare_output_group.setVisible(False)
+        # Low-weight trailing stretch: negligible while compare_results_group
+        # (weight 20) is visible and filling the page, but it is the only
+        # stretchable item left when that group is hidden, so it pins the
+        # empty-state controls to the top instead of Qt centering them.
         compare_layout.addStretch(1)
         self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
         self._compare_sync_real_to_sandbox_button.clicked.connect(
@@ -3755,6 +4050,12 @@ class MainWindow(QMainWindow):
             scroll_body=True,
         )
         self._compare_page = compare_page
+        self._compare_scroll_area = compare_page.findChild(QScrollArea, "compare_tab_scroll_area")
+        compare_actions_filter = _GeometryChangeCallback(
+            self._refresh_compare_actions_arrangement, self
+        )
+        compare_page.installEventFilter(compare_actions_filter)
+        compare_actions_widget.installEventFilter(compare_actions_filter)
         return compare_page
 
     def _build_discovery_workspace_page(self) -> QWidget:
@@ -4123,6 +4424,10 @@ class MainWindow(QMainWindow):
             flow_hint_label=flow_hint_label,
         )
         self._mods_page = mods_page
+        inventory_controls_tabs.currentChanged.connect(
+            lambda _index: self._refresh_mods_page_header_for_active_mode()
+        )
+        self._refresh_mods_page_header_for_active_mode()
 
         setup_page = self._build_page_shell(
             object_name="setup_workspace_page",
@@ -4165,7 +4470,6 @@ class MainWindow(QMainWindow):
         self._context_group = context_group
         self._refresh_top_context_scope_summary()
         self._apply_top_context_surface_state()
-        _apply_surface_shadow(context_group, blur_radius=18, y_offset=2, alpha=60)
         return context_group
 
     def _apply_top_context_surface_state(self) -> None:
@@ -4213,6 +4517,7 @@ class MainWindow(QMainWindow):
             yes_button.setText(self._tr("dialog.yes"))
         if no_button is not None:
             no_button.setText(self._tr("dialog.no"))
+            dialog.setEscapeButton(no_button)
         return QMessageBox.StandardButton(dialog.exec())
 
     def _show_localized_info_dialog(self, *, title: str, text: str) -> None:
@@ -4225,6 +4530,38 @@ class MainWindow(QMainWindow):
         if ok_button is not None:
             ok_button.setText(self._tr("dialog.ok"))
         dialog.exec()
+
+    def _ask_localized_text_input(self, *, title: str, prompt: str) -> tuple[str, bool]:
+        dialog = QInputDialog(self)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(prompt)
+        dialog.setTextValue("")
+        dialog.setOkButtonText(self._tr("dialog.ok"))
+        dialog.setCancelButtonText(self._tr("dialog.cancel"))
+        # QInputDialog reapplies its own compact size when it is first shown, so
+        # resize on the first event-loop turn to keep translated titles readable.
+        QTimer.singleShot(0, lambda: dialog.resize(420, dialog.sizeHint().height()))
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.textValue(), accepted
+
+    def _ask_localized_item(
+        self,
+        *,
+        title: str,
+        prompt: str,
+        items: tuple[str, ...],
+    ) -> tuple[str, bool]:
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(prompt)
+        dialog.setComboBoxItems(list(items))
+        dialog.setComboBoxEditable(False)
+        dialog.setOkButtonText(self._tr("dialog.ok"))
+        dialog.setCancelButtonText(self._tr("dialog.cancel"))
+        QTimer.singleShot(0, lambda: dialog.resize(520, dialog.sizeHint().height()))
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.textValue(), accepted
 
     def _apply_workspace_nav_state(self) -> None:
         if not hasattr(self, "_workspace_nav_rail"):
@@ -4248,10 +4585,19 @@ class MainWindow(QMainWindow):
             self._workspace_shell_layout.setSpacing(6 if collapsed else 10 if compact_small_desktop else 12)
 
         if hasattr(self, "_workspace_nav_brand_panel"):
-            self._workspace_nav_brand_panel.setProperty("navCollapsed", collapsed)
+            if self._workspace_nav_brand_panel.property("navCollapsed") != collapsed:
+                self._workspace_nav_brand_panel.setProperty("navCollapsed", collapsed)
+                self._workspace_nav_brand_panel.style().unpolish(
+                    self._workspace_nav_brand_panel
+                )
+                self._workspace_nav_brand_panel.style().polish(
+                    self._workspace_nav_brand_panel
+                )
         if hasattr(self, "_workspace_nav_brand_icon_label"):
-            icon_size = 24 if collapsed else 28 if compact_small_desktop else 32
-            box_size = 30 if collapsed else 34 if compact_small_desktop else 38
+            # Collapsed, the brand mark and the toggle stack in a narrow rail, so
+            # they must fit its content width to line up with the workspace icons.
+            icon_size = 20 if collapsed else 28 if compact_small_desktop else 32
+            box_size = 24 if collapsed else 34 if compact_small_desktop else 38
             self._workspace_nav_brand_icon_label.setFixedSize(box_size, box_size)
             brand_icon_pixmap = _resolve_brand_icon_pixmap(icon_size)
             if brand_icon_pixmap is not None:
@@ -4263,11 +4609,20 @@ class MainWindow(QMainWindow):
                 else QBoxLayout.Direction.LeftToRight
             )
             self._workspace_nav_brand_header_layout.setSpacing(5 if collapsed else 6)
+            # Fixed-size children sit at the left edge of a vertical layout; centre
+            # them so the collapsed rail reads as one column.
+            centred = Qt.AlignmentFlag.AlignHCenter if collapsed else Qt.AlignmentFlag(0)
+            for stacked_widget in (
+                getattr(self, "_workspace_nav_brand_icon_label", None),
+                getattr(self, "_workspace_nav_toggle_button", None),
+            ):
+                if stacked_widget is not None:
+                    self._workspace_nav_brand_header_layout.setAlignment(stacked_widget, centred)
         if hasattr(self, "_workspace_nav_brand_layout"):
             self._workspace_nav_brand_layout.setContentsMargins(
+                4 if collapsed else 8,
                 6 if collapsed else 8,
-                6 if collapsed else 8,
-                6 if collapsed else 8,
+                4 if collapsed else 8,
                 6 if collapsed else 8,
             )
             self._workspace_nav_brand_layout.setSpacing(4 if collapsed else 6)
@@ -4295,20 +4650,27 @@ class MainWindow(QMainWindow):
                 if collapsed
                 else self._tr("shell.collapse_nav_tooltip")
             )
+            self._workspace_nav_toggle_button.setAccessibleName(
+                self._workspace_nav_toggle_button.toolTip()
+            )
 
         for page, button in getattr(self, "_workspace_nav_buttons", {}).items():
             label = str(button.property("workspaceLabel") or "")
-            button.setProperty("navCollapsed", collapsed)
+            shortcut_text = str(button.property("workspaceShortcut") or "")
+            accessible_label = (
+                f"{label} ({shortcut_text})" if shortcut_text else label
+            )
+            collapsed_state_changed = button.property("navCollapsed") != collapsed
+            if collapsed_state_changed:
+                button.setProperty("navCollapsed", collapsed)
             button.setText("" if collapsed else label)
-            button.setToolTip(label)
-            button.setFixedHeight(30)
+            button.setToolTip(accessible_label)
+            button.setAccessibleName(accessible_label)
             button.setIconSize(QSize(18 if collapsed else 16, 18 if collapsed else 16))
             button.setMinimumWidth(0)
-            button.style().unpolish(button)
-            button.style().polish(button)
-
-        self._workspace_nav_rail.style().unpolish(self._workspace_nav_rail)
-        self._workspace_nav_rail.style().polish(self._workspace_nav_rail)
+            if collapsed_state_changed:
+                button.style().unpolish(button)
+                button.style().polish(button)
 
     def _set_workspace_nav_collapsed(
         self,
@@ -4387,7 +4749,7 @@ class MainWindow(QMainWindow):
         )
 
     def _finalize_layout_initial_state(self) -> None:
-        self._context_tabs.currentChanged.connect(lambda _index: self._sync_workspace_nav_selection())
+        self._context_tabs.currentChanged.connect(self._on_workspace_tab_changed)
         self._sync_workspace_nav_selection()
         self._refresh_responsive_panel_bounds()
         self._refresh_staged_package_preview()
@@ -4409,8 +4771,6 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(self._build_top_context_surface())
         root_layout.addWidget(self._status_strip_group)
-        _apply_surface_shadow(self._status_strip_group, blur_radius=14, y_offset=1, alpha=44)
-
         setup_scroll = self._build_setup_workspace_surface()
 
         inventory_controls_tabs, flow_hint_label = self._build_inventory_controls_tabs()
@@ -4467,6 +4827,7 @@ class MainWindow(QMainWindow):
         no_button = box.button(QMessageBox.StandardButton.No)
         if no_button is not None:
             no_button.setText(self._tr("dialog.no"))
+            box.setEscapeButton(no_button)
         box.exec()
         return box.standardButton(box.clickedButton())
 
@@ -4566,6 +4927,25 @@ class MainWindow(QMainWindow):
             title_label.setText(title)
         if subtitle_label is not None:
             subtitle_label.setText(subtitle)
+
+    def _refresh_mods_page_header_for_active_mode(self) -> None:
+        if not hasattr(self, "_mods_page") or not hasattr(self, "_inventory_controls_tabs"):
+            return
+        is_smapi_mode = self._inventory_controls_tabs.currentIndex() == 1
+        if is_smapi_mode:
+            self._set_workspace_page_header_text(
+                self._mods_page,
+                eyebrow=self._tr("library.page.eyebrow.smapi"),
+                title=self._tr("library.page.title.smapi"),
+                subtitle=self._tr("library.page.subtitle.smapi"),
+            )
+        else:
+            self._set_workspace_page_header_text(
+                self._mods_page,
+                eyebrow=self._tr("library.page.eyebrow"),
+                title=self._tr("workspace.library"),
+                subtitle=self._tr("library.page.subtitle"),
+            )
 
     def _refresh_workspace_nav_text(self) -> None:
         workspace_labels = {
@@ -4706,12 +5086,7 @@ class MainWindow(QMainWindow):
             title=self._tr("setup.page.title"),
             subtitle=self._tr("setup.page.subtitle"),
         )
-        self._set_workspace_page_header_text(
-            self._mods_page,
-            eyebrow=self._tr("library.page.eyebrow"),
-            title=self._tr("workspace.library"),
-            subtitle=self._tr("library.page.subtitle"),
-        )
+        self._refresh_mods_page_header_for_active_mode()
         self._set_workspace_page_header_text(
             self._packages_page,
             eyebrow=self._tr("packages.page.eyebrow"),
@@ -4786,6 +5161,11 @@ class MainWindow(QMainWindow):
                 self._tr("table.retention"),
             ]
         )
+        for table in (
+            self._mods_table, self._compare_results_table,
+            self._discovery_table, self._archive_table,
+        ):
+            _ensure_table_header_widths(table)
         self._nexus_api_key_input.setPlaceholderText(self._tr("setup.nexus_api_key"))
         self._steam_auto_start_checkbox.setText(self._tr("setup.steam_auto_start"))
         self._steam_auto_start_checkbox.setToolTip(
@@ -5062,6 +5442,11 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        for table in (
+            self._mods_table, self._compare_results_table,
+            self._discovery_table, self._archive_table,
+        ):
+            _ensure_table_header_widths(table)
         if self._startup_checks_scheduled:
             return
         self._startup_checks_scheduled = True
@@ -5074,6 +5459,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._refresh_responsive_panel_bounds()
+        self._refresh_status_strip_tooltip()
 
     def _run_startup_checks_if_meaningful(self) -> None:
         if self._startup_checks_completed:
@@ -5087,9 +5473,9 @@ class MainWindow(QMainWindow):
 
         self._run_startup_background_check(
             operation_name="Startup environment check",
-            running_label="Startup environment check",
-            started_status="Running startup environment checks...",
-            error_title="Startup environment check failed",
+            running_label=self._tr("ui.op.startup_environment"),
+            started_status=self._tr("ui.progress.startup_environment"),
+            error_title=self._tr("ui.error.startup_environment"),
             task_fn=lambda: self._shell_service.detect_game_environment(
                 self._game_path_input.text()
             ),
@@ -5137,7 +5523,7 @@ class MainWindow(QMainWindow):
         status: GameEnvironmentStatus,
     ) -> None:
         self._apply_environment_status(status)
-        self._set_status("Startup environment check complete.")
+        self._set_status(self._tr("ui.status.startup_environment_complete"))
         self._advance_startup_checks(
             None if "invalid_game_path" in status.state_codes else self._run_startup_smapi_update_check
         )
@@ -5152,9 +5538,9 @@ class MainWindow(QMainWindow):
             return
         self._run_startup_background_check(
             operation_name="Startup SMAPI update check",
-            running_label="Startup SMAPI update check",
-            started_status="Checking SMAPI update status on startup...",
-            error_title="Startup SMAPI update check failed",
+            running_label=self._tr("ui.op.startup_smapi_update"),
+            started_status=self._tr("ui.progress.startup_smapi_update"),
+            error_title=self._tr("ui.error.startup_smapi_update"),
             task_fn=lambda: self._shell_service.check_smapi_update_status(
                 game_path_text=self._game_path_input.text(),
                 existing_config=self._config,
@@ -5177,9 +5563,9 @@ class MainWindow(QMainWindow):
             return
         self._run_startup_background_check(
             operation_name="Startup SMAPI log check",
-            running_label="Startup SMAPI log check",
-            started_status="Checking SMAPI log on startup...",
-            error_title="Startup SMAPI log check failed",
+            running_label=self._tr("ui.op.startup_smapi_log"),
+            started_status=self._tr("ui.progress.startup_smapi_log"),
+            error_title=self._tr("ui.error.startup_smapi_log"),
             task_fn=lambda: self._shell_service.check_smapi_log_troubleshooting(
                 game_path_text=self._game_path_input.text(),
                 existing_config=self._config,
@@ -5202,9 +5588,9 @@ class MainWindow(QMainWindow):
             return
         self._run_startup_background_check(
             operation_name="Startup app update check",
-            running_label="Startup app update check",
-            started_status="Checking Cinderleaf release status on startup...",
-            error_title="Startup app update check failed",
+            running_label=self._tr("ui.op.startup_app_update"),
+            started_status=self._tr("ui.progress.startup_release"),
+            error_title=self._tr("ui.error.startup_app_update"),
             task_fn=lambda: self._shell_service.check_app_update_status(
                 current_version=self._app_version_text,
             ),
@@ -5321,7 +5707,7 @@ class MainWindow(QMainWindow):
         self._run_background_operation(
             operation_name=f"Startup {target_label} scan",
             running_label=f"Startup {target_label} scan",
-            started_status="Refreshing configured mod folders in the background...",
+            started_status=self._tr("ui.progress.refreshing_folders"),
             error_title=f"Startup {target_label} scan failed",
             task_fn=lambda _target=scan_target: self._shell_service.scan_with_target(
                 scan_target=_target,
@@ -5404,7 +5790,7 @@ class MainWindow(QMainWindow):
         self._run_background_operation(
             operation_name=f"Startup {target_label} update check",
             running_label=f"Startup {target_label} update check",
-            started_status="Checking mod update status on startup...",
+            started_status=self._tr("ui.progress.startup_mod_updates"),
             error_title=f"Startup {target_label} update check failed",
             task_fn=lambda: self._shell_service.check_updates(
                 inventory,
@@ -5554,14 +5940,14 @@ class MainWindow(QMainWindow):
                 path_text=path_text,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Open folder failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.open_folder"), str(exc))
             self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
 
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
             message = f"Could not open {field_label}: {folder_path}"
-            QMessageBox.critical(self, "Open folder failed", message)
+            QMessageBox.critical(self, self._tr("ui.error.open_folder"), message)
             self._set_setup_output_text(message)
             self._set_status(message)
             return
@@ -5659,14 +6045,14 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Open folder failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.open_folder"), str(exc))
             self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
 
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
             message = f"Could not open {field_label}: {folder_path}"
-            QMessageBox.critical(self, "Open folder failed", message)
+            QMessageBox.critical(self, self._tr("ui.error.open_folder"), message)
             self._set_setup_output_text(message)
             self._set_status(message)
             return
@@ -5735,7 +6121,7 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Migration unavailable", str(exc))
+            QMessageBox.critical(self, self._tr("ui.notice.migration_unavailable"), str(exc))
             self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
@@ -5749,27 +6135,26 @@ class MainWindow(QMainWindow):
             "Canonical real Mods and game paths are not changed.\n"
             "Config updates happen only after copy verification succeeds."
         )
-        yes = QMessageBox.question(
-            self,
-            "Move Cinderleaf-managed folders",
-            confirmation,
+        yes = self._show_localized_question_dialog(
+            title="Move Cinderleaf-managed folders",
+            text=confirmation,
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Managed-folder migration cancelled.")
+            self._set_status(self._tr("ui.status.managed_migration_cancelled"))
             return
 
         self._run_background_operation(
             operation_name="Managed-folder migration",
-            running_label="Managed-folder migration",
-            started_status="Moving configured Cinderleaf-managed folders under the game folder...",
-            error_title="Managed-folder migration failed",
+            running_label=self._tr("ui.op.managed_migration"),
+            started_status=self._tr("ui.progress.moving_managed"),
+            error_title=self._tr("ui.error.managed_migration"),
             task_fn=lambda: self._shell_service.migrate_cinderleaf_managed_folders(
                 **self._current_operational_config_inputs()
             ),
             on_success=self._on_migrate_cinderleaf_managed_folders_completed,
             on_failure=self._set_setup_output_text,
             busy_button=self._migrate_managed_folders_button,
-            busy_button_text="Migrating...",
+            busy_button_text=self._tr("ui.busy.migrating"),
         )
 
     def _on_migrate_cinderleaf_managed_folders_completed(
@@ -5837,7 +6222,7 @@ class MainWindow(QMainWindow):
                 **self._current_operational_config_inputs()
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Save failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.save"), str(exc))
             self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
@@ -5854,7 +6239,7 @@ class MainWindow(QMainWindow):
         try:
             status = self._shell_service.detect_game_environment(self._game_path_input.text())
         except AppShellError as exc:
-            QMessageBox.critical(self, "Environment detect failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.environment_detect"), str(exc))
             self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
@@ -5871,7 +6256,7 @@ class MainWindow(QMainWindow):
         self._set_setup_output_and_details_text(details_text)
         self._refresh_cinderleaf_managed_paths_surface()
         self._refresh_sandbox_dev_launch_state()
-        self._set_status("Environment detection complete.")
+        self._set_status(self._tr("ui.status.environment_detected"))
 
     def _auto_configure_setup_paths_from_detected_environment(
         self,
@@ -5959,20 +6344,20 @@ class MainWindow(QMainWindow):
     def _on_export_backup_bundle(self) -> None:
         artifact_selection = self._prompt_for_backup_export_artifacts()
         if artifact_selection is None:
-            self._set_status("Backup export cancelled.")
+            self._set_status(self._tr("backup.status.export_cancelled"))
             return
         export_target = self._prompt_for_backup_export_target()
         if export_target is None:
-            self._set_status("Backup export cancelled.")
+            self._set_status(self._tr("backup.status.export_cancelled"))
             return
         destination_root, bundle_storage_kind = export_target
 
         self._clear_restore_import_plan_state(reset_summary=False)
         self._run_background_operation(
             operation_name="Backup export",
-            running_label="Backup export",
-            started_status="Creating local backup bundle...",
-            error_title="Backup export failed",
+            running_label=self._tr("ui.op.backup_export"),
+            started_status=self._tr("backup.status.exporting"),
+            error_title=self._tr("ui.error.backup_export"),
             task_fn=lambda: self._shell_service.export_backup_bundle(
                 destination_root_text=destination_root,
                 bundle_storage_kind=bundle_storage_kind,
@@ -5982,62 +6367,54 @@ class MainWindow(QMainWindow):
             on_success=self._on_backup_bundle_export_completed,
             on_failure=self._set_setup_output_text,
             busy_button=self._export_backup_button,
-            busy_button_text="Exporting...",
+            busy_button_text=self._tr("ui.busy.exporting"),
         )
 
     def _on_backup_bundle_export_completed(self, result: BackupBundleExportResult) -> None:
         copied_count = sum(1 for item in result.items if item.status == "copied")
         self._set_setup_output_and_details_text(build_backup_bundle_export_text(result))
         self._set_status(
-            f"Backup export complete: {copied_count} item(s) copied to {result.bundle_path}"
+            self._tr("backup.status.export_complete", count=copied_count, path=result.bundle_path)
         )
 
     def _prompt_for_backup_export_artifacts(self) -> BackupBundleExportSelection | None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("Choose Cinderleaf backup artifacts")
+        dialog.setWindowTitle(self._tr("backup.export.title"))
         dialog.resize(560, 360)
         layout = QVBoxLayout(dialog)
 
-        intro = QLabel(
-            "Select which artifact groups should be included in the backup export. "
-            "Restore/import behavior stays unchanged for now."
-        )
+        intro = QLabel(self._tr("backup.export.intro"))
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        manager_state_checkbox = QCheckBox("Manager state and profiles")
+        manager_state_checkbox = QCheckBox(self._tr("backup.export.manager_state"))
         manager_state_checkbox.setChecked(True)
-        manager_state_note = QLabel(
-            "Includes app config, install and recovery history, update-source intent overlay, "
-            "and both profile catalogs."
-        )
+        manager_state_note = QLabel(self._tr("backup.export.manager_state_note"))
         manager_state_note.setWordWrap(True)
         _set_auxiliary_label_style(manager_state_note)
         layout.addWidget(manager_state_checkbox)
         layout.addWidget(manager_state_note)
 
-        managed_mods_checkbox = QCheckBox("Managed mods and config snapshots")
+        managed_mods_checkbox = QCheckBox(self._tr("backup.export.managed_mods"))
         managed_mods_checkbox.setChecked(True)
-        managed_mods_note = QLabel(
-            "Includes the real and sandbox Mods trees plus the per-mod config snapshots."
-        )
+        managed_mods_note = QLabel(self._tr("backup.export.managed_mods_note"))
         managed_mods_note.setWordWrap(True)
         _set_auxiliary_label_style(managed_mods_note)
         layout.addWidget(managed_mods_checkbox)
         layout.addWidget(managed_mods_note)
 
-        archives_checkbox = QCheckBox("Archives")
+        archives_checkbox = QCheckBox(self._tr("backup.export.archives"))
         archives_checkbox.setChecked(False)
-        archives_note = QLabel("Includes the real and sandbox archive roots.")
+        archives_note = QLabel(self._tr("backup.export.archives_note"))
         archives_note.setWordWrap(True)
         _set_auxiliary_label_style(archives_note)
         layout.addWidget(archives_checkbox)
         layout.addWidget(archives_note)
 
-        save_files_checkbox = QCheckBox("Stardew save files")
+        save_files_checkbox = QCheckBox(self._tr("backup.export.save_files"))
         save_files_checkbox.setChecked(False)
         save_files_note = QLabel(
-            f"Default save folder: {platform_default_stardew_save_directory()}"
+            self._tr("backup.export.save_files_note", path=platform_default_stardew_save_directory())
         )
         save_files_note.setWordWrap(True)
         _set_auxiliary_label_style(save_files_note)
@@ -6064,7 +6441,7 @@ class MainWindow(QMainWindow):
     def _on_inspect_backup_bundle(self) -> None:
         bundle_path = self._prompt_for_backup_bundle_path()
         if not bundle_path:
-            self._set_status("Backup bundle inspection cancelled.")
+            self._set_status(self._tr("backup.status.inspection_cancelled"))
             return
 
         self._set_active_backup_bundle_context(
@@ -6074,16 +6451,16 @@ class MainWindow(QMainWindow):
         self._clear_restore_import_plan_state(reset_summary=False)
         self._run_background_operation(
             operation_name="Backup bundle inspection",
-            running_label="Backup bundle inspection",
-            started_status="Inspecting backup bundle...",
-            error_title="Backup bundle inspection failed",
+            running_label=self._tr("ui.op.backup_inspection"),
+            started_status=self._tr("backup.status.inspecting"),
+            error_title=self._tr("ui.error.backup_inspection"),
             task_fn=lambda: self._shell_service.inspect_backup_bundle(
                 bundle_path_text=str(bundle_path),
             ),
             on_success=self._on_backup_bundle_inspection_completed,
             on_failure=self._set_setup_output_text,
             busy_button=self._inspect_backup_button,
-            busy_button_text="Inspecting...",
+            busy_button_text=self._tr("ui.busy.inspecting"),
         )
 
     def _on_backup_bundle_inspection_completed(
@@ -6104,9 +6481,7 @@ class MainWindow(QMainWindow):
             self._set_status(result.message)
             return
 
-        planning_started_text = (
-            "Planning restore/import for the current configured environment..."
-        )
+        planning_started_text = self._tr("restore.status.planning_after_inspection")
         self._restore_import_planning_summary_label.setText(planning_started_text)
         self._restore_import_planning_summary_label.setToolTip(planning_started_text)
         self._restore_import_planning_summary_label.setVisible(True)
@@ -6144,7 +6519,7 @@ class MainWindow(QMainWindow):
 
     def _on_plan_restore_import(self) -> None:
         bundle_path = self._resolve_active_or_prompted_backup_bundle_path(
-            cancel_status="Restore/import planning cancelled.",
+            cancel_status=self._tr("restore.status.planning_cancelled"),
         )
         if not bundle_path:
             return
@@ -6210,7 +6585,7 @@ class MainWindow(QMainWindow):
 
     def _on_execute_restore_import(self) -> None:
         bundle_path = self._resolve_active_or_prompted_backup_bundle_path(
-            cancel_status="Restore/import execution cancelled.",
+            cancel_status=self._tr("restore.status.cancelled"),
         )
         if bundle_path is None:
             return
@@ -6219,9 +6594,7 @@ class MainWindow(QMainWindow):
         if planning_result is None or planning_result.bundle_path != bundle_path:
             self._start_restore_import_planning_for_bundle(
                 bundle_path,
-                started_status=(
-                    "Refreshing restore/import review from the current backup bundle..."
-                ),
+                started_status=self._tr("restore.status.refreshing_review"),
                 on_success=self._on_restore_import_planning_then_execute_completed,
                 reset_summary=False,
             )
@@ -6248,46 +6621,62 @@ class MainWindow(QMainWindow):
             self._set_status(review.message)
             return
 
+        try:
+            write_targets = self._shell_service.restore_import_execution_write_targets(
+                planning_result
+            )
+        except AppShellError as exc:
+            self._set_setup_output_text(str(exc))
+            self._set_status(str(exc))
+            return
         review_lines = [
-            "Restore/import will write reviewed bundle content into the current configured destinations.",
-            "",
-            f"Mod folders to write: {review.executable_mod_count}",
-            f"Archive-and-replace mod folders: {review.replace_mod_count}",
-            f"Missing config artifacts to restore: {review.executable_config_count}",
-            (
-                "Conflicting config artifacts resolved by reviewed mod-folder replace: "
-                f"{review.replace_config_count}"
-            ),
-            f"Config artifacts already covered by restored mod folders: {review.covered_config_count}",
-            f"Review entries left untouched: {review.review_entry_count}",
-            f"Blocked entries left untouched: {review.blocked_entry_count}",
-            f"Deferred non-execution bundle items: {review.deferred_item_count}",
-            "",
-            "Conflict replacements archive the current local mod folder before the bundled mod folder is restored.",
-            "No file merge behavior is used in this stage.",
-            "",
-            "Continue with restore/import execution?",
+            self._tr("restore.confirm.intro"),
+            self._tr("restore.confirm.bundle", path=planning_result.bundle_path),
         ]
+        if write_targets:
+            # Name every destination so the review states what will change.
+            review_lines.append(self._tr("restore.confirm.destinations"))
+            review_lines.extend(
+                self._tr("restore.confirm.replace_target", path=target, archive=archive)
+                if archive is not None
+                else self._tr("restore.confirm.write_target", path=target)
+                for target, archive in write_targets
+            )
+        review_lines.extend(
+            (
+                "",
+                self._tr("restore.confirm.mod_folders", count=review.executable_mod_count),
+                self._tr("restore.confirm.replace_mods", count=review.replace_mod_count),
+                self._tr("restore.confirm.missing_configs", count=review.executable_config_count),
+                self._tr("restore.confirm.conflicting_configs", count=review.replace_config_count),
+                self._tr("restore.confirm.covered_configs", count=review.covered_config_count),
+                self._tr("restore.confirm.review_untouched", count=review.review_entry_count),
+                self._tr("restore.confirm.blocked_untouched", count=review.blocked_entry_count),
+                self._tr("restore.confirm.deferred", count=review.deferred_item_count),
+                "",
+                self._tr("restore.confirm.archive_note"),
+                self._tr("restore.confirm.no_merge"),
+                "",
+                self._tr("restore.confirm.question"),
+            )
+        )
         if review.warnings:
-            review_lines.extend(("", "Warnings:"))
+            review_lines.extend(("", self._tr("restore.confirm.warnings")))
             review_lines.extend(f"- {warning}" for warning in review.warnings)
         confirmation_text = "\n".join(review_lines)
-        decision = QMessageBox.question(
-            self,
-            "Execute restore/import?",
-            confirmation_text,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        decision = self._show_localized_question_dialog(
+            title=self._tr("restore.confirm.title"),
+            text=confirmation_text,
         )
         if decision != QMessageBox.StandardButton.Yes:
-            self._set_status("Restore/import execution cancelled.")
+            self._set_status(self._tr("restore.status.cancelled"))
             return
 
         self._run_background_operation(
             operation_name="Restore/import execution",
-            running_label="Restore/import execution",
-            started_status="Restoring clearly missing bundle content into the current configured destinations...",
-            error_title="Restore/import execution failed",
+            running_label=self._tr("ui.op.restore_import_execution"),
+            started_status=self._tr("restore.status.running"),
+            error_title=self._tr("ui.error.restore_import_execution"),
             task_fn=lambda: self._shell_service.execute_restore_import(
                 planning_result,
                 confirm_execution=True,
@@ -6295,7 +6684,7 @@ class MainWindow(QMainWindow):
             on_success=self._on_execute_restore_import_completed,
             on_failure=self._set_setup_output_text,
             busy_button=self._execute_restore_import_button,
-            busy_button_text="Restoring...",
+            busy_button_text=self._tr("ui.busy.restoring"),
         )
 
     def _on_execute_restore_import_completed(
@@ -6324,7 +6713,7 @@ class MainWindow(QMainWindow):
                 steam_auto_start_enabled=self._steam_auto_start_checkbox.isChecked(),
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Vanilla launch failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.vanilla_launch"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -6344,7 +6733,7 @@ class MainWindow(QMainWindow):
                 steam_auto_start_enabled=self._steam_auto_start_checkbox.isChecked(),
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "SMAPI launch failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.smapi_launch"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -6371,7 +6760,7 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             message = str(exc)
-            QMessageBox.critical(self, "Sandbox dev launch failed", message)
+            QMessageBox.critical(self, self._tr("ui.error.sandbox_dev_launch"), message)
             self._sandbox_launch_status_label.setText(
                 _sandbox_dev_launch_summary_label(False, message)
             )
@@ -6529,9 +6918,9 @@ class MainWindow(QMainWindow):
     def _on_scan(self) -> None:
         self._run_background_operation(
             operation_name="Scan",
-            running_label="Scan",
-            started_status="Scanning selected Mods directory...",
-            error_title="Scan failed",
+            running_label=self._tr("ui.op.scan"),
+            started_status=self._tr("ui.progress.scanning"),
+            error_title=self._tr("ui.error.scan"),
             task_fn=lambda: self._shell_service.scan_with_target(
                 scan_target=self._current_scan_target(),
                 configured_mods_path_text=self._mods_path_input.text(),
@@ -6542,7 +6931,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_scan_completed,
             busy_button=self._scan_button,
-            busy_button_text="Scanning...",
+            busy_button_text=self._tr("ui.busy.scanning"),
         )
 
     def _on_scan_completed(self, result: ScanResult) -> None:
@@ -6550,17 +6939,20 @@ class MainWindow(QMainWindow):
         self._show_scan_result(result)
         inactive_label = self._inventory_inactive_count_label(result.target_kind)
         self._set_status(
-            "Scan complete: "
-            f"{len(result.inventory.mods)} active mod(s), "
-            f"{len(result.inventory.disabled_mods)} mod(s) {inactive_label}"
+            self._tr(
+                "status.scan_complete",
+                active=len(result.inventory.mods),
+                inactive=len(result.inventory.disabled_mods),
+                inactive_label=inactive_label,
+            )
         )
 
     def _on_compare_real_and_sandbox(self) -> None:
         self._run_background_operation(
             operation_name="Compare real vs sandbox",
-            running_label="Compare real vs sandbox",
-            started_status="Comparing configured real Mods against sandbox Mods...",
-            error_title="Compare failed",
+            running_label=self._tr("ui.op.compare"),
+            started_status=self._tr("ui.progress.comparing"),
+            error_title=self._tr("ui.error.compare"),
             task_fn=lambda: self._shell_service.compare_real_and_sandbox_mods(
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -6570,7 +6962,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_compare_real_and_sandbox_completed,
             busy_button=self._compare_real_vs_sandbox_button,
-            busy_button_text="Comparing...",
+            busy_button_text=self._tr("ui.busy.comparing"),
         )
 
     def _on_compare_real_and_sandbox_completed(self, result: ModsCompareResult) -> None:
@@ -6595,6 +6987,7 @@ class MainWindow(QMainWindow):
         has_selection = entry is not None
         self._compare_copy_identity_button.setEnabled(has_selection)
         self._set_compare_sync_button_states(entry)
+        self._limit_compare_sync_to_top_level_folders(entry)
         pt_br = self._localizer.effective_language == "pt-BR"
         if entry is None:
             self._compare_copy_identity_button.setToolTip(
@@ -6722,6 +7115,41 @@ class MainWindow(QMainWindow):
     def _on_compare_sync_sandbox_to_real(self) -> None:
         self._start_compare_sync("sandbox_to_real")
 
+    def _compare_sync_members_are_top_level(
+        self, entry: ModsCompareEntry, direction: str,
+    ) -> bool:
+        # Sync replaces folders directly inside each Mods root. A family kept in
+        # a container folder would otherwise be offered and then refused.
+        sides = (
+            (entry.real_member_mods or ((entry.real_mod,) if entry.real_mod else tuple()),
+             self._mods_path_input.text()),
+            (entry.sandbox_member_mods or ((entry.sandbox_mod,) if entry.sandbox_mod else tuple()),
+             self._sandbox_mods_path_input.text()),
+        )
+        if direction == "sandbox_to_real":
+            sides = sides[::-1]
+        for members, root_text in sides:
+            if not members or not root_text.strip():
+                continue
+            try:
+                root = Path(root_text.strip()).expanduser().resolve()
+                if any(Path(mod.folder_path).resolve().parent != root for mod in members):
+                    return False
+            except OSError:
+                continue
+        return True
+
+    def _limit_compare_sync_to_top_level_folders(self, entry: ModsCompareEntry | None) -> None:
+        if entry is None:
+            return
+        for direction, button in (
+            ("real_to_sandbox", self._compare_sync_real_to_sandbox_button),
+            ("sandbox_to_real", self._compare_sync_sandbox_to_real_button),
+        ):
+            if button.isEnabled() and not self._compare_sync_members_are_top_level(entry, direction):
+                button.setEnabled(False)
+                button.setToolTip(self._tr("compare.sync.container_family_unavailable"))
+
     def _start_compare_sync(self, direction: str) -> None:
         entry = self._selected_compare_entry()
         pt_br = self._localizer.effective_language == "pt-BR"
@@ -6731,6 +7159,9 @@ class MainWindow(QMainWindow):
                 if pt_br
                 else "Select a compare row first."
             )
+            return
+        if not self._compare_sync_members_are_top_level(entry, direction):
+            self._set_status(self._tr("compare.sync.container_family_unavailable"))
             return
 
         if direction == "real_to_sandbox":
@@ -6780,10 +7211,9 @@ class MainWindow(QMainWindow):
             if pt_br
             else "Review compare sync"
         )
-        yes = QMessageBox.question(
-            self,
-            confirm_title,
-            _build_compare_mods_sync_confirmation_message(preview, entry_name=entry.name),
+        yes = self._show_localized_question_dialog(
+            title=confirm_title,
+            text=_build_compare_mods_sync_confirmation_message(preview, entry_name=entry.name),
         )
         if yes != QMessageBox.StandardButton.Yes:
             self._set_status(
@@ -6861,7 +7291,7 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Zip inspection failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.zip_inspection"), str(exc))
             self._set_intake_output_text(str(exc))
             self._set_status(str(exc))
             return
@@ -6885,9 +7315,9 @@ class MainWindow(QMainWindow):
         selected_paths = self._selected_zip_package_paths
         self._run_background_operation(
             operation_name="Install planning",
-            running_label="Install planning",
-            started_status="Planning install batch...",
-            error_title="Install plan failed",
+            running_label=self._tr("ui.op.install_planning"),
+            started_status=self._tr("install.status.planning"),
+            error_title=self._tr("ui.error.install_plan"),
             task_fn=lambda: self._shell_service.build_install_plan(
                 package_paths_text=tuple(str(path) for path in selected_paths),
                 package_path_text="" if selected_paths else self._zip_path_input.text(),
@@ -6904,13 +7334,13 @@ class MainWindow(QMainWindow):
             on_success=self._apply_install_plan_review,
             on_failure=self._set_plan_install_output_text,
             busy_button=self._plan_install_button,
-            busy_button_text="Planning batch...",
+            busy_button_text=self._tr("ui.busy.planning_batch"),
         )
 
     def _on_run_install(self) -> None:
         if self._pending_install_plan is None:
             message = "Create an install plan before executing install."
-            QMessageBox.warning(self, "No install plan", message)
+            QMessageBox.warning(self, self._tr("ui.notice.no_install_plan"), message)
             self._set_status(message)
             return
 
@@ -6927,7 +7357,7 @@ class MainWindow(QMainWindow):
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Install cancelled.")
+            self._set_status(self._tr("install.status.cancelled"))
             return
 
         history_before_install = self._install_operation_history
@@ -6935,6 +7365,10 @@ class MainWindow(QMainWindow):
             execution_result = result
             self._refresh_install_operation_selector()
             self._select_new_install_operation_for_recovery(history_before_install)
+            self._history_preferred_tab_index = 1
+            # Installs that replace existing mods create archived copies, so the
+            # cached archive listing is stale until it is refreshed again.
+            self._history_archives_auto_loaded = False
             self._cache_inventory_for_target(
                 execution_result.destination_kind,
                 execution_result.scan_context_path,
@@ -6978,22 +7412,37 @@ class MainWindow(QMainWindow):
                     if self._localizer.effective_language == "pt-BR"
                     else f"Sandbox install complete: {len(execution_result.installed_targets)} target(s)"
                 )
+            self._pending_install_plan = None
             self._refresh_workflow_surface_states()
 
         self._run_background_operation(
             operation_name="Install execution",
-            running_label="Install execution",
-            started_status="Applying install batch...",
-            error_title="Install failed",
-            task_fn=lambda: self._shell_service.execute_sandbox_install_plan(
-                self._pending_install_plan,
+            running_label=self._tr("ui.op.install_execution"),
+            started_status=self._tr("install.status.applying"),
+            error_title=self._tr("ui.error.install"),
+            # Apply exactly the plan that was reviewed, even if staging changes
+            # while the background task is starting.
+            task_fn=lambda _plan=self._pending_install_plan: self._shell_service.execute_sandbox_install_plan(
+                _plan,
                 confirm_real_destination=is_real_destination,
             ),
             on_success=_on_success,
-            on_failure=self._set_plan_install_output_text,
+            on_failure=self._on_install_execution_failed,
             busy_button=self._run_install_button,
-            busy_button_text="Applying batch...",
+            busy_button_text=self._tr("ui.busy.applying_batch"),
         )
+
+    def _on_install_execution_failed(self, message: str) -> None:
+        detail_text = self._findings_box.toPlainText()
+        self._pending_install_plan = None
+        self._last_install_completion_message = None
+        self._scan_results_by_target.clear()
+        self._clear_visible_inventory_for_unscanned_target()
+        self._history_archives_auto_loaded = False
+        self._history_preferred_tab_index = 1
+        self._refresh_install_operation_selector()
+        self._set_plan_install_output_text(detail_text or message)
+        self._refresh_workflow_surface_states()
 
     def _apply_install_plan_review(self, plan: SandboxInstallPlan) -> None:
         review = self._shell_service.review_install_execution(plan)
@@ -7098,10 +7547,9 @@ class MainWindow(QMainWindow):
         self._refresh_recovery_selection_summary()
 
     def _on_clear_install_history(self) -> None:
-        yes = QMessageBox.question(
-            self,
-            self._tr("history.clear_install_history"),
-            self._tr("history.clear_install_history_confirm"),
+        yes = self._show_localized_question_dialog(
+            title=self._tr("history.clear_install_history"),
+            text=self._tr("history.clear_install_history_confirm"),
         )
         if yes != QMessageBox.StandardButton.Yes:
             self._set_status(
@@ -7212,17 +7660,46 @@ class MainWindow(QMainWindow):
             self._show_recovery_inspection_text(message, status_message=message)
             return
 
-        try:
-            inspection = self._shell_service.inspect_install_recovery_by_operation_id(
-                operation.operation_id
-            )
-        except AppShellError as exc:
-            self._current_recovery_inspection = None
-            self._show_recovery_inspection_text(str(exc), status_message=str(exc))
-            return
+        # Inspection reads and digests installed folders, so it runs in the
+        # background: a large mod would otherwise freeze the window.
+        self._current_recovery_inspection = None
+        self._run_recovery_button.setEnabled(False)
+        operation_id = operation.operation_id
+        self._run_background_operation(
+            operation_name=self._tr("recovery.operation.inspect"),
+            running_label=self._tr("recovery.operation.inspect"),
+            started_status=self._tr("recovery.status.inspecting"),
+            error_title=self._tr("recovery.error.inspect_title"),
+            task_fn=lambda _operation_id=operation_id: (
+                self._shell_service.inspect_install_recovery_by_operation_id(_operation_id)
+            ),
+            on_success=lambda inspection, _operation_id=operation_id: (
+                self._on_inspect_selected_install_recovery_completed(
+                    inspection, operation_id=_operation_id,
+                )
+            ),
+            on_failure=lambda message: self._show_recovery_inspection_text(
+                message, status_message=message,
+            ),
+            show_error_dialog=False,
+            busy_button=self._inspect_recovery_button,
+            busy_button_text=self._tr("recovery.busy.inspecting"),
+        )
 
+    def _on_inspect_selected_install_recovery_completed(
+        self,
+        inspection: InstallRecoveryInspectionResult,
+        *,
+        operation_id: str,
+    ) -> None:
+        selected = self._selected_install_operation()
+        if selected is None or selected.operation_id != operation_id:
+            # The owner moved to another install while this one was checked.
+            message = self._tr("recovery.status.selection_changed")
+            self._show_recovery_inspection_text(message, status_message=message)
+            return
         self._current_recovery_inspection = inspection
-        self._run_recovery_button.setEnabled(inspection.recovery_review.allowed)
+        self._refresh_recovery_action_state()
         self._refresh_recovery_selection_summary()
         self._show_recovery_inspection_text(
             _build_install_recovery_inspection_text(inspection),
@@ -7275,10 +7752,9 @@ class MainWindow(QMainWindow):
             )
             return
 
-        yes = QMessageBox.question(
-            self,
-            "Confirmar execução da recuperação" if pt_br else "Confirm recovery execution",
-            _build_install_recovery_confirmation_message(review),
+        yes = self._show_localized_question_dialog(
+            title="Confirmar execução da recuperação" if pt_br else "Confirm recovery execution",
+            text=_build_install_recovery_confirmation_message(review),
         )
         if yes != QMessageBox.StandardButton.Yes:
             self._set_status(
@@ -7288,20 +7764,33 @@ class MainWindow(QMainWindow):
             )
             return
 
-        try:
-            result = self._shell_service.execute_install_recovery_review(review)
-        except AppShellError as exc:
-            self._set_status(str(exc))
-            self._set_recovery_output_text(str(exc))
+        def _on_failure(message: str) -> None:
+            self._set_recovery_output_text(message)
             self._run_recovery_button.setEnabled(False)
-            return
 
-        self._on_run_selected_install_recovery_completed(result)
+        # Recovery moves real mod folders; keep the window responsive while it
+        # runs so nobody force-quits mid-write.
+        self._run_background_operation(
+            operation_name=self._tr("recovery.operation.execute"),
+            running_label=self._tr("recovery.operation.execute"),
+            started_status=self._tr("recovery.status.executing"),
+            error_title=self._tr("recovery.error.execute_title"),
+            task_fn=lambda _review=review: self._shell_service.execute_install_recovery_review(
+                _review
+            ),
+            on_success=self._on_run_selected_install_recovery_completed,
+            on_failure=_on_failure,
+            show_error_dialog=False,
+            busy_button=self._run_recovery_button,
+            busy_button_text=self._tr("recovery.busy.executing"),
+        )
 
     def _on_run_selected_install_recovery_completed(
         self,
         result: InstallRecoveryExecutionResult,
     ) -> None:
+        # Recovery runs on this thread, so no background finish clears it.
+        _clear_normalized_path_text_cache()
         self._cache_inventory_for_target(
             result.destination_kind,
             result.scan_context_path,
@@ -7401,7 +7890,7 @@ class MainWindow(QMainWindow):
     def _on_check_updates(self) -> None:
         if self._current_inventory is None:
             message = "Scan a target first before checking metadata/update state."
-            QMessageBox.warning(self, "No inventory", message)
+            QMessageBox.warning(self, self._tr("ui.notice.no_inventory"), message)
             self._set_status(message)
             return
 
@@ -7410,9 +7899,9 @@ class MainWindow(QMainWindow):
         config = self._config
         self._run_background_operation(
             operation_name="Update check",
-            running_label="Update check",
-            started_status="Checking remote metadata/update states...",
-            error_title="Update check failed",
+            running_label=self._tr("ui.op.update_check"),
+            started_status=self._tr("ui.progress.remote_metadata"),
+            error_title=self._tr("ui.error.update_check"),
             task_fn=lambda: self._shell_service.check_updates(
                 inventory,
                 nexus_api_key_text=nexus_api_key_text,
@@ -7421,13 +7910,29 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_check_updates_completed,
             busy_button=self._check_updates_button,
-            busy_button_text="Checking...",
+            busy_button_text=self._tr("ui.busy.checking"),
         )
 
     def _on_check_updates_completed(self, report: ModUpdateReport) -> None:
+        resolved_count = sum(
+            status.state in {UP_TO_DATE, UPDATE_AVAILABLE}
+            for status in report.statuses
+        )
+        unresolved_count = len(report.statuses) - resolved_count
+        status_message = self._tr(
+            "status.update_check_complete",
+            total=len(report.statuses),
+        )
+        if unresolved_count:
+            status_message = self._tr(
+                "status.update_check_partial",
+                total=len(report.statuses),
+                resolved=resolved_count,
+                unresolved=unresolved_count,
+            )
         self._handle_completed_update_report(
             report,
-            status_message=f"Update check complete: {len(report.statuses)} mod(s)",
+            status_message=status_message,
         )
 
     def _handle_completed_update_report(
@@ -7451,16 +7956,16 @@ class MainWindow(QMainWindow):
     def _on_check_smapi_update(self) -> None:
         self._run_background_operation(
             operation_name="SMAPI check",
-            running_label="SMAPI check",
-            started_status="Checking SMAPI version/update status...",
-            error_title="SMAPI check failed",
+            running_label=self._tr("ui.op.smapi_check"),
+            started_status=self._tr("ui.progress.smapi_version"),
+            error_title=self._tr("ui.error.smapi_check"),
             task_fn=lambda: self._shell_service.check_smapi_update_status(
                 game_path_text=self._game_path_input.text(),
                 existing_config=self._config,
             ),
             on_success=self._on_check_smapi_update_completed,
             busy_button=self._check_smapi_update_button,
-            busy_button_text="Checking...",
+            busy_button_text=self._tr("ui.busy.checking"),
         )
 
     def _on_check_smapi_update_completed(self, status: SmapiUpdateStatus) -> None:
@@ -7473,15 +7978,15 @@ class MainWindow(QMainWindow):
     def _on_check_app_update(self) -> None:
         self._run_background_operation(
             operation_name="App update check",
-            running_label="App update check",
-            started_status="Checking Cinderleaf release status...",
-            error_title="App update check failed",
+            running_label=self._tr("ui.op.app_update_check"),
+            started_status=self._tr("ui.progress.release_status"),
+            error_title=self._tr("ui.error.app_update_check"),
             task_fn=lambda: self._shell_service.check_app_update_status(
                 current_version=self._app_version_text,
             ),
             on_success=self._on_check_app_update_completed,
             busy_button=self._check_app_update_button,
-            busy_button_text="Checking...",
+            busy_button_text=self._tr("ui.busy.checking"),
         )
 
     def _on_check_app_update_completed(self, status: AppUpdateStatus) -> None:
@@ -7516,7 +8021,7 @@ class MainWindow(QMainWindow):
         url = self._shell_service.resolve_app_update_page_url(self._last_app_update_status)
         if not QDesktopServices.openUrl(QUrl(url)):
             message = f"Could not open Cinderleaf releases page: {url}"
-            QMessageBox.critical(self, "Open failed", message)
+            QMessageBox.critical(self, self._tr("ui.error.open"), message)
             self._set_status(message)
             return
         self._set_status(f"Opened Cinderleaf releases page: {url}")
@@ -7524,9 +8029,9 @@ class MainWindow(QMainWindow):
     def _on_check_smapi_log(self) -> None:
         self._run_background_operation(
             operation_name="SMAPI log check",
-            running_label="SMAPI log check",
-            started_status="Locating and parsing SMAPI log...",
-            error_title="SMAPI log check failed",
+            running_label=self._tr("ui.op.smapi_log_check"),
+            started_status=self._tr("ui.progress.locating_smapi_log"),
+            error_title=self._tr("ui.error.smapi_log_check"),
             task_fn=lambda: self._shell_service.check_smapi_log_troubleshooting(
                 game_path_text=self._game_path_input.text(),
                 existing_config=self._config,
@@ -7534,7 +8039,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_check_smapi_log_completed,
             busy_button=self._check_smapi_log_button,
-            busy_button_text="Checking...",
+            busy_button_text=self._tr("ui.busy.checking"),
         )
 
     def _on_load_smapi_log(self) -> None:
@@ -7549,9 +8054,9 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="SMAPI log load",
-            running_label="SMAPI log load",
+            running_label=self._tr("ui.op.smapi_log_load"),
             started_status=f"Parsing selected SMAPI log: {Path(selected).name}",
-            error_title="SMAPI log load failed",
+            error_title=self._tr("ui.error.smapi_log_load"),
             task_fn=lambda _selected=selected: self._shell_service.check_smapi_log_troubleshooting(
                 game_path_text=self._game_path_input.text(),
                 log_path_text=_selected,
@@ -7559,7 +8064,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_check_smapi_log_completed,
             busy_button=self._load_smapi_log_button,
-            busy_button_text="Parsing...",
+            busy_button_text=self._tr("ui.busy.parsing"),
         )
 
     def _on_check_smapi_log_completed(self, report: SmapiLogReport) -> None:
@@ -7626,7 +8131,7 @@ class MainWindow(QMainWindow):
         url = self._shell_service.resolve_smapi_update_page_url(self._last_smapi_update_status)
         if not QDesktopServices.openUrl(QUrl(url)):
             message = f"Could not open SMAPI page: {url}"
-            QMessageBox.critical(self, "Open failed", message)
+            QMessageBox.critical(self, self._tr("ui.error.open"), message)
             self._set_status(message)
             return
         self._set_status(f"Opened SMAPI page: {url}")
@@ -7638,7 +8143,7 @@ class MainWindow(QMainWindow):
         if not isinstance(dependency_target, str) or not dependency_target.strip():
             dependency_target = self._smapi_dependency_selector.currentText().strip()
         if not dependency_target:
-            self._set_status("No missing SMAPI dependency is selected for Discover.")
+            self._set_status(self._tr("ui.status.no_smapi_dependency_selected"))
             return
         self._discovery_query_input.setText(dependency_target)
         self._context_tabs.setCurrentWidget(self._discovery_page)
@@ -7656,7 +8161,7 @@ class MainWindow(QMainWindow):
         selected_unique_id, mod_name = selected_context
         query_text = selected_unique_id.strip() or mod_name.strip()
         if not query_text:
-            self._set_status("Selected row does not have a usable query for Discover.")
+            self._set_status(self._tr("ui.status.row_without_query"))
             return
         self._discovery_query_input.setText(query_text)
         self._discovery_filter_input.clear()
@@ -7677,7 +8182,7 @@ class MainWindow(QMainWindow):
         selected_unique_id, mod_name = selected_context
         query_text = selected_unique_id.strip() or mod_name.strip()
         if not query_text:
-            self._set_status("Selected row does not have a usable query for Discover.")
+            self._set_status(self._tr("ui.status.row_without_query"))
             return
         self._discovery_query_input.setText(query_text)
         self._discovery_filter_input.clear()
@@ -7687,9 +8192,9 @@ class MainWindow(QMainWindow):
         )
         self._run_background_operation(
             operation_name="Suggested source search",
-            running_label="Suggested source",
-            started_status="Searching discovery index for a suggested source...",
-            error_title="Suggested source search failed",
+            running_label=self._tr("ui.op.suggested_source"),
+            started_status=self._tr("ui.progress.searching_suggested"),
+            error_title=self._tr("ui.error.suggested_source_search"),
             task_fn=lambda _query_text=query_text: self._shell_service.search_mod_discovery(
                 query_text=_query_text,
             ),
@@ -7699,7 +8204,7 @@ class MainWindow(QMainWindow):
                 mod_name=_mod_name,
             ),
             busy_button=self._use_suggested_source_button,
-            busy_button_text="Searching...",
+            busy_button_text=self._tr("ui.busy.searching"),
         )
 
     def _on_use_selected_mod_suggested_source_completed(
@@ -7778,19 +8283,19 @@ class MainWindow(QMainWindow):
         selected_context = self._selected_inventory_source_intent_context()
         selected_mod = self._selected_inventory_installed_mod()
         if selected_context is None or selected_mod is None:
-            self._set_status("Select a blocked installed mod row with a saved manual source before testing.")
+            self._set_status(self._tr("ui.status.select_blocked_row_for_test"))
             return
         selected_unique_id, mod_name = selected_context
         saved_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
         if getattr(saved_intent, "intent_state", None) != "manual_source_association":
-            self._set_status("Save a manual source association before testing it.")
+            self._set_status(self._tr("ui.status.save_source_before_test"))
             return
         test_inventory = _single_mod_inventory(selected_mod)
         self._run_background_operation(
             operation_name="Source test",
-            running_label="Source test",
-            started_status="Testing the selected manual source association...",
-            error_title="Source test failed",
+            running_label=self._tr("ui.op.source_test"),
+            started_status=self._tr("ui.progress.testing_source"),
+            error_title=self._tr("ui.error.source_test"),
             task_fn=lambda _inventory=test_inventory: self._shell_service.check_updates(
                 _inventory,
                 nexus_api_key_text=self._nexus_api_key_input.text(),
@@ -7802,7 +8307,7 @@ class MainWindow(QMainWindow):
                 mod_name=_mod_name,
             ),
             busy_button=self._test_source_button,
-            busy_button_text="Testing...",
+            busy_button_text=self._tr("ui.busy.testing"),
         )
 
     def _on_test_selected_mod_source_completed(
@@ -7870,9 +8375,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "empty",
-                "Nenhum log do SMAPI foi verificado ainda."
-                if pt_br
-                else "No SMAPI log checked yet.",
+                self._tr("smapi.summary.none_checked"),
             )
             self._smapi_dependency_selector.setVisible(False)
             self._open_smapi_dependency_in_discover_button.setVisible(False)
@@ -7896,44 +8399,43 @@ class MainWindow(QMainWindow):
             session_launch_started_at_epoch=self._last_smapi_launch_started_at_epoch,
         )
         if report.missing_dependencies:
+            target_count = report.missing_dependency_target_count
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "ready",
-                (
-                    f"{context_label}: {report.missing_dependency_target_count} alvo(s) de dependência ausente(s)."
-                    if self._localizer.effective_language == "pt-BR"
-                    else f"{context_label}: {report.missing_dependency_target_count} missing dependency target(s)."
+                self._tr("smapi.summary.missing_targets_one", context=context_label)
+                if target_count == 1
+                else self._tr(
+                    "smapi.summary.missing_targets_many",
+                    context=context_label,
+                    count=target_count,
                 ),
+            )
+        elif report.has_unidentified_missing_dependencies:
+            # The log says dependencies are missing but we could not name them.
+            # Reporting a clean result here would be false reassurance.
+            _set_feedback_label_state(
+                self._smapi_troubleshooting_summary_label,
+                "ready",
+                self._tr("smapi.summary.unidentified", context=context_label),
             )
         elif report.state == SMAPI_LOG_NOT_FOUND:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "empty",
-                (
-                    "Ainda não foi encontrado nenhum log do SMAPI. Inicie com SMAPI e depois verifique de novo."
-                    if self._localizer.effective_language == "pt-BR"
-                    else "No SMAPI log found yet. Launch with SMAPI, then check again."
-                ),
+                self._tr("smapi.summary.not_found"),
             )
         elif report.state == SMAPI_LOG_UNABLE_TO_DETERMINE:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "muted",
-                (
-                    f"{context_label}: não foi possível analisar este log com clareza."
-                    if self._localizer.effective_language == "pt-BR"
-                    else f"{context_label}: couldn't parse this log cleanly."
-                ),
+                self._tr("smapi.summary.unparsed", context=context_label),
             )
         else:
             _set_feedback_label_state(
                 self._smapi_troubleshooting_summary_label,
                 "muted",
-                (
-                    f"{context_label}: nenhuma dependência ausente foi encontrada no log mais recente."
-                    if self._localizer.effective_language == "pt-BR"
-                    else f"{context_label}: no missing dependencies in latest log."
-                ),
+                self._tr("smapi.summary.no_missing", context=context_label),
             )
 
         selector_items = _smapi_missing_dependency_targets(report)
@@ -7970,9 +8472,10 @@ class MainWindow(QMainWindow):
     def _on_search_discovery(self) -> None:
         query_text = self._discovery_query_input.text()
         pt_br = self._localizer.effective_language == "pt-BR"
+        self._discovery_last_search_error = None
         self._run_background_operation(
             operation_name="Discovery search",
-            running_label="Discovery search",
+            running_label=self._tr("ui.op.discovery_search"),
             started_status=(
                 "Pesquisando no índice de descoberta..."
                 if pt_br
@@ -7983,11 +8486,17 @@ class MainWindow(QMainWindow):
                 query_text=query_text,
             ),
             on_success=self._on_search_discovery_completed,
+            on_failure=self._on_search_discovery_failed,
             busy_button=self._search_mods_button,
             busy_button_text="Pesquisando..." if pt_br else "Searching...",
         )
 
+    def _on_search_discovery_failed(self, message: str) -> None:
+        # Keep earlier results reachable, but never present them as this query's.
+        self._discovery_last_search_error = message
+
     def _on_search_discovery_completed(self, discovery_result: ModDiscoveryResult) -> None:
+        self._discovery_last_search_error = None
         self._current_discovery_result = discovery_result
         self._discovery_correlations = self._shell_service.correlate_discovery_results(
             discovery_result=discovery_result,
@@ -8115,9 +8624,9 @@ class MainWindow(QMainWindow):
     def _on_check_nexus_connection(self) -> None:
         self._run_background_operation(
             operation_name="Nexus check",
-            running_label="Nexus check",
-            started_status="Checking Nexus connection...",
-            error_title="Nexus check failed",
+            running_label=self._tr("ui.op.nexus_check"),
+            started_status=self._tr("ui.progress.nexus_connection"),
+            error_title=self._tr("ui.error.nexus_check"),
             task_fn=lambda: self._shell_service.get_nexus_integration_status(
                 nexus_api_key_text=self._nexus_api_key_input.text(),
                 existing_config=self._config,
@@ -8125,7 +8634,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_check_nexus_connection_completed,
             busy_button=self._check_nexus_button,
-            busy_button_text="Checking...",
+            busy_button_text=self._tr("ui.busy.checking"),
         )
     
     def _on_check_nexus_connection_completed(self, status: NexusIntegrationStatus) -> None:
@@ -8145,21 +8654,21 @@ class MainWindow(QMainWindow):
     def _on_open_remote_page(self) -> None:
         if self._current_update_report is None:
             message = "Run update check first to populate remote links."
-            QMessageBox.warning(self, "No metadata", message)
+            QMessageBox.warning(self, self._tr("ui.notice.no_metadata"), message)
             self._set_status(message)
             return
 
         row = self._mods_table.currentRow()
         if row < 0:
             message = "Select a mod row first."
-            QMessageBox.warning(self, "No selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.no_selection"), message)
             self._set_status(message)
             return
 
         row_item = self._mods_table.item(row, 0)
         if row_item is None:
             message = "Selected mod row is invalid."
-            QMessageBox.warning(self, "Invalid selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.invalid_selection"), message)
             self._set_status(message)
             return
 
@@ -8170,13 +8679,13 @@ class MainWindow(QMainWindow):
             url = ""
         if not url:
             message = "No remote page is available for the selected mod."
-            QMessageBox.information(self, "No remote link", message)
+            QMessageBox.information(self, self._tr("ui.notice.no_remote_link"), message)
             self._set_status(message)
             return
 
         if not QDesktopServices.openUrl(QUrl(url)):
             message = f"Could not open page: {url}"
-            QMessageBox.critical(self, "Open failed", message)
+            QMessageBox.critical(self, self._tr("ui.error.open"), message)
             self._set_status(message)
             return
 
@@ -8209,15 +8718,16 @@ class MainWindow(QMainWindow):
     def _on_remove_selected_mod(self) -> None:
         row = self._mods_table.currentRow()
         if row < 0:
-            message = "Select an installed mod row first."
-            QMessageBox.warning(self, "No selection", message)
-            self._set_status(message)
+            # The button disables itself without a selection; this is a
+            # defensive fallback, not a normal UI path, so it stays silent
+            # rather than teaching selection through a modal.
+            self._set_status(self._tr("library.tooltip.select_row_first"))
             return
 
         row_item = self._mods_table.item(row, 0)
         if row_item is None:
             message = "Selected mod row is invalid."
-            QMessageBox.warning(self, "Invalid selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.invalid_selection"), message)
             self._set_status(message)
             return
 
@@ -8225,7 +8735,7 @@ class MainWindow(QMainWindow):
         mod_folder_path = row_item.data(_ROLE_MOD_FOLDER_PATH)
         if not isinstance(mod_folder_path, str) or not mod_folder_path.strip():
             message = "Selected mod row does not include a valid folder path."
-            QMessageBox.warning(self, "Invalid selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.invalid_selection"), message)
             self._set_status(message)
             return
         active_real_profile = self._active_custom_real_profile()
@@ -8234,7 +8744,7 @@ class MainWindow(QMainWindow):
                 f"Archive selected mod is unavailable while real profile '{active_real_profile.name}' is active. "
                 "Switch to Default to archive from the canonical real Mods library."
             )
-            QMessageBox.warning(self, "Real profile action unavailable", message)
+            QMessageBox.warning(self, self._tr("ui.notice.real_profile_unavailable"), message)
             self._set_status(message)
             return
 
@@ -8248,7 +8758,7 @@ class MainWindow(QMainWindow):
                 mod_folder_path_text=mod_folder_path,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Removal plan failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.removal_plan"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -8274,21 +8784,21 @@ class MainWindow(QMainWindow):
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Mod removal cancelled.")
+            self._set_status(self._tr("ui.status.mod_removal_cancelled"))
             return
 
         self._run_background_operation(
             operation_name="Mod removal",
-            running_label="Mod removal",
+            running_label=self._tr("ui.op.mod_removal"),
             started_status=f"Removing {mod_name} to archive...",
-            error_title="Mod removal failed",
+            error_title=self._tr("ui.error.mod_removal"),
             task_fn=lambda _plan=plan: self._shell_service.execute_mod_removal(
                 _plan,
                 confirm_removal=True,
             ),
             on_success=self._on_remove_selected_mod_completed,
             busy_button=self._remove_mod_button,
-            busy_button_text="Archiving...",
+            busy_button_text=self._tr("ui.busy.archiving"),
         )
 
     def _on_remove_selected_mod_completed(self, result: ModRemovalResult) -> None:
@@ -8307,13 +8817,16 @@ class MainWindow(QMainWindow):
         self._set_status(
             f"Mod removed to archive: {result.archived_target.name} ({removed_count} folder(s))"
         )
+        self._history_preferred_tab_index = 0
+        self._history_archives_auto_loaded = False
 
     def _on_rollback_selected_mod(self) -> None:
         row = self._mods_table.currentRow()
         if row < 0:
-            message = "Select an installed mod row first."
-            QMessageBox.warning(self, "No selection", message)
-            self._set_status(message)
+            # The button disables itself without a selection; this is a
+            # defensive fallback, not a normal UI path, so it stays silent
+            # rather than teaching selection through a modal.
+            self._set_status(self._tr("library.tooltip.select_row_first"))
             return
 
         name_item = self._mods_table.item(row, 0)
@@ -8321,7 +8834,7 @@ class MainWindow(QMainWindow):
         version_item = self._mods_table.item(row, 2)
         if name_item is None or unique_id_item is None or version_item is None:
             message = "Selected mod row is invalid."
-            QMessageBox.warning(self, "Invalid selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.invalid_selection"), message)
             self._set_status(message)
             return
 
@@ -8331,7 +8844,7 @@ class MainWindow(QMainWindow):
         mod_folder_path = name_item.data(_ROLE_MOD_FOLDER_PATH)
         if not isinstance(mod_folder_path, str) or not mod_folder_path.strip():
             message = "Selected mod row does not include a valid folder path."
-            QMessageBox.warning(self, "Invalid selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.invalid_selection"), message)
             self._set_status(message)
             return
         grouped_member_paths = name_item.data(_ROLE_MOD_MEMBER_FOLDER_PATHS)
@@ -8344,7 +8857,7 @@ class MainWindow(QMainWindow):
                 "Restore archived mod is not available yet for grouped multi-folder rows. "
                 "Archive/remove now works as one grouped action, but grouped rollback still needs its own flow."
             )
-            QMessageBox.information(self, "Grouped rollback not available", message)
+            QMessageBox.information(self, self._tr("ui.notice.grouped_rollback"), message)
             self._set_status(message)
             return
         active_real_profile = self._active_custom_real_profile()
@@ -8353,7 +8866,7 @@ class MainWindow(QMainWindow):
                 f"Restore archived mod is unavailable while real profile '{active_real_profile.name}' is active. "
                 "Switch to Default to restore against the canonical real Mods library."
             )
-            QMessageBox.warning(self, "Real profile action unavailable", message)
+            QMessageBox.warning(self, self._tr("ui.notice.real_profile_unavailable"), message)
             self._set_status(message)
             return
 
@@ -8369,7 +8882,7 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Rollback candidates failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.rollback_candidates"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -8392,16 +8905,13 @@ class MainWindow(QMainWindow):
                 )
                 for entry in candidates
             ]
-            selected_label, accepted = QInputDialog.getItem(
-                self,
-                "Select rollback candidate",
-                "Archived version:",
-                labels,
-                0,
-                False,
+            selected_label, accepted = self._ask_localized_item(
+                title=self._tr("archive.rollback.select_title"),
+                prompt=self._tr("archive.rollback.select_prompt"),
+                items=tuple(labels),
             )
             if not accepted:
-                self._set_status("Rollback cancelled.")
+                self._set_status(self._tr("archive.rollback.cancelled"))
                 return
             selected_index = labels.index(selected_label)
             selected_candidate = candidates[selected_index]
@@ -8420,7 +8930,7 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Rollback plan failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.rollback_plan"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -8429,10 +8939,9 @@ class MainWindow(QMainWindow):
             if plan.destination_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
             else "Sandbox Mods destination"
         )
-        yes = QMessageBox.question(
-            self,
-            "Confirm rollback from archive",
-            (
+        yes = self._show_localized_question_dialog(
+            title="Confirm rollback from archive",
+            text=(
                 "Rollback selected installed mod to archived version?\n\n"
                 f"Installed mod: {mod_name}\n"
                 f"Installed UniqueID: {mod_unique_id}\n"
@@ -8447,22 +8956,22 @@ class MainWindow(QMainWindow):
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Rollback cancelled.")
+            self._set_status(self._tr("ui.status.rollback_cancelled"))
             return
 
         self._set_inventory_output_text(build_mod_rollback_plan_text(plan))
         self._run_background_operation(
             operation_name="Mod rollback",
-            running_label="Mod rollback",
+            running_label=self._tr("ui.op.mod_rollback"),
             started_status=f"Rolling back {mod_name} from archive...",
-            error_title="Mod rollback failed",
+            error_title=self._tr("ui.error.mod_rollback"),
             task_fn=lambda _plan=plan: self._shell_service.execute_mod_rollback(
                 _plan,
                 confirm_rollback=True,
             ),
             on_success=self._on_rollback_selected_mod_completed,
             busy_button=self._rollback_mod_button,
-            busy_button_text="Restoring...",
+            busy_button_text=self._tr("ui.busy.restoring"),
         )
 
     def _on_rollback_selected_mod_completed(self, result: ModRollbackResult) -> None:
@@ -8483,6 +8992,7 @@ class MainWindow(QMainWindow):
         self._set_status(
             f"Rollback complete to {destination_label}: {result.restored_target.name}"
         )
+        self._history_preferred_tab_index = 0
 
         try:
             entries = self._shell_service.list_archived_entries(
@@ -8501,9 +9011,9 @@ class MainWindow(QMainWindow):
     def _on_refresh_archives(self) -> None:
         self._run_background_operation(
             operation_name="Archive refresh",
-            running_label="Archive refresh",
-            started_status="Refreshing archive entries...",
-            error_title="Archive refresh failed",
+            running_label=self._tr("ui.op.archive_refresh"),
+            started_status=self._tr("archive.status.refreshing"),
+            error_title=self._tr("ui.error.archive_refresh"),
             task_fn=lambda: self._shell_service.list_archived_entries(
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -8514,28 +9024,23 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_refresh_archives_completed,
             busy_button=self._refresh_archives_button,
-            busy_button_text="Refreshing...",
+            busy_button_text=self._tr("ui.busy.refreshing"),
         )
 
     def _on_refresh_archives_completed(self, entries: tuple[ArchivedModEntry, ...]) -> None:
+        self._history_archives_auto_loaded = True
         self._archived_entries = entries
         self._render_archive_entries(entries)
-        self._set_archive_output_text(build_archive_listing_text(entries))
+        # An empty archive already states itself in the empty-state message; the
+        # detail dump would only repeat it with a technical header.
+        self._set_archive_output_text(
+            build_archive_listing_text(entries) if entries else ""
+        )
         cleanup_candidate_count = len(_archive_cleanup_candidate_entries(entries))
-        if cleanup_candidate_count:
-            self._set_status(
-                self._tr(
-                    "status.archive_refresh_complete",
-                    entries=len(entries),
-                    cleanup=cleanup_candidate_count,
-                )
-            )
-            return
         self._set_status(
-            self._tr(
-                "status.archive_refresh_complete",
-                entries=len(entries),
-                cleanup=0,
+            _archive_refresh_status_text(
+                entry_count=len(entries),
+                cleanup_candidate_count=cleanup_candidate_count,
             )
         )
 
@@ -8550,7 +9055,7 @@ class MainWindow(QMainWindow):
                 keep_latest_count=self._current_archive_retention_keep_count(),
             )
         except AppShellError as exc:
-            QMessageBox.information(self, "No archive cleanup candidates", str(exc))
+            QMessageBox.information(self, self._tr("ui.notice.no_cleanup_candidates"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -8565,10 +9070,9 @@ class MainWindow(QMainWindow):
         ]
         if len(plan.groups) > 8:
             group_lines.append(f"- ...and {len(plan.groups) - 8} more mod group(s)")
-        yes = QMessageBox.question(
-            self,
-            "Confirm archive cleanup",
-            (
+        yes = self._show_localized_question_dialog(
+            title="Confirm archive cleanup",
+            text=(
                 "Cleanup older archived copies now?\n\n"
                 f"Retention rule: keep latest {plan.retention_keep_limit} archived copies per mod.\n"
                 f"Older archived folders to delete: {len(plan.entries_to_delete)}\n"
@@ -8579,14 +9083,14 @@ class MainWindow(QMainWindow):
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Archive cleanup cancelled.")
+            self._set_status(self._tr("ui.status.archive_cleanup_cancelled"))
             return
 
         self._run_background_operation(
             operation_name="Archive cleanup",
-            running_label="Archive cleanup",
-            started_status="Cleaning up older archived copies...",
-            error_title="Archive cleanup failed",
+            running_label=self._tr("ui.op.archive_cleanup"),
+            started_status=self._tr("ui.progress.cleaning_archives"),
+            error_title=self._tr("ui.error.archive_cleanup"),
             task_fn=lambda _plan=plan: self._shell_service.execute_archive_cleanup(
                 _plan,
                 confirm_cleanup=True,
@@ -8613,7 +9117,7 @@ class MainWindow(QMainWindow):
         entry = self._selected_archive_entry()
         if entry is None:
             message = "Select an archived entry first."
-            QMessageBox.warning(self, "No archive selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.no_archive_selection"), message)
             self._set_status(message)
             return
 
@@ -8628,7 +9132,7 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Restore plan failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.restore_plan"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -8638,10 +9142,9 @@ class MainWindow(QMainWindow):
             else "Sandbox Mods destination"
         )
         source_label = _archive_source_summary_label(entry.source_kind)
-        yes = QMessageBox.question(
-            self,
-            "Confirm archive restore",
-            (
+        yes = self._show_localized_question_dialog(
+            title="Confirm archive restore",
+            text=(
                 "Restore selected archived folder to active Mods destination?\n\n"
                 f"Archive source: {source_label}\n"
                 f"Archived folder: {entry.archived_folder_name}\n"
@@ -8652,14 +9155,14 @@ class MainWindow(QMainWindow):
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Archive restore cancelled.")
+            self._set_status(self._tr("ui.status.archive_restore_cancelled"))
             return
 
         self._run_background_operation(
             operation_name="Archive restore",
-            running_label="Archive restore",
+            running_label=self._tr("ui.op.archive_restore"),
             started_status=f"Restoring {entry.archived_folder_name}...",
-            error_title="Archive restore failed",
+            error_title=self._tr("ui.error.archive_restore"),
             task_fn=lambda _plan=plan: self._shell_service.execute_archive_restore(
                 _plan,
                 confirm_restore=True,
@@ -8701,7 +9204,7 @@ class MainWindow(QMainWindow):
         entries = self._selected_archive_entries()
         if not entries:
             message = "Select an archived entry first."
-            QMessageBox.warning(self, "No archive selection", message)
+            QMessageBox.warning(self, self._tr("ui.notice.no_archive_selection"), message)
             self._set_status(message)
             return
 
@@ -8719,7 +9222,7 @@ class MainWindow(QMainWindow):
                 for entry in entries
             )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Archive delete plan failed", str(exc))
+            QMessageBox.critical(self, self._tr("ui.error.archive_delete_plan"), str(exc))
             self._set_status(str(exc))
             return
 
@@ -8730,24 +9233,23 @@ class MainWindow(QMainWindow):
         )
         if selected_count > 10:
             selected_lines = f"{selected_lines}\n- ...and {selected_count - 10} more selected archived item(s)"
-        yes = QMessageBox.question(
-            self,
-            "Confirm permanent archive delete",
-            (
+        yes = self._show_localized_question_dialog(
+            title="Confirm permanent archive delete",
+            text=(
                 f"Permanently delete {selected_count} selected archived item(s)?\n\n"
                 f"{selected_lines}\n\n"
                 "This action is irreversible. The selected archived item(s) will be deleted forever."
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Permanent archive delete cancelled.")
+            self._set_status(self._tr("ui.status.archive_delete_cancelled"))
             return
 
         self._run_background_operation(
             operation_name="Archive permanent delete",
-            running_label="Archive delete",
+            running_label=self._tr("ui.op.archive_delete"),
             started_status=f"Deleting {selected_count} archived item(s) permanently...",
-            error_title="Archive permanent delete failed",
+            error_title=self._tr("ui.error.archive_permanent_delete"),
             task_fn=lambda _plans=plans: self._shell_service.execute_archive_delete_batch(
                 _plans,
                 confirm_delete=True,
@@ -8809,9 +9311,9 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Downloads watcher",
-            running_label="Downloads watcher",
-            started_status="Starting intake watch...",
-            error_title="Watch start failed",
+            running_label=self._tr("ui.op.downloads_watcher"),
+            started_status=self._tr("ui.progress.watch_start"),
+            error_title=self._tr("ui.error.watch_start"),
             task_fn=lambda: SimpleNamespace(
                 watched_downloads_path_text=watched_downloads_path_text,
                 secondary_watched_downloads_path_text=secondary_watched_downloads_path_text,
@@ -8830,7 +9332,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_start_watch_completed,
             busy_button=self._start_watch_button,
-            busy_button_text="Starting watch...",
+            busy_button_text=self._tr("ui.busy.starting_watch"),
         )
 
     def _on_stop_watch(self) -> None:
@@ -8958,12 +9460,16 @@ class MainWindow(QMainWindow):
         context_scan_path: Path | None = None,
     ) -> None:
         self._current_inventory = inventory
+        _clear_normalized_path_text_cache()
         cached_report = self._cached_update_report_for_context(
             target_kind=context_target,
             scan_path=context_scan_path,
         )
         self._current_update_report = cached_report
         self._guided_update_unique_ids = tuple()
+        # Rows are rewritten in place and then re-sorted, so a selection kept by
+        # row index would silently land on a different mod. Remember mods instead.
+        selected_folder_paths, current_folder_path = self._capture_mods_table_selection()
         was_sorting = self._mods_table.isSortingEnabled()
         self._mods_table.setSortingEnabled(False)
         current_target = context_target or self._current_scan_target()
@@ -9037,7 +9543,7 @@ class MainWindow(QMainWindow):
                 elif current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS} and toggle_reason:
                     name_item.setToolTip(toggle_reason)
 
-                status_text, blocked_reason = self._inventory_mod_row_state_text(
+                status_code, status_text, blocked_reason = self._inventory_mod_row_state_text(
                     current_target=current_target,
                     is_enabled=is_enabled,
                 )
@@ -9049,6 +9555,7 @@ class MainWindow(QMainWindow):
                 self._mods_table.setItem(row, 2, version_item)
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
                 status_item = QTableWidgetItem(status_text)
+                status_item.setData(_ROLE_MOD_UPDATE_STATE_CODE, status_code)
                 status_item.setToolTip(blocked_reason)
                 self._mods_table.setItem(row, 4, status_item)
                 type_label = _inventory_row_type_label(
@@ -9100,6 +9607,7 @@ class MainWindow(QMainWindow):
             self._suppress_mod_toggle_events = False
 
         self._mods_table.setSortingEnabled(was_sorting)
+        self._restore_mods_table_selection(selected_folder_paths, current_folder_path)
         self._apply_mods_filter()
         dependency_findings = self._shell_service.evaluate_installed_dependency_preflight(inventory)
         self._set_inventory_output_text(
@@ -9125,25 +9633,63 @@ class MainWindow(QMainWindow):
         else:
             self._refresh_selected_mod_update_guidance()
 
+    def _capture_mods_table_selection(self) -> tuple[set[str], str | None]:
+        table = self._mods_table
+        selected: set[str] = set()
+        for index in table.selectionModel().selectedRows():
+            item = table.item(index.row(), 0)
+            path = item.data(_ROLE_MOD_FOLDER_PATH) if item is not None else None
+            if isinstance(path, str) and path:
+                selected.add(path)
+        current_item = table.item(table.currentRow(), 0) if table.currentRow() >= 0 else None
+        current_path = current_item.data(_ROLE_MOD_FOLDER_PATH) if current_item is not None else None
+        return selected, current_path if isinstance(current_path, str) and current_path else None
+
+    def _restore_mods_table_selection(
+        self, selected_folder_paths: set[str], current_folder_path: str | None,
+    ) -> None:
+        table = self._mods_table
+        selection_model = table.selectionModel()
+        selection_model.clearSelection()
+        current_row = -1
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            path = item.data(_ROLE_MOD_FOLDER_PATH) if item is not None else None
+            if path in selected_folder_paths:
+                selection_model.select(
+                    table.model().index(row, 0),
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
+            if path is not None and path == current_folder_path:
+                current_row = row
+        if current_row >= 0:
+            selection_model.setCurrentIndex(
+                table.model().index(current_row, 0), QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+        else:
+            # The previously current mod is gone; never leave an action pointed
+            # at whichever mod now occupies its old row.
+            selection_model.setCurrentIndex(
+                QModelIndex(), QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+
     def _inventory_mod_row_state_text(
         self,
         *,
         current_target: str,
         is_enabled: bool,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str]:
         pt_br = self._localizer.effective_language == "pt-BR"
         if is_enabled:
             return (
                 "not_checked",
-                (
-                    "Verifique atualizações para avaliar se a atualização é acionável."
-                    if pt_br
-                    else "Check updates to evaluate update actionability."
-                ),
+                self._tr("status.not_checked"),
+                self._tr("status.not_checked_tooltip"),
             )
         if self._is_custom_profile_view(current_target):
             return (
                 "not_in_profile",
+                self._tr("status.not_in_profile"),
                 (
                     "Este mod ainda não faz parte do perfil ativo. Adicione-o ao perfil antes das ações de atualização e origem."
                     if pt_br
@@ -9152,6 +9698,7 @@ class MainWindow(QMainWindow):
             )
         return (
             "disabled",
+            "Desativado" if pt_br else "Disabled",
             (
                 "Este mod está desativado. Reative-o antes das ações de atualização e origem."
                 if pt_br
@@ -9414,7 +9961,7 @@ class MainWindow(QMainWindow):
             self._real_profile_combo.blockSignals(True)
             try:
                 self._real_profile_combo.clear()
-                self._real_profile_combo.addItem("<profiles unavailable>", "")
+                self._real_profile_combo.addItem(self._tr("library.profile.unavailable"), "")
                 self._real_profile_combo.setEnabled(False)
                 self._real_profile_combo.setToolTip(str(exc))
             finally:
@@ -9686,28 +10233,26 @@ class MainWindow(QMainWindow):
 
     def _on_create_real_profile(self) -> None:
         if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
-            self._set_status("Real Mods profiles are available while scanning the configured real Mods path.")
+            self._set_status(self._tr("library.profile.real_wrong_source"))
             return
 
-        profile_name, accepted = QInputDialog.getText(
-            self,
-            "Create real Mods profile",
-            "Profile name:",
-            text="",
+        profile_name, accepted = self._ask_localized_text_input(
+            title=self._tr("library.profile.create_real_title"),
+            prompt=self._tr("library.profile.name_prompt"),
         )
         if not accepted:
-            self._set_status("Real profile creation cancelled.")
+            self._set_status(self._tr("library.profile.real_create_cancelled"))
             return
         if not profile_name.strip():
-            self._set_status("Real profile name is required.")
+            self._set_status(self._tr("library.profile.real_name_required"))
             return
 
         requested_name = profile_name.strip()
         self._run_background_operation(
-            operation_name="Real profile create",
-            running_label="Real profile create",
-            started_status=f"Creating real profile: {requested_name}",
-            error_title="Real profile create failed",
+            operation_name=self._tr("library.profile.operation.real_create"),
+            running_label=self._tr("library.profile.operation.real_create"),
+            started_status=self._tr("library.profile.creating_real", name=requested_name),
+            error_title=self._tr("library.profile.create_real_failed"),
             task_fn=lambda _profile_name=requested_name: self._shell_service.create_real_mod_profile(
                 name=_profile_name,
                 configured_mods_path_text=self._mods_path_input.text(),
@@ -9715,7 +10260,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_create_real_profile_completed,
             busy_button=self._create_real_profile_button,
-            busy_button_text="Creating...",
+            busy_button_text=self._tr("library.profile.creating"),
         )
 
     def _on_create_real_profile_completed(
@@ -9727,9 +10272,7 @@ class MainWindow(QMainWindow):
         self._show_scan_result(result.scan_result)
         self._set_current_scan_target(result.scan_result.target_kind)
         self._set_inventory_output_text(_build_real_profile_create_text(result))
-        self._set_status(
-            f"Real profile created: {result.profile.name} (starts empty)."
-        )
+        self._set_status(self._tr("library.profile.created_real", name=result.profile.name))
 
     def _on_selected_real_profile_changed(self, *_: object) -> None:
         self._refresh_inventory_real_profile_action_state()
@@ -9741,10 +10284,13 @@ class MainWindow(QMainWindow):
             return
 
         self._run_background_operation(
-            operation_name="Real profile select",
-            running_label="Real profile select",
-            started_status=f"Switching to real profile: {selected_profile.name}",
-            error_title="Real profile select failed",
+            operation_name=self._tr("library.profile.operation.real_select"),
+            running_label=self._tr("library.profile.operation.real_select"),
+            started_status=self._tr(
+                "library.profile.switching_real",
+                name=selected_profile.name,
+            ),
+            error_title=self._tr("library.profile.select_real_failed"),
             task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.select_real_mod_profile(
                 profile_id=_profile_id,
                 configured_mods_path_text=self._mods_path_input.text(),
@@ -9752,7 +10298,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_selected_real_profile_changed_completed,
             busy_button=self._real_profile_combo,
-            busy_button_text="Switching...",
+            busy_button_text=self._tr("library.profile.switching"),
         )
 
     def _on_selected_real_profile_changed_completed(
@@ -9764,41 +10310,37 @@ class MainWindow(QMainWindow):
         self._set_current_scan_target(result.scan_result.target_kind)
         self._reload_real_mod_profiles(selected_profile_id=result.profile.profile_id)
         self._set_inventory_output_text(_build_real_profile_select_text(result))
-        self._set_status(f"Active real profile: {result.profile.name}")
+        self._set_status(self._tr("library.profile.active_real", name=result.profile.name))
 
     def _on_delete_real_profile(self) -> None:
         if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
-            self._set_status("Real Mods profiles are available while scanning the configured real Mods path.")
+            self._set_status(self._tr("library.profile.real_wrong_source"))
             return
 
         selected_profile = self._selected_real_profile()
         if selected_profile is None:
-            self._set_status("Select a real profile first.")
+            self._set_status(self._tr("library.profile.select_real_first"))
             return
 
-        confirm = QMessageBox.question(
-            self,
-            "Delete real profile",
-            "\n".join(
-                (
-                    f"Delete real profile '{selected_profile.name}'?",
-                    "",
-                    "This removes the profile root and its membership links.",
-                    "The canonical real Mods library is not deleted.",
-                )
+        confirm = self._show_localized_question_dialog(
+            title=self._tr("library.profile.delete_real_title"),
+            text=self._tr(
+                "library.profile.delete_real_confirmation",
+                name=selected_profile.name,
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
-            self._set_status("Real profile delete cancelled.")
+            self._set_status(self._tr("library.profile.real_delete_cancelled"))
             return
 
         self._run_background_operation(
-            operation_name="Real profile delete",
-            running_label="Real profile delete",
-            started_status=f"Deleting real profile: {selected_profile.name}",
-            error_title="Real profile delete failed",
+            operation_name=self._tr("library.profile.operation.real_delete"),
+            running_label=self._tr("library.profile.operation.real_delete"),
+            started_status=self._tr(
+                "library.profile.deleting_real",
+                name=selected_profile.name,
+            ),
+            error_title=self._tr("library.profile.delete_real_failed"),
             task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.delete_real_mod_profile(
                 profile_id=_profile_id,
                 configured_mods_path_text=self._mods_path_input.text(),
@@ -9806,7 +10348,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_delete_real_profile_completed,
             busy_button=self._delete_real_profile_button,
-            busy_button_text="Deleting...",
+            busy_button_text=self._tr("library.profile.deleting"),
         )
 
     def _on_delete_real_profile_completed(
@@ -9820,32 +10362,33 @@ class MainWindow(QMainWindow):
             self._show_scan_result(result.scan_result)
             self._set_current_scan_target(result.scan_result.target_kind)
         self._set_inventory_output_text(_build_real_profile_delete_text(result))
-        self._set_status(f"Real profile deleted: {result.profile.name}")
+        self._set_status(self._tr("library.profile.deleted_real", name=result.profile.name))
 
     def _on_create_sandbox_profile(self) -> None:
         if self._current_scan_target() != SCAN_TARGET_SANDBOX_MODS:
-            self._set_status("Sandbox profiles are available while scanning Sandbox Mods.")
+            self._set_status(self._tr("library.profile.sandbox_wrong_source"))
             return
 
-        profile_name, accepted = QInputDialog.getText(
-            self,
-            "Create sandbox profile",
-            "Profile name:",
-            text="",
+        profile_name, accepted = self._ask_localized_text_input(
+            title=self._tr("library.profile.create_sandbox_title"),
+            prompt=self._tr("library.profile.name_prompt"),
         )
         if not accepted:
-            self._set_status("Sandbox profile creation cancelled.")
+            self._set_status(self._tr("library.profile.sandbox_create_cancelled"))
             return
         if not profile_name.strip():
-            self._set_status("Sandbox profile name is required.")
+            self._set_status(self._tr("library.profile.sandbox_name_required"))
             return
 
         requested_name = profile_name.strip()
         self._run_background_operation(
-            operation_name="Sandbox profile create",
-            running_label="Sandbox profile create",
-            started_status=f"Creating sandbox profile: {requested_name}",
-            error_title="Sandbox profile create failed",
+            operation_name=self._tr("library.profile.operation.sandbox_create"),
+            running_label=self._tr("library.profile.operation.sandbox_create"),
+            started_status=self._tr(
+                "library.profile.creating_sandbox",
+                name=requested_name,
+            ),
+            error_title=self._tr("library.profile.create_sandbox_failed"),
             task_fn=lambda _profile_name=requested_name: self._shell_service.create_sandbox_mod_profile(
                 name=_profile_name,
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -9854,7 +10397,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_create_sandbox_profile_completed,
             busy_button=self._create_sandbox_profile_button,
-            busy_button_text="Creating...",
+            busy_button_text=self._tr("library.profile.creating"),
         )
 
     def _on_create_sandbox_profile_completed(
@@ -9867,7 +10410,7 @@ class MainWindow(QMainWindow):
         self._set_current_scan_target(result.scan_result.target_kind)
         self._set_inventory_output_text(_build_sandbox_profile_create_text(result))
         self._set_status(
-            f"Sandbox profile created: {result.profile.name} (starts empty)."
+            self._tr("library.profile.created_sandbox", name=result.profile.name)
         )
 
     def _on_selected_sandbox_profile_changed(self, *_: object) -> None:
@@ -9880,10 +10423,13 @@ class MainWindow(QMainWindow):
             return
 
         self._run_background_operation(
-            operation_name="Sandbox profile select",
-            running_label="Sandbox profile select",
-            started_status=f"Switching to sandbox profile: {selected_profile.name}",
-            error_title="Sandbox profile select failed",
+            operation_name=self._tr("library.profile.operation.sandbox_select"),
+            running_label=self._tr("library.profile.operation.sandbox_select"),
+            started_status=self._tr(
+                "library.profile.switching_sandbox",
+                name=selected_profile.name,
+            ),
+            error_title=self._tr("library.profile.select_sandbox_failed"),
             task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.select_sandbox_mod_profile(
                 profile_id=_profile_id,
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -9892,7 +10438,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_selected_sandbox_profile_changed_completed,
             busy_button=self._sandbox_profile_combo,
-            busy_button_text="Switching...",
+            busy_button_text=self._tr("library.profile.switching"),
         )
 
     def _on_selected_sandbox_profile_changed_completed(
@@ -9905,42 +10451,38 @@ class MainWindow(QMainWindow):
         self._reload_sandbox_mod_profiles(selected_profile_id=result.profile.profile_id)
         self._set_inventory_output_text(_build_sandbox_profile_select_text(result))
         self._set_status(
-            f"Active sandbox profile: {result.profile.name}"
+            self._tr("library.profile.active_sandbox", name=result.profile.name)
         )
 
     def _on_delete_sandbox_profile(self) -> None:
         if self._current_scan_target() != SCAN_TARGET_SANDBOX_MODS:
-            self._set_status("Sandbox profiles are available while scanning Sandbox Mods.")
+            self._set_status(self._tr("library.profile.sandbox_wrong_source"))
             return
 
         selected_profile = self._selected_sandbox_profile()
         if selected_profile is None:
-            self._set_status("Select a sandbox profile first.")
+            self._set_status(self._tr("library.profile.select_sandbox_first"))
             return
 
-        confirm = QMessageBox.question(
-            self,
-            "Delete sandbox profile",
-            "\n".join(
-                (
-                    f"Delete sandbox profile '{selected_profile.name}'?",
-                    "",
-                    "This removes the profile root and its membership links.",
-                    "The canonical sandbox library is not deleted.",
-                )
+        confirm = self._show_localized_question_dialog(
+            title=self._tr("library.profile.delete_sandbox_title"),
+            text=self._tr(
+                "library.profile.delete_sandbox_confirmation",
+                name=selected_profile.name,
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
-            self._set_status("Sandbox profile delete cancelled.")
+            self._set_status(self._tr("library.profile.sandbox_delete_cancelled"))
             return
 
         self._run_background_operation(
-            operation_name="Sandbox profile delete",
-            running_label="Sandbox profile delete",
-            started_status=f"Deleting sandbox profile: {selected_profile.name}",
-            error_title="Sandbox profile delete failed",
+            operation_name=self._tr("library.profile.operation.sandbox_delete"),
+            running_label=self._tr("library.profile.operation.sandbox_delete"),
+            started_status=self._tr(
+                "library.profile.deleting_sandbox",
+                name=selected_profile.name,
+            ),
+            error_title=self._tr("library.profile.delete_sandbox_failed"),
             task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.delete_sandbox_mod_profile(
                 profile_id=_profile_id,
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -9949,7 +10491,7 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_delete_sandbox_profile_completed,
             busy_button=self._delete_sandbox_profile_button,
-            busy_button_text="Deleting...",
+            busy_button_text=self._tr("library.profile.deleting"),
         )
 
     def _on_delete_sandbox_profile_completed(
@@ -9963,7 +10505,9 @@ class MainWindow(QMainWindow):
             self._show_scan_result(result.scan_result)
             self._set_current_scan_target(result.scan_result.target_kind)
         self._set_inventory_output_text(_build_sandbox_profile_delete_text(result))
-        self._set_status(f"Sandbox profile deleted: {result.profile.name}")
+        self._set_status(
+            self._tr("library.profile.deleted_sandbox", name=result.profile.name)
+        )
 
     def _apply_update_report(
         self,
@@ -10041,12 +10585,13 @@ class MainWindow(QMainWindow):
         name_item: QTableWidgetItem,
         current_target: str,
     ) -> None:
-        status_text, reason = self._inventory_mod_row_state_text(
+        status_code, status_text, reason = self._inventory_mod_row_state_text(
             current_target=current_target,
             is_enabled=False,
         )
         self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
         status_item = QTableWidgetItem(status_text)
+        status_item.setData(_ROLE_MOD_UPDATE_STATE_CODE, status_code)
         status_item.setToolTip(reason)
         self._mods_table.setItem(row, 4, status_item)
         name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
@@ -10232,18 +10777,15 @@ class MainWindow(QMainWindow):
         self._refresh_workflow_surface_states()
 
     def _render_archive_entries(self, entries: tuple[ArchivedModEntry, ...]) -> None:
-        pt_br = self._localizer.effective_language == "pt-BR"
         has_entries = bool(entries)
         self._archive_results_group.setVisible(has_entries)
         self._archive_empty_state_label.setVisible(not has_entries)
         if has_entries:
             self._archive_empty_state_label.setText("")
         else:
-            self._archive_empty_state_label.setText(
-                "Ainda não há entradas arquivadas. Atualize a lista do arquivo depois de uma atividade de arquivamento ou recuperação."
-                if pt_br
-                else "No archived entries yet. Refresh archive list after archive or recovery activity."
-            )
+            self._archive_empty_state_label.setText(self._tr("archive.empty_state"))
+        if hasattr(self, "_archive_state_hint_label"):
+            self._archive_state_hint_label.setVisible(has_entries)
         was_sorting = self._archive_table.isSortingEnabled()
         self._archive_table.setSortingEnabled(False)
         self._archive_table.setRowCount(len(entries))
@@ -10365,6 +10907,7 @@ class MainWindow(QMainWindow):
         filter_value = self._compare_category_filter_combo.currentData()
         if result is None:
             table.setVisible(False)
+            self._compare_results_group.setVisible(False)
             self._compare_copy_identity_button.setEnabled(False)
             self._set_compare_sync_button_states(None)
             return
@@ -10384,7 +10927,9 @@ class MainWindow(QMainWindow):
         if table.currentRow() >= 0 and table.isRowHidden(table.currentRow()):
             table.clearSelection()
 
-        table.setVisible(bool(result.entries) and visible_count > 0)
+        table_has_visible_rows = bool(result.entries) and visible_count > 0
+        table.setVisible(table_has_visible_rows)
+        self._compare_results_group.setVisible(table_has_visible_rows)
         self._compare_summary_label.setText(
             _mods_compare_summary_text(
                 result,
@@ -10422,7 +10967,28 @@ class MainWindow(QMainWindow):
 
     def _set_status(self, text: str) -> None:
         self._status_strip_label.setText(text)
-        self._status_strip_label.setToolTip(text)
+        self._refresh_status_strip_tooltip()
+
+    def _refresh_status_strip_tooltip(self) -> None:
+        # Clipping depends on the label's current width, so this has to be
+        # re-evaluated on resize and not only when the text changes.
+        text = self._status_strip_label.text()
+        self._status_strip_label.setToolTip(
+            text if self._status_strip_text_is_clipped(text) else ""
+        )
+
+    def _status_strip_text_is_clipped(self, text: str) -> bool:
+        label = self._status_strip_label
+        width = label.width()
+        height = label.height()
+        if width <= 0 or height <= 0 or not text:
+            return False
+        required_rect = label.fontMetrics().boundingRect(
+            QRect(0, 0, width, 0),
+            int(Qt.TextFlag.TextWordWrap) | int(Qt.AlignmentFlag.AlignLeft),
+            text,
+        )
+        return required_rect.height() > height + 1
 
     @staticmethod
     def _startup_app_update_final_status_text(
@@ -10641,12 +11207,38 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_discovery_workspace_state(self) -> None:
+        # Hide the table entirely (rather than an empty, stretched grid) when
+        # there is nothing in it yet; stale prior results stay visible while
+        # a new search is running.
+        self._discovery_table.setVisible(self._discovery_table.rowCount() > 0)
         active_operation = self._active_operation_name
+        # Before the first search there is no result to frame, so the whole
+        # results panel stays hidden instead of showing an empty bordered box.
+        # A search that finds nothing still needs the panel: that outcome is
+        # reported inside it.
+        self._discovery_surface.results_group.setVisible(
+            self._discovery_table.rowCount() > 0
+            or self._current_discovery_result is not None
+            or self._discovery_last_search_error is not None
+            or active_operation == "Discovery search"
+        )
         if active_operation == "Discovery search":
             _set_feedback_label_state(
                 self._discovery_results_state_label,
                 "active",
                 self._tr("discovery.state.searching"),
+            )
+            return
+        if self._discovery_last_search_error is not None:
+            _set_feedback_label_state(
+                self._discovery_results_state_label,
+                "muted",
+                self._tr(
+                    "discovery.state.failed_with_previous"
+                    if self._discovery_table.rowCount() > 0
+                    else "discovery.state.failed",
+                    message=self._discovery_last_search_error,
+                ),
             )
             return
         if self._current_discovery_result is None:
@@ -10902,22 +11494,11 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._archive_empty_state_label,
                 "empty",
-                (
-                    "Ainda não há entradas arquivadas. Atualize a lista do arquivo depois de alguma atividade de arquivamento ou recuperação."
-                    if pt_br
-                    else "No archived entries yet. Refresh archive list after archive or recovery activity."
-                ),
+                self._tr("archive.empty_state"),
             )
-            _set_feedback_label_state(
-                self._archive_state_hint_label,
-                "muted",
-                (
-                    "As entradas arquivadas vão aparecer aqui depois de ações seguras de arquivamento, recuperação ou restauração."
-                    if pt_br
-                    else "Archived entries will appear here after archive, recovery, or restore-safe actions."
-                ),
-            )
+            self._archive_state_hint_label.setVisible(False)
             return
+        self._archive_state_hint_label.setVisible(True)
         cleanup_candidate_count = len(_archive_cleanup_candidate_entries(self._archived_entries))
         keep_latest_count = self._current_archive_retention_keep_count()
         selected_entries = self._selected_archive_entries()
@@ -10927,9 +11508,10 @@ class MainWindow(QMainWindow):
                     self._archive_state_hint_label,
                     "ready",
                     self._tr(
-                        "archive.ready_cleanup",
+                        "archive.ready_cleanup_one"
+                        if cleanup_candidate_count == 1
+                        else "archive.ready_cleanup_many",
                         cleanup=cleanup_candidate_count,
-                        suffix="y" if cleanup_candidate_count == 1 else "ies",
                         keep_latest=keep_latest_count,
                     ),
                 )
@@ -10983,7 +11565,10 @@ class MainWindow(QMainWindow):
         original_busy_text = _busy_control_text(busy_button)
         task = BackgroundTask(task_fn)
         self._active_background_task = task
+        # operation_name identifies the operation in code; running_label is what
+        # the owner reads, so the finished/failed line uses the label.
         self._active_operation_name = operation_name
+        self._active_operation_display_label = running_label
         self._active_operation_button = busy_button
         self._active_operation_button_text = original_busy_text
         if busy_button is not None and original_busy_text is not None:
@@ -10995,7 +11580,6 @@ class MainWindow(QMainWindow):
         self._set_background_actions_enabled(False)
         self._refresh_workflow_surface_states()
         self._set_status(started_status)
-        QApplication.processEvents()
 
         task.signals.succeeded.connect(
             lambda result, _name=operation_name, _handler=on_success: self._on_background_operation_succeeded(
@@ -11056,6 +11640,9 @@ class MainWindow(QMainWindow):
         if self._active_operation_name != operation_name:
             return
 
+        # Background work may have created, moved or relinked folders.
+        _clear_normalized_path_text_cache()
+
         if self._active_operation_button is not None:
             if self._active_operation_button_text is not None:
                 _set_busy_control_text(
@@ -11074,18 +11661,40 @@ class MainWindow(QMainWindow):
         self._pending_post_operation_callback = None
         if success and pending_callback is not None:
             QTimer.singleShot(0, pending_callback)
+        display_label = getattr(self, "_active_operation_display_label", None) or operation_name
+        self._active_operation_display_label = None
         if success:
             self._operation_state_label.setText(
-                self._tr("status.operation_finished", name=operation_name)
+                self._tr("status.operation_finished", name=display_label)
             )
             return
         self._operation_state_label.setText(
-            self._tr("status.operation_failed", name=operation_name)
+            self._tr("status.operation_failed", name=display_label)
+        )
+
+    def _refresh_recovery_action_state(self) -> None:
+        """Keep recovery actions honest: never offered while busy or unreviewed."""
+        if not hasattr(self, "_run_recovery_button"):
+            return
+        idle = self._active_operation_name is None
+        operation = self._selected_install_operation()
+        can_inspect = (
+            idle and operation is not None and operation.operation_id is not None
+        )
+        if hasattr(self, "_inspect_recovery_button"):
+            self._inspect_recovery_button.setEnabled(can_inspect)
+        inspection = self._current_recovery_inspection
+        self._run_recovery_button.setEnabled(
+            can_inspect
+            and inspection is not None
+            and inspection.operation.operation_id == operation.operation_id
+            and inspection.recovery_review.allowed
         )
 
     def _set_background_actions_enabled(self, enabled: bool) -> None:
         for button in self._background_action_buttons:
             button.setEnabled(enabled)
+        self._refresh_recovery_action_state()
         self._discovery_query_input.setEnabled(enabled)
         self._set_packages_watch_controls_enabled(enabled)
         self._refresh_sandbox_dev_launch_state()
@@ -11233,24 +11842,24 @@ class MainWindow(QMainWindow):
 
     def _prompt_for_backup_bundle_path(self) -> Path | None:
         bundle_storage_kind = self._prompt_for_backup_bundle_storage_kind(
-            title="Select backup bundle",
-            message="Choose whether to open a backup bundle folder or a backup bundle zip.",
+            title=self._tr("backup.format.open_title"),
+            message=self._tr("backup.format.open_message"),
         )
         if bundle_storage_kind is None:
             return None
         if bundle_storage_kind == "directory":
             selected = QFileDialog.getExistingDirectory(
                 self,
-                "Select backup bundle folder",
+                self._tr("backup.dialog.open_folder"),
                 self._backup_bundle_dialog_start_dir(),
             )
             return Path(selected) if selected else None
 
         selected, _ = QFileDialog.getOpenFileName(
             self,
-            "Select backup bundle zip",
+            self._tr("backup.dialog.open_zip"),
             self._default_backup_bundle_zip_path(),
-            "Backup bundle zips (*.zip);;All files (*)",
+            self._tr("backup.dialog.zip_filter") + ";;All files (*)",
         )
         return Path(selected) if selected else None
 
@@ -11266,15 +11875,15 @@ class MainWindow(QMainWindow):
 
     def _prompt_for_backup_export_target(self) -> tuple[str, str] | None:
         bundle_storage_kind = self._prompt_for_backup_bundle_storage_kind(
-            title="Backup export format",
-            message="Choose whether to export a backup bundle folder or a backup bundle zip.",
+            title=self._tr("backup.format.export_title"),
+            message=self._tr("backup.format.export_message"),
         )
         if bundle_storage_kind is None:
             return None
         if bundle_storage_kind == "directory":
             selected = QFileDialog.getExistingDirectory(
                 self,
-                "Select backup export destination",
+                self._tr("backup.dialog.export_folder"),
                 self._backup_bundle_dialog_start_dir(),
             )
             if not selected:
@@ -11283,9 +11892,9 @@ class MainWindow(QMainWindow):
 
         selected, _ = QFileDialog.getSaveFileName(
             self,
-            "Save backup bundle zip",
+            self._tr("backup.dialog.export_zip"),
             self._default_backup_bundle_zip_path(),
-            "Backup bundle zips (*.zip)",
+            self._tr("backup.dialog.zip_filter"),
         )
         if not selected:
             return None
@@ -11300,8 +11909,8 @@ class MainWindow(QMainWindow):
         dialog = QMessageBox(self)
         dialog.setWindowTitle(title)
         dialog.setText(message)
-        folder_button = dialog.addButton("Folder bundle", QMessageBox.ButtonRole.ActionRole)
-        zip_button = dialog.addButton("Zip bundle", QMessageBox.ButtonRole.ActionRole)
+        folder_button = dialog.addButton(self._tr("backup.format.folder"), QMessageBox.ButtonRole.ActionRole)
+        zip_button = dialog.addButton(self._tr("backup.format.zip"), QMessageBox.ButtonRole.ActionRole)
         cancel_button = dialog.addButton(QMessageBox.StandardButton.Cancel)
         dialog.setDefaultButton(zip_button)
         dialog.exec()
@@ -11382,9 +11991,9 @@ class MainWindow(QMainWindow):
         planning_inputs = self._current_restore_import_planning_inputs()
         self._run_background_operation(
             operation_name="Restore/import planning",
-            running_label="Restore/import planning",
+            running_label=self._tr("ui.op.restore_import_planning"),
             started_status=started_status,
-            error_title="Restore/import planning failed",
+            error_title=self._tr("ui.error.restore_import_planning"),
             task_fn=lambda: self._build_restore_import_planning_ui_payload(
                 bundle_path,
                 planning_inputs,
@@ -11487,6 +12096,7 @@ class MainWindow(QMainWindow):
         )
         self._compare_results_table.setRowCount(0)
         self._compare_results_table.setVisible(False)
+        self._compare_results_group.setVisible(False)
         self._compare_results_table.clearSelection()
         self._compare_copy_identity_button.setEnabled(False)
         self._compare_copy_identity_button.setToolTip(
@@ -11526,10 +12136,14 @@ class MainWindow(QMainWindow):
     def _set_plan_review_explanation_text(self, text: str) -> None:
         self._plan_review_explanation_label.setText(text)
         self._plan_review_explanation_label.setToolTip(text)
+        self._plan_review_explanation_label.setVisible(
+            text != _no_plan_review_explanation_text()
+        )
 
     def _set_plan_facts_text(self, text: str) -> None:
         self._plan_facts_label.setText(text)
         self._plan_facts_label.setToolTip(text)
+        self._plan_facts_label.setVisible(text != _no_plan_facts_text())
 
     def _set_package_inspection_result_text(self, text: str | None) -> None:
         has_text = bool(text and text.strip())
@@ -11613,21 +12227,34 @@ class MainWindow(QMainWindow):
             ):
                 continue
 
+            bucket = _packages_queue_state_bucket(intake, correlation)
+            is_reviewable = bucket != _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE
+
             item = QListWidgetItem(_packages_review_target_label(intake, correlation))
             item.setData(int(Qt.ItemDataRole.UserRole), index)
-            item.setFlags(
-                item.flags()
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-            item.setCheckState(
-                Qt.CheckState.Checked
-                if str(intake.package_path.resolve()) in selected_paths
-                else Qt.CheckState.Unchecked
-            )
+            if is_reviewable:
+                item.setFlags(
+                    item.flags()
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                    | Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                )
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if str(intake.package_path.resolve()) in selected_paths
+                    else Qt.CheckState.Unchecked
+                )
+            else:
+                item.setFlags(
+                    (item.flags() | Qt.ItemFlag.ItemIsSelectable)
+                    & ~Qt.ItemFlag.ItemIsUserCheckable
+                    & ~Qt.ItemFlag.ItemIsEnabled
+                )
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setToolTip(
+                    self._tr("packages.queue_item_not_reviewable_tooltip")
+                )
             self._package_queue_list.addItem(item)
-            bucket = _packages_queue_state_bucket(intake, correlation)
             visible_bucket_counts[bucket] = visible_bucket_counts.get(bucket, 0) + 1
             visible_count += 1
 
@@ -11702,8 +12329,31 @@ class MainWindow(QMainWindow):
                 paths.append(package_path)
         return tuple(paths)
 
+    def _visible_reviewable_package_queue_paths(self) -> tuple[Path, ...]:
+        paths: list[Path] = []
+        for row in range(self._package_queue_list.count()):
+            item = self._package_queue_list.item(row)
+            if item is None:
+                continue
+            data = item.data(int(Qt.ItemDataRole.UserRole))
+            if not isinstance(data, int) or data < 0 or data >= len(self._detected_intakes):
+                continue
+            intake = self._detected_intakes[data]
+            correlation = (
+                self._intake_correlations[data]
+                if data < len(self._intake_correlations)
+                else None
+            )
+            if _packages_queue_state_bucket(intake, correlation) == _PACKAGES_QUEUE_STATE_NOT_REVIEWABLE:
+                continue
+            package_path = intake.package_path
+            if package_path not in paths:
+                paths.append(package_path)
+        return tuple(paths)
+
     def _refresh_package_queue_bulk_action_state(self) -> None:
         visible_paths = self._visible_package_queue_paths()
+        reviewable_paths = self._visible_reviewable_package_queue_paths()
         selected_lookup = {
             self._normalized_package_path_text(str(path))
             for path in self._selected_zip_package_paths
@@ -11712,10 +12362,17 @@ class MainWindow(QMainWindow):
             self._normalized_package_path_text(str(path))
             for path in visible_paths
         }
+        reviewable_lookup = {
+            self._normalized_package_path_text(str(path))
+            for path in reviewable_paths
+        }
         any_visible = bool(visible_paths)
+        any_reviewable = bool(reviewable_paths)
         checked_visible = bool(visible_lookup & selected_lookup)
-        all_visible_checked = any_visible and visible_lookup <= selected_lookup
-        self._package_queue_select_all_button.setEnabled(any_visible and not all_visible_checked)
+        all_reviewable_checked = any_reviewable and reviewable_lookup <= selected_lookup
+        self._package_queue_select_all_button.setEnabled(
+            any_reviewable and not all_reviewable_checked
+        )
         self._package_queue_deselect_all_button.setEnabled(checked_visible)
         self._package_queue_select_current_only_button.setEnabled(
             any_visible and self._selected_intake_index() >= 0
@@ -11778,7 +12435,11 @@ class MainWindow(QMainWindow):
         )
 
     def _set_visible_package_queue_items_checked(self, checked: bool) -> None:
-        visible_paths = self._visible_package_queue_paths()
+        visible_paths = (
+            self._visible_reviewable_package_queue_paths()
+            if checked
+            else self._visible_package_queue_paths()
+        )
         if not visible_paths:
             return
         updated_paths = list(self._selected_zip_package_paths)
@@ -11787,6 +12448,20 @@ class MainWindow(QMainWindow):
             for path in visible_paths
         }
         if checked:
+            # Selecting all must also drop any visible package that is no longer
+            # reviewable, otherwise a stale selection survives the action that
+            # promises to leave only reviewable packages checked.
+            reviewable_lookup = visible_lookup
+            all_visible_lookup = {
+                self._normalized_package_path_text(str(path))
+                for path in self._visible_package_queue_paths()
+            }
+            updated_paths = [
+                path
+                for path in updated_paths
+                if self._normalized_package_path_text(str(path)) not in all_visible_lookup
+                or self._normalized_package_path_text(str(path)) in reviewable_lookup
+            ]
             for path in visible_paths:
                 if path not in updated_paths:
                     updated_paths.append(path)
@@ -12078,7 +12753,7 @@ class MainWindow(QMainWindow):
                     existing_config=self._config,
                 )
             except AppShellError as exc:
-                QMessageBox.critical(self, "Zip inspection failed", str(exc))
+                QMessageBox.critical(self, self._tr("ui.error.zip_inspection"), str(exc))
                 self._set_intake_output_text(str(exc))
                 self._set_status(str(exc))
                 return
@@ -12101,7 +12776,6 @@ class MainWindow(QMainWindow):
                 return
 
             self._invalidate_pending_plan()
-            self._set_current_install_target(self._packages_comparison_target_kind())
             self._show_package_inspection_results(batch_result)
             self._set_intake_output_text(_build_package_inspection_batch_text(batch_result))
             self._context_tabs.setCurrentWidget(self._plan_install_tab)
@@ -12123,7 +12797,7 @@ class MainWindow(QMainWindow):
                     selected_index=selected_index,
                 )
             except AppShellError as exc:
-                QMessageBox.warning(self, "No package selected", str(exc))
+                QMessageBox.warning(self, self._tr("ui.notice.no_package_selected"), str(exc))
                 self._set_intake_output_text(str(exc))
                 self._set_status(str(exc))
                 return
@@ -12133,7 +12807,7 @@ class MainWindow(QMainWindow):
                     "Selected package cannot be installed "
                     f"({intake.classification})."
                 )
-                QMessageBox.information(self, "Package not actionable", message)
+                QMessageBox.information(self, self._tr("ui.notice.package_not_actionable"), message)
                 self._set_intake_output_text(message)
                 self._set_status(message)
                 return
@@ -12207,7 +12881,7 @@ class MainWindow(QMainWindow):
                 selected_index=selected_index,
             )
         except AppShellError as exc:
-            QMessageBox.warning(self, "No package selected", str(exc))
+            QMessageBox.warning(self, self._tr("ui.notice.no_package_selected"), str(exc))
             self._set_intake_output_text(str(exc))
             self._set_status(str(exc))
             return
@@ -12395,7 +13069,7 @@ class MainWindow(QMainWindow):
                 "Sandbox toggle unavailable",
                 "Selected mod row does not include a valid folder path.",
             )
-            self._set_status("Sandbox mod toggle failed: invalid folder path.")
+            self._set_status(self._tr("ui.status.sandbox_toggle_invalid_path"))
             return
 
         current_target = self._current_scan_target()
@@ -12419,20 +13093,20 @@ class MainWindow(QMainWindow):
                 profile_kind = (
                     "Real" if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS else "Sandbox"
                 )
-                QMessageBox.warning(self, "Profile toggle unavailable", str(exc))
+                QMessageBox.warning(self, self._tr("ui.notice.profile_toggle_unavailable"), str(exc))
                 self._set_status(f"{profile_kind} mod toggle failed: {exc}")
                 return
 
         if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             self._run_background_operation(
                 operation_name="Real profile mod toggle",
-                running_label="Real profile mod toggle",
+                running_label=self._tr("ui.op.real_profile_toggle"),
                 started_status=(
                     f"Adding {mod_name} to real profile..."
                     if desired_enabled
                     else f"Removing {mod_name} from real profile..."
                 ),
-                error_title="Real profile mod toggle failed",
+                error_title=self._tr("ui.error.real_profile_toggle"),
                 task_fn=lambda _mod_folder_path=mod_folder_path, _desired_enabled=desired_enabled, _profile_id=self._selected_real_profile_id(): self._shell_service.set_real_mod_enabled_state(
                     configured_mods_path_text=self._mods_path_input.text(),
                     mod_folder_path_text=_mod_folder_path,
@@ -12451,13 +13125,13 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Sandbox mod toggle",
-            running_label="Sandbox mod toggle",
+            running_label=self._tr("ui.op.sandbox_toggle"),
             started_status=(
                 f"Adding {mod_name} to sandbox profile..."
                 if desired_enabled
                 else f"Removing {mod_name} from sandbox profile..."
             ),
-            error_title="Sandbox mod toggle failed",
+            error_title=self._tr("ui.error.sandbox_toggle"),
             task_fn=lambda _mod_folder_path=mod_folder_path, _desired_enabled=desired_enabled, _profile_id=self._selected_sandbox_profile_id(): self._shell_service.set_sandbox_mod_enabled_state(
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
@@ -12510,18 +13184,15 @@ class MainWindow(QMainWindow):
         if not messages:
             return True
 
-        confirm = QMessageBox.question(
-            self,
-            "Enable with missing dependencies?",
-            (
+        confirm = self._show_localized_question_dialog(
+            title="Enable with missing dependencies?",
+            text=(
                 f"Adding {mod_name} to {profile_label} profile \"{selected_profile.name}\" "
                 "would leave required dependencies missing in that same active profile.\n\n"
                 "Missing required dependencies:\n"
                 + "\n".join(f"- {message}" for message in messages)
                 + "\n\nAdd it anyway?"
             ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
         )
         return confirm == QMessageBox.StandardButton.Yes
 
@@ -12620,16 +13291,14 @@ class MainWindow(QMainWindow):
                 tooltip=source_tooltip,
             )
         elif context.status is None and context.status_text == "not_checked":
-            message = (
-                f"{context.mod_name}: verifique atualizações primeiro para avaliar se a atualização é acionável. Abrir página fica desativado até uma linha acionável ser selecionada."
-                if pt_br
-                else f"{context.mod_name}: check updates first to evaluate update actionability. "
-                "Open page stays disabled until an actionable row is selected."
+            message = self._tr(
+                "library.guidance.not_checked_selected",
+                mod_name=context.mod_name,
             )
             self._set_inventory_blocked_detail_text(None)
             self._set_open_remote_page_state(
                 enabled=False,
-                tooltip="Verifique atualizações e selecione primeiro uma linha acionável." if pt_br else "Check updates and select an actionable row first.",
+                tooltip=self._tr("library.guidance.not_checked_open_page_tooltip"),
             )
             self._set_find_source_hint_state(
                 enabled=False,
@@ -12752,11 +13421,11 @@ class MainWindow(QMainWindow):
             )
             self._set_find_source_hint_state(
                 enabled=False,
-                tooltip="Linhas de atualização acionáveis já têm uma ação direta de página." if pt_br else "Actionable update rows already have a direct page action.",
+                tooltip=self._tr("library.tooltip.ready_row_has_page_action"),
             )
             self._set_use_suggested_source_state(
                 enabled=False,
-                tooltip="Linhas de atualização acionáveis já têm uma ação direta de página." if pt_br else "Actionable update rows already have a direct page action.",
+                tooltip=self._tr("library.tooltip.ready_row_has_page_action"),
             )
         elif isinstance(context.blocked_reason, str) and context.blocked_reason.strip():
             message = (
@@ -12845,11 +13514,7 @@ class MainWindow(QMainWindow):
         self._set_inventory_blocked_detail_text(None)
         self._set_open_remote_page_state(
             enabled=False,
-            tooltip=(
-                "Selecione uma linha de mod acionável para abrir a página remota."
-                if pt_br
-                else "Select an actionable mod row to open its remote page."
-            ),
+            tooltip=self._tr("library.tooltip.select_ready_row_open_page"),
         )
         self._set_find_source_hint_state(
             enabled=False,
@@ -12909,7 +13574,12 @@ class MainWindow(QMainWindow):
 
         mod_name = name_item.text().strip() or "Selected mod"
         selected_unique_id = unique_id_item.text().strip() if unique_id_item is not None else ""
-        status_text = status_item.text().strip() if status_item is not None else ""
+        status_code = (
+            status_item.data(_ROLE_MOD_UPDATE_STATE_CODE)
+            if status_item is not None
+            else ""
+        )
+        status_text = status_code.strip() if isinstance(status_code, str) else ""
         is_enabled = name_item.data(_ROLE_MOD_IS_ENABLED) is True
         status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
         status = status_data if isinstance(status_data, ModUpdateStatus) else None
@@ -12985,22 +13655,33 @@ class MainWindow(QMainWindow):
         *,
         actionable_targets: tuple[tuple[str, str], ...],
     ) -> _ActionButtonState:
+        pt_br = self._localizer.effective_language == "pt-BR"
         count = len(actionable_targets)
         if count < 2:
             return _ActionButtonState(
                 visible=False,
                 enabled=False,
-                tooltip="Select two or more actionable update rows after Check updates.",
+                tooltip=(
+                    "Selecione duas ou mais linhas prontas para atualizar depois de Verificar atualizações."
+                    if pt_br
+                    else "Select two or more rows that are ready to update after Check updates."
+                ),
             )
         if self._active_operation_name is not None:
             return _ActionButtonState(
                 enabled=False,
-                tooltip="Wait for the active operation to finish before opening selected update pages.",
+                tooltip=(
+                    "Aguarde a operação ativa terminar antes de abrir as páginas das atualizações selecionadas."
+                    if pt_br
+                    else "Wait for the active operation to finish before opening selected update pages."
+                ),
             )
         return _ActionButtonState(
             enabled=True,
             tooltip=(
-                f"Open pages for {count} selected update targets and start intake watch if needed."
+                f"Abrir páginas para {count} atualizações selecionadas e iniciar o monitoramento de downloads, se necessário."
+                if pt_br
+                else f"Open pages for {count} selected update targets and start intake watch if needed."
             ),
         )
 
@@ -13099,9 +13780,9 @@ class MainWindow(QMainWindow):
         )
         self._run_background_operation(
             operation_name="Downloads watcher",
-            running_label="Downloads watcher",
-            started_status="Starting intake watch for selected updates...",
-            error_title="Watch start failed",
+            running_label=self._tr("ui.op.downloads_watcher"),
+            started_status=self._tr("ui.progress.watch_selected"),
+            error_title=self._tr("ui.error.watch_start"),
             task_fn=lambda: SimpleNamespace(
                 watched_downloads_path_text=watched_downloads_path_text,
                 secondary_watched_downloads_path_text=secondary_watched_downloads_path_text,
@@ -13123,7 +13804,7 @@ class MainWindow(QMainWindow):
                 _targets,
             ),
             busy_button=busy_button,
-            busy_button_text="Starting watch...",
+            busy_button_text=self._tr("ui.busy.starting_watch"),
         )
 
     def _on_start_watch_for_guided_updates_completed(
@@ -13139,23 +13820,44 @@ class MainWindow(QMainWindow):
         )
 
     def _on_open_selected_update_pages(self) -> None:
+        pt_br = self._localizer.effective_language == "pt-BR"
         actionable_targets = self._selected_actionable_update_targets()
         if not actionable_targets:
-            message = "Select one or more actionable update rows first."
+            message = (
+                "Selecione uma ou mais linhas prontas para atualizar primeiro."
+                if pt_br
+                else "Select one or more rows that are ready to update first."
+            )
             self._set_status(message)
             return
 
         page_targets = self._selected_actionable_update_page_targets()
         if len(page_targets) != len(actionable_targets):
-            message = "One or more selected update rows do not have an openable remote page yet."
-            QMessageBox.information(self, "Missing remote link", message)
+            message = (
+                "Uma ou mais linhas de atualização selecionadas ainda não têm uma página remota disponível."
+                if pt_br
+                else "One or more selected update rows do not have an openable remote page yet."
+            )
+            QMessageBox.information(
+                self,
+                "Link remoto ausente" if pt_br else "Missing remote link",
+                message,
+            )
             self._set_status(message)
             return
 
         for _, _, url in page_targets:
             if not QDesktopServices.openUrl(QUrl(url)):
-                message = f"Could not open page: {url}"
-                QMessageBox.critical(self, "Open failed", message)
+                message = (
+                    f"Não foi possível abrir a página: {url}"
+                    if pt_br
+                    else f"Could not open page: {url}"
+                )
+                QMessageBox.critical(
+                    self,
+                    "Falha ao abrir" if pt_br else "Open failed",
+                    message,
+                )
                 self._set_status(message)
                 return
 
@@ -13210,6 +13912,14 @@ class MainWindow(QMainWindow):
         return row >= 0 and not self._mods_table.isRowHidden(row) and bool(
             self._mods_table.selectedItems()
         )
+
+    def _refresh_selected_mod_removal_action_state(self, *_: object) -> None:
+        has_selection = self._mods_selection_has_active_row()
+        tooltip = "" if has_selection else self._tr("library.tooltip.select_row_first")
+        self._remove_mod_button.setEnabled(has_selection)
+        self._remove_mod_button.setToolTip(tooltip)
+        self._rollback_mod_button.setEnabled(has_selection)
+        self._rollback_mod_button.setToolTip(tooltip)
 
     def _refresh_mods_troubleshooting_density(self) -> None:
         has_actionable_smapi = self._smapi_troubleshooting_has_actionable_entries()
@@ -13482,6 +14192,7 @@ class MainWindow(QMainWindow):
         self._sync_selected_to_sandbox_button.setToolTip(sync_state.tooltip)
         self._promote_selected_to_real_button.setEnabled(promote_state.enabled)
         self._promote_selected_to_real_button.setToolTip(promote_state.tooltip)
+        self._refresh_selected_mod_removal_action_state()
 
     def _resolve_inventory_sandbox_sync_button_states(
         self,
@@ -13733,11 +14444,11 @@ class MainWindow(QMainWindow):
         selected_count = len(selected_mod_folder_paths)
         self._run_background_operation(
             operation_name="Sandbox sync",
-            running_label="Sandbox sync",
+            running_label=self._tr("ui.op.sandbox_sync"),
             started_status=(
                 f"Syncing {selected_count} selected mod(s) from real Mods to sandbox..."
             ),
-            error_title="Sandbox sync failed",
+            error_title=self._tr("ui.error.sandbox_sync"),
             task_fn=lambda _paths=selected_mod_folder_paths: self._shell_service.sync_installed_mods_to_sandbox(
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -13784,24 +14495,23 @@ class MainWindow(QMainWindow):
             self._set_status(preview.review.message)
             return
 
-        yes = QMessageBox.question(
-            self,
-            "Review sandbox promotion to REAL Mods",
-            _build_sandbox_mods_promotion_confirmation_message(preview),
+        yes = self._show_localized_question_dialog(
+            title="Review sandbox promotion to REAL Mods",
+            text=_build_sandbox_mods_promotion_confirmation_message(preview),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Sandbox promotion cancelled.")
+            self._set_status(self._tr("ui.status.sandbox_promotion_cancelled"))
             return
 
         selected_count = len(selected_mod_folder_paths)
         history_before = self._install_operation_history
         self._run_background_operation(
             operation_name="Sandbox promotion",
-            running_label="Sandbox promotion",
+            running_label=self._tr("ui.op.sandbox_promotion"),
             started_status=(
                 f"Promoting {selected_count} selected mod(s) from sandbox Mods to REAL Mods..."
             ),
-            error_title="Sandbox promotion failed",
+            error_title=self._tr("ui.error.sandbox_promotion"),
             task_fn=lambda _preview=preview: self._shell_service.execute_sandbox_mods_promotion_preview(
                 _preview
             ),
@@ -13819,6 +14529,9 @@ class MainWindow(QMainWindow):
     ) -> None:
         self._refresh_install_operation_selector()
         self._select_new_install_operation_for_recovery(history_before)
+        self._history_preferred_tab_index = 1
+        # Promotions that replace targets archive the replaced copies.
+        self._history_archives_auto_loaded = False
         self._set_inventory_output_text(_build_sandbox_mods_promotion_result_text(result))
         replaced_count = len(result.replaced_target_paths)
         if replaced_count > 0:
@@ -14323,12 +15036,15 @@ class MainWindow(QMainWindow):
             self._selected_zip_package_paths
         )
         has_reviewed_plan = self._pending_install_plan is not None
+        # Background work disables these actions; a surface refresh during that
+        # work must not re-enable planning or a second apply of the same plan.
+        idle = self._active_operation_name is None
 
         if has_reviewed_plan:
             self._plan_install_button.setText(
                 "Planejar de novo" if self._localizer.effective_language == "pt-BR" else "Plan again"
             )
-            self._plan_install_button.setEnabled(has_staged_package)
+            self._plan_install_button.setEnabled(has_staged_package and idle)
             self._plan_install_button.setToolTip(
                 "Reconstruir o plano de instalação só leitura para o lote de pacotes preparado."
                 if self._localizer.effective_language == "pt-BR"
@@ -14339,7 +15055,7 @@ class MainWindow(QMainWindow):
             self._run_install_button.setText(
                 self._tr("install.apply_install")
             )
-            self._run_install_button.setEnabled(True)
+            self._run_install_button.setEnabled(idle)
             self._run_install_button.setToolTip(
                 "Aplicar o plano de instalação atual ao destino selecionado."
                 if self._localizer.effective_language == "pt-BR"
@@ -14349,7 +15065,7 @@ class MainWindow(QMainWindow):
             return
 
         self._plan_install_button.setText(self._tr("install.plan_install"))
-        self._plan_install_button.setEnabled(has_staged_package)
+        self._plan_install_button.setEnabled(has_staged_package and idle)
         self._plan_install_button.setToolTip(
             "Gerar o plano de instalação só leitura para o lote de pacotes preparado."
             if self._localizer.effective_language == "pt-BR"
@@ -14432,7 +15148,6 @@ class MainWindow(QMainWindow):
             self._apply_auto_overwrite_intent_for_package(package_path)
         else:
             self._sync_auto_overwrite_intent_with_staged_package(package_path)
-        self._set_current_install_target(self._packages_comparison_target_kind())
         self._refresh_staged_package_preview()
         self._refresh_stage_package_action_state()
         self._set_intake_output_text(status_message)
@@ -14459,7 +15174,6 @@ class MainWindow(QMainWindow):
             self._apply_auto_overwrite_intent_for_package_paths(selected_paths)
         else:
             self._sync_auto_overwrite_intent_with_staged_package(str(selected_paths[0]))
-        self._set_current_install_target(self._packages_comparison_target_kind())
         self._refresh_staged_package_preview()
         self._refresh_stage_package_action_state()
         self._set_intake_output_text(status_message)
@@ -14845,11 +15559,116 @@ class MainWindow(QMainWindow):
             return "diretório Mods real" if localizer.effective_language == "pt-BR" else "real Mods directory"
         return "diretório Mods sandbox" if localizer.effective_language == "pt-BR" else "sandbox Mods directory"
 
+    @staticmethod
+    def _scrolling_page_body_width(page: QWidget, scroll_area: QScrollArea) -> int:
+        # A stacked workspace only resizes its current page, so measure hidden
+        # pages from their container. Reserve the vertical scrollbar so a layout
+        # decision cannot flip when that scrollbar appears or disappears.
+        container = page.parentWidget()
+        page_width = container.contentsRect().width() if container is not None else page.width()
+        margins = page.layout().contentsMargins()
+        return (
+            page_width
+            - margins.left()
+            - margins.right()
+            - scroll_area.verticalScrollBar().sizeHint().width()
+        )
+
+    def _refresh_packages_panel_arrangement(self) -> None:
+        scroll_area = getattr(self, "_packages_scroll_area", None)
+        if scroll_area is None or not hasattr(self, "_packages_review_target_group"):
+            return
+        grid = self._packages_top_grid_layout
+        panels = (
+            self._packages_review_target_group, self._packages_watcher_group,
+            self._package_inspection_group, self._packages_output_group,
+        )
+
+        def minimum_width(panel: QWidget) -> int:
+            # Match the layout: an explicit minimum overrides the size hint.
+            return panel.minimumWidth() or panel.minimumSizeHint().width()
+
+        side_panel_minimum = max(minimum_width(panel) for panel in panels[1:])
+        # Decide from the real body width and the panels' real minimum widths
+        # (translated labels, fonts, scaling), not from a window-size threshold.
+        available_width = self._scrolling_page_body_width(self._packages_page, scroll_area)
+        two_column_minimum = (
+            minimum_width(panels[0]) + grid.horizontalSpacing() + side_panel_minimum
+        )
+        stacked_packages = two_column_minimum > available_width
+        if getattr(self, "_packages_stacked", None) == stacked_packages:
+            return
+        self._packages_stacked = stacked_packages
+        for panel in panels:
+            grid.removeWidget(panel)
+        for row in range(4):
+            grid.setRowStretch(row, 0)
+        if stacked_packages:
+            for row, panel in enumerate(panels):
+                grid.addWidget(panel, row, 0)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 0)
+            grid.setRowStretch(0, 1)
+        else:
+            grid.addWidget(panels[0], 0, 0, 3, 1)
+            for row, panel in enumerate(panels[1:]):
+                grid.addWidget(panel, row, 1)
+            grid.setColumnStretch(0, 8)
+            grid.setColumnStretch(1, 3)
+            grid.setRowStretch(2, 1)
+        self._packages_watcher_group.setMaximumWidth(
+            16777215 if stacked_packages else max(360, side_panel_minimum)
+        )
+        # Keep the two filter sections on separate lines even in the wide
+        # layout; their translated minimum widths add up quickly.
+        self._packages_review_controls_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+        self._packages_queue_header_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+        self._refit_scroll_area_content(scroll_area, self._packages_review_target_group)
+
+    def _refresh_compare_actions_arrangement(self) -> None:
+        scroll_area = getattr(self, "_compare_scroll_area", None)
+        if scroll_area is None:
+            return
+        layout = self._compare_actions_layout
+        available_width = self._scrolling_page_body_width(self._compare_page, scroll_area)
+        single_line_width = (
+            self._compare_run_actions_layout.sizeHint().width()
+            + layout.spacing()
+            + self._compare_view_controls_layout.sizeHint().width()
+        )
+        direction = (
+            QBoxLayout.Direction.TopToBottom
+            if single_line_width > available_width
+            else QBoxLayout.Direction.LeftToRight
+        )
+        if layout.direction() != direction:
+            layout.setDirection(direction)
+            self._refit_scroll_area_content(scroll_area, self._compare_actions_widget)
+
+    @staticmethod
+    def _refit_scroll_area_content(scroll_area: QScrollArea, changed_widget: QWidget) -> None:
+        # A rearrangement can happen while the scroll area is handling its own
+        # resize, after it sized the content for the previous arrangement.
+        # Recompute the cached minimum sizes up to the content now, then let
+        # the scroll area fit its content again.
+        widget: QWidget | None = changed_widget
+        while widget is not None:
+            if widget.layout() is not None:
+                widget.layout().activate()
+            if widget is scroll_area.widget():
+                break
+            widget = widget.parentWidget()
+        QApplication.postEvent(scroll_area, QEvent(QEvent.Type.LayoutRequest))
+
     def _refresh_responsive_panel_bounds(self) -> None:
         window_height = max(self.height(), self.minimumHeight())
         window_width = max(self.width(), self.minimumWidth())
         compact_viewport = window_width <= 1366 or window_height <= 768
         compact_small_desktop = window_width <= 1366 and window_height <= 768
+        # Nav-rail label collapse uses a narrower width threshold than the
+        # general density breakpoints above: common 1366x768 laptop displays
+        # should still show workspace labels, not just icons.
+        nav_auto_collapse_width = window_width <= 1180
         self._workspace_nav_compact_viewport = compact_viewport
         self._workspace_nav_compact_small_desktop = compact_small_desktop
 
@@ -14886,13 +15705,13 @@ class MainWindow(QMainWindow):
         details_cap = max(64, min(108, int(window_height * 0.12)))
 
         if not self._top_context_manual_override:
-            auto_expanded = not compact_small_desktop
+            auto_expanded = False
             if self._top_context_expanded != auto_expanded:
                 self._top_context_expanded = auto_expanded
                 self._apply_top_context_surface_state()
 
         if not self._workspace_nav_manual_override:
-            auto_collapsed = compact_small_desktop
+            auto_collapsed = nav_auto_collapse_width
             if self._workspace_nav_collapsed != auto_collapsed:
                 self._workspace_nav_collapsed = auto_collapsed
 
@@ -14920,7 +15739,13 @@ class MainWindow(QMainWindow):
             self._mods_page_layout.setSpacing(3 if compact_small_desktop else 4)
 
         if hasattr(self, "_inventory_controls_tabs"):
-            self._inventory_controls_tabs.setMaximumHeight(inventory_controls_cap)
+            # The cap limits spare height only; never squeeze the controls.
+            self._inventory_controls_tabs.setMaximumHeight(
+                max(
+                    inventory_controls_cap,
+                    self._inventory_controls_tabs.minimumSizeHint().height(),
+                )
+            )
 
         if hasattr(self, "_inventory_controls_panel_layout"):
             self._inventory_controls_panel_layout.setContentsMargins(
@@ -14945,13 +15770,6 @@ class MainWindow(QMainWindow):
             )
             self._game_smapi_panel_layout.setSpacing(8 if compact_viewport else 10)
 
-        if hasattr(self, "_launch_vanilla_button"):
-            self._launch_vanilla_button.setFixedHeight(26 if compact_small_desktop else 28)
-        if hasattr(self, "_launch_smapi_button"):
-            self._launch_smapi_button.setFixedHeight(27 if compact_small_desktop else 29)
-        if hasattr(self, "_launch_sandbox_dev_button"):
-            self._launch_sandbox_dev_button.setFixedHeight(26 if compact_small_desktop else 28)
-
         if hasattr(self, "_mods_selection_context_group"):
             self._mods_selection_context_group.setMinimumWidth(
                 292 if compact_small_desktop else 304
@@ -14966,31 +15784,19 @@ class MainWindow(QMainWindow):
             )
         self._set_compact_button_row_direction(
             getattr(self, "_mods_selected_actions_row", None),
-            compact=compact_small_desktop,
+            compact=True,
         )
         self._set_compact_button_row_direction(
             getattr(self, "_inventory_real_profile_actions_row", None),
-            compact=compact_small_desktop,
+            compact=True,
         )
         self._set_compact_button_row_direction(
             getattr(self, "_inventory_sandbox_profile_actions_row", None),
-            compact=compact_small_desktop,
+            compact=True,
         )
 
-        if hasattr(self, "_packages_top_grid_layout"):
-            if compact_small_desktop:
-                self._packages_top_grid_layout.setColumnStretch(0, 9)
-                self._packages_top_grid_layout.setColumnStretch(1, 5)
-            elif compact_viewport:
-                self._packages_top_grid_layout.setColumnStretch(0, 10)
-                self._packages_top_grid_layout.setColumnStretch(1, 3)
-            else:
-                self._packages_top_grid_layout.setColumnStretch(0, 8)
-                self._packages_top_grid_layout.setColumnStretch(1, 3)
-        if hasattr(self, "_packages_watcher_group"):
-            self._packages_watcher_group.setMaximumWidth(
-                388 if compact_small_desktop else 292 if compact_viewport else 360
-            )
+        self._refresh_packages_panel_arrangement()
+        self._refresh_compare_actions_arrangement()
         self._set_compact_button_row_direction(
             getattr(self, "_packages_primary_path_actions_layout", None),
             compact=compact_small_desktop,
@@ -15078,7 +15884,8 @@ def _install_operation_selector_text(operation: InstallOperationRecord) -> str:
     if operation.operation_id is None:
         legacy_text = "registro legado" if localizer.effective_language == "pt-BR" else "legacy record"
         return f"{package_name} | {operation.timestamp} | {destination_label} | {legacy_text}"
-    return f"{package_name} | {operation.timestamp} | {destination_label}"
+    outcome = localizer.text(f"install.outcome.{operation.outcome_status}")
+    return f"{package_name} | {operation.timestamp} | {destination_label} | {outcome}"
 
 
 def _build_install_operation_summary_text(operation: InstallOperationRecord) -> str:
@@ -15087,7 +15894,10 @@ def _build_install_operation_summary_text(operation: InstallOperationRecord) -> 
     return (
         f"{localizer.text('history.selected_install', package_name=operation.package_path.name)}\n"
         f"{localizer.text('history.recorded_at', timestamp=operation.timestamp)}\n"
-        f"{localizer.text('history.destination', destination=destination_label)}"
+        f"{localizer.text('history.destination', destination=destination_label)}\n"
+        f"{localizer.text('install.outcome.summary', outcome=localizer.text(f'install.outcome.{operation.outcome_status}'))}"
+        + (f"\n{localizer.text('install.outcome.journal', path=operation.journal_path)}" if operation.journal_path else "")
+        + (f"\n{operation.failure_message}" if operation.failure_message else "")
     )
 
 
@@ -15099,14 +15909,7 @@ def _latest_recovery_outcome_summary(
         return localizer.text("history.recovery_outcome_none")
 
     latest_record = max(linked_history, key=lambda record: record.timestamp)
-    status_text = latest_record.outcome_status
-    if localizer.effective_language == "pt-BR":
-        status_text = {
-            "executed": "executada",
-            "blocked": "bloqueada",
-            "cancelled": "cancelada",
-            "planned": "planejada",
-        }.get(latest_record.outcome_status, latest_record.outcome_status)
+    status_text = localizer.text(f"recovery.outcome.{latest_record.outcome_status}")
     return localizer.text(
         "history.recovery_outcome",
         status=status_text,
@@ -15497,7 +16300,84 @@ def _staged_dependency_fact_text(plan: SandboxInstallPlan) -> str | None:
     )
 
 
+_DEPENDENCY_WARNING_PREFIX = "Dependency: "
+
+
+_DEPENDENCY_STATE_TEXT_KEYS = {
+    MISSING_REQUIRED_DEPENDENCY: "plan.dependency.missing_required",
+    OPTIONAL_DEPENDENCY_MISSING: "plan.dependency.optional_missing",
+    UNRESOLVED_DEPENDENCY_CONTEXT: "plan.dependency.unresolved",
+}
+
+
+def _localized_dependency_finding_text(finding: object) -> str | None:
+    state = str(getattr(finding, "state", ""))
+    key = _DEPENDENCY_STATE_TEXT_KEYS.get(state)
+    if key is None:
+        return None
+    mod_label = (
+        str(getattr(finding, "required_by_name", "")).strip()
+        or str(getattr(finding, "required_by_unique_id", "")).strip()
+    )
+    dependency_label = str(getattr(finding, "dependency_unique_id", "")).strip()
+    if not mod_label or not dependency_label:
+        return None
+    return get_active_ui_localizer().text(
+        key,
+        mod=mod_label,
+        dependency=dependency_label,
+    )
+
+
+def _join_localized_issue_sentences(sentences: list[str]) -> str | None:
+    if not sentences:
+        return None
+    if len(sentences) == 1:
+        return sentences[0]
+    return "; ".join(sentence.rstrip(".") for sentence in sentences) + "."
+
+
+def _localized_dependency_findings_text(plan: SandboxInstallPlan) -> str | None:
+    # Structured findings localize properly. The service's plan_warnings are
+    # English strings, so using them would put English inside the Portuguese
+    # "Problema de dependência: ..." sentence.
+    findings = tuple(getattr(plan, "dependency_findings", tuple()))
+    blocking = [
+        finding for finding in findings
+        if str(getattr(finding, "state", "")) == MISSING_REQUIRED_DEPENDENCY
+    ]
+    ranked = blocking or [
+        finding for finding in findings
+        if str(getattr(finding, "state", "")) in _DEPENDENCY_STATE_TEXT_KEYS
+    ]
+    localized = [
+        text
+        for text in (_localized_dependency_finding_text(finding) for finding in ranked)
+        if text
+    ]
+    return _join_localized_issue_sentences(localized)
+
+
 def _first_dependency_warning_text(plan: SandboxInstallPlan) -> str | None:
+    localized = _localized_dependency_findings_text(plan)
+    if localized:
+        return localized
+
+    # Fallback for plans that carry only the legacy English warning strings:
+    # prefer the specific per-mod "Dependency: <mod> is missing required
+    # dependency <id>." lines over the generic "found N relation(s)" summary
+    # so blocked installs still name what is actually missing.
+    specific_dependency_warnings = [
+        warning[len(_DEPENDENCY_WARNING_PREFIX):]
+        for warning in plan.plan_warnings
+        if warning.startswith(_DEPENDENCY_WARNING_PREFIX)
+    ]
+    if specific_dependency_warnings:
+        if len(specific_dependency_warnings) == 1:
+            return specific_dependency_warnings[0]
+        return "; ".join(
+            warning.rstrip(".") for warning in specific_dependency_warnings
+        ) + "."
     for finding in plan.dependency_findings:
         message = str(getattr(finding, "message", "")).strip()
         if message:
@@ -15512,15 +16392,41 @@ def _first_dependency_warning_text(plan: SandboxInstallPlan) -> str | None:
     return None
 
 
+def _package_issue_sentence(item: object) -> str | None:
+    """Localized sentence for a package finding or warning.
+
+    `package_findings` and `package_warnings` hold records, not strings, so the
+    stable `kind`/`code` is the localization key. The record's English `message`
+    is only a fallback for a code this build does not know.
+    """
+    localizer = get_active_ui_localizer()
+    kind = str(getattr(item, "kind", "")).strip()
+    if kind:
+        key = f"plan.package.{kind}"
+        localized = localizer.text(key)
+        if localized != key:
+            return localized
+    code = str(getattr(item, "code", "")).strip()
+    if code:
+        key = f"plan.warning.{code}"
+        localized = localizer.text(key)
+        if localized != key:
+            return localized
+    if isinstance(item, str):
+        return item.strip() or None
+    message = str(getattr(item, "message", "")).strip()
+    return message or None
+
+
 def _first_package_issue_text(plan: SandboxInstallPlan) -> str | None:
     for finding in plan.package_findings:
-        message = str(getattr(finding, "message", "")).strip()
-        if message:
-            return message
+        sentence = _package_issue_sentence(finding)
+        if sentence:
+            return sentence
     for warning in plan.package_warnings:
-        warning_text = warning.strip()
-        if warning_text:
-            return warning_text
+        sentence = _package_issue_sentence(warning)
+        if sentence:
+            return sentence
     return None
 
 
@@ -15532,6 +16438,10 @@ def _first_runnable_warning_text(
     if config_preservation_warning is not None:
         return config_preservation_warning
 
+    localized_dependency_text = _localized_dependency_findings_text(plan)
+    if localized_dependency_text:
+        return localized_dependency_text
+
     warning_sources = (
         *plan.plan_warnings,
         *plan.package_warnings,
@@ -15539,7 +16449,9 @@ def _first_runnable_warning_text(
         *review.summary.review_warnings,
     )
     for warning in warning_sources:
-        warning_text = warning.strip()
+        # package_warnings holds records rather than strings, so this must go
+        # through the record-aware helper instead of calling .strip() directly.
+        warning_text = _package_issue_sentence(warning)
         if warning_text:
             return warning_text
     return None
@@ -15666,7 +16578,8 @@ def _build_install_recovery_confirmation_message(review: object) -> str:
 def _build_install_recovery_execution_result_text(
     result: InstallRecoveryExecutionResult,
 ) -> str:
-    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     lines = [
         "Resultado da execução da recuperação" if pt_br else "Recovery execution result",
         "Resultado: concluído" if pt_br else "Outcome: completed",
@@ -15674,6 +16587,8 @@ def _build_install_recovery_execution_result_text(
         f"{'Destino' if pt_br else 'Destination'}: {result.destination_kind} -> {result.destination_mods_path}",
         f"{'Alvos removidos' if pt_br else 'Removed targets'}: {len(result.removed_target_paths)}",
         f"{'Alvos restaurados' if pt_br else 'Restored targets'}: {len(result.restored_target_paths)}",
+        localizer.text("recovery.result.retained_count", count=len(result.retained_archive_paths)),
+        localizer.text("recovery.result.journal", path=result.journal_path),
     ]
     if result.removed_target_paths:
         lines.append("Caminhos dos alvos removidos" if pt_br else "Removed target paths")
@@ -15681,17 +16596,25 @@ def _build_install_recovery_execution_result_text(
     if result.restored_target_paths:
         lines.append("Caminhos dos alvos restaurados" if pt_br else "Restored target paths")
         lines.extend(f"- {path}" for path in result.restored_target_paths)
+    if result.retained_archive_paths:
+        lines.append(localizer.text("recovery.result.retained_paths"))
+        lines.extend(f"- {path}" for path in result.retained_archive_paths)
     return "\n".join(lines)
 
 
 def _format_recovery_execution_record(record: RecoveryExecutionRecord) -> str:
-    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
+    localizer = get_active_ui_localizer()
+    pt_br = localizer.effective_language == "pt-BR"
     summary = (
-        f"- {record.timestamp} | {record.outcome_status} | "
+        f"- {record.timestamp} | {localizer.text(f'recovery.outcome.{record.outcome_status}')} | "
         f"{'executados' if pt_br else 'executed'}={record.executed_entry_count} | "
         f"{'removidos' if pt_br else 'removed'}={len(record.removed_target_paths)} | "
         f"{'restaurados' if pt_br else 'restored'}={len(record.restored_target_paths)}"
     )
+    if record.retained_archive_paths:
+        summary += f" | {localizer.text('recovery.result.retained_count', count=len(record.retained_archive_paths))}"
+    if record.journal_path is not None:
+        summary += f" | {localizer.text('recovery.result.journal', path=record.journal_path)}"
     if record.failure_message:
         return f"{summary} | {'falha' if pt_br else 'failure'}={record.failure_message}"
     return summary
@@ -16062,10 +16985,12 @@ def _set_section_label_style(label: QLabel) -> None:
 
 
 def _set_button_emphasis_style(button: QPushButton, *, bold: bool = False) -> None:
-    font = QFont(button.font())
-    font.setBold(bold)
-    button.setFont(font)
-    button.setStyleSheet("")
+    if button.font().bold() != bold:
+        font = QFont(button.font())
+        font.setBold(bold)
+        button.setFont(font)
+    if button.styleSheet():
+        button.setStyleSheet("")
 
 
 def _context_caption(text: str, *, translation_key: str | None = None) -> QLabel:
@@ -16084,8 +17009,12 @@ def _section_label(text: str) -> QLabel:
 
 
 def _set_feedback_label_state(label: QLabel, tone: str, text: str) -> None:
-    label.setText(text)
-    label.setToolTip(text)
+    if label.text() != text:
+        label.setText(text)
+    if label.toolTip() != text:
+        label.setToolTip(text)
+    if label.property("feedbackTone") == tone:
+        return
     label.setProperty("feedbackTone", tone)
     label.style().unpolish(label)
     label.style().polish(label)
@@ -16137,8 +17066,20 @@ def _configure_resizable_table(
     minimum_visible_rows: int,
     minimum_section_size: int,
     initial_widths: tuple[int, ...],
+    name_column: int,
+    start_sorted_by_name: bool = True,
 ) -> None:
-    header = table.horizontalHeader()
+    header = _SortIndicatorHeaderView(Qt.Orientation.Horizontal, table)
+    header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    table.setHorizontalHeader(header)
+    # The replacement header does not inherit the sorting state of the old one.
+    header.setSectionsClickable(True)
+    header.setSortIndicatorShown(table.isSortingEnabled())
+    # Qt's default indicator is descending on the first column, which listed
+    # tables Z to A until the owner clicked a heading. Start A to Z by name,
+    # except where the service order itself carries meaning (archive retention).
+    if start_sorted_by_name:
+        header.setSortIndicator(name_column, Qt.SortOrder.AscendingOrder)
     header.setMinimumSectionSize(minimum_section_size)
     header.setStretchLastSection(False)
     header.setSectionsMovable(False)
@@ -16148,7 +17089,23 @@ def _configure_resizable_table(
         if column >= table.columnCount():
             break
         table.setColumnWidth(column, width)
+    _ensure_table_header_widths(table)
+    # Preserve readable name widths when metadata exceeds the viewport; scroll.
+    # When it does not, the name column uses the spare width instead of a gutter.
+    table._width_balancer = _TableWidthBalancer(table, name_column)
     _set_table_minimum_visible_rows(table, minimum_visible_rows)
+
+
+def _ensure_table_header_widths(table: QTableWidget) -> None:
+    header = table.horizontalHeader()
+    header.ensurePolished()
+    for column in range(table.columnCount()):
+        item = table.horizontalHeaderItem(column)
+        if item is not None:
+            # Do not resize to row contents: a long path must not make a column
+            # enormous. Reserve header padding and the sorting indicator.
+            text_width = header.fontMetrics().horizontalAdvance(item.text())
+            table.setColumnWidth(column, max(table.columnWidth(column), text_width + 40))
 
 
 def _set_table_minimum_visible_rows(table: QTableWidget, row_budget: int) -> None:
@@ -16161,36 +17118,40 @@ def _set_table_minimum_visible_rows(table: QTableWidget, row_budget: int) -> Non
 def _set_primary_button_style(button: QPushButton) -> None:
     button.setMinimumHeight(21)
     button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-    button.setProperty("buttonRole", "primary")
-    button.style().unpolish(button)
-    button.style().polish(button)
+    if button.property("buttonRole") != "primary":
+        button.setProperty("buttonRole", "primary")
+        button.style().unpolish(button)
+        button.style().polish(button)
     _set_button_emphasis_style(button, bold=True)
 
 
 def _set_secondary_button_style(button: QPushButton) -> None:
     button.setMinimumHeight(20)
     button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-    button.setProperty("buttonRole", "secondary")
-    button.style().unpolish(button)
-    button.style().polish(button)
+    if button.property("buttonRole") != "secondary":
+        button.setProperty("buttonRole", "secondary")
+        button.style().unpolish(button)
+        button.style().polish(button)
     _set_button_emphasis_style(button)
 
 
 def _set_utility_button_style(button: QPushButton) -> None:
     button.setMinimumHeight(19)
     button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-    button.setProperty("buttonRole", "utility")
-    button.style().unpolish(button)
-    button.style().polish(button)
+    if button.property("buttonRole") != "utility":
+        button.setProperty("buttonRole", "utility")
+        button.style().unpolish(button)
+        button.style().polish(button)
     _set_button_emphasis_style(button)
 
 
 def _set_danger_button_style(button: QPushButton) -> None:
     button.setMinimumHeight(21)
     button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-    button.setProperty("buttonRole", "danger")
-    button.style().unpolish(button)
-    button.style().polish(button)
+    if button.property("buttonRole") != "danger":
+        button.setProperty("buttonRole", "danger")
+        button.style().unpolish(button)
+        button.style().polish(button)
     _set_button_emphasis_style(button, bold=True)
 
 
@@ -16252,6 +17213,12 @@ def _app_update_summary_label(status: AppUpdateStatus) -> str:
         return f"{localizer.text('library.update.available')} ({current} -> {latest})"
     if status.state == "up_to_date":
         return localizer.text("setup.release_up_to_date", installed=current, latest=latest)
+    if status.state == "newer_than_latest":
+        return localizer.text(
+            "setup.release_newer_than_latest",
+            installed=current,
+            latest=latest,
+        )
     return (
         "Status da versão indisponível"
         if localizer.effective_language == "pt-BR"
@@ -16265,6 +17232,8 @@ def _app_update_nav_label(status: AppUpdateStatus) -> str:
         return localizer.text("library.update.available")
     if status.state == "up_to_date":
         return localizer.text("library.update.up_to_date")
+    if status.state == "newer_than_latest":
+        return localizer.text("library.update.newer_than_latest")
     return _app_update_summary_label(status)
 
 
@@ -16274,6 +17243,8 @@ def _app_update_status_strip_label(status: AppUpdateStatus) -> str:
         return localizer.text("status.app_update_available_short")
     if status.state == "up_to_date":
         return localizer.text("status.app_up_to_date_short")
+    if status.state == "newer_than_latest":
+        return localizer.text("status.app_newer_than_latest_short")
     return status.message or _app_update_summary_label(status)
 
 
@@ -16281,6 +17252,8 @@ def _app_update_feedback_tone(status: AppUpdateStatus) -> str:
     if status.state == "update_available":
         return "ready"
     if status.state == "up_to_date":
+        return "muted"
+    if status.state == "newer_than_latest":
         return "muted"
     return "empty"
 
@@ -16333,6 +17306,105 @@ def _smapi_log_summary_label(report: SmapiLogReport, *, context_label: str | Non
     return summary
 
 
+def _archive_refresh_status_text(
+    *,
+    entry_count: int,
+    cleanup_candidate_count: int,
+) -> str:
+    localizer = get_active_ui_localizer()
+    if entry_count == 0:
+        base = localizer.text("status.archive_refresh_none")
+    elif entry_count == 1:
+        base = localizer.text("status.archive_refresh_one")
+    else:
+        base = localizer.text("status.archive_refresh_many", entries=entry_count)
+    if cleanup_candidate_count == 0:
+        return base
+    if cleanup_candidate_count == 1:
+        cleanup = localizer.text("status.archive_cleanup_one")
+    else:
+        cleanup = localizer.text(
+            "status.archive_cleanup_many", cleanup=cleanup_candidate_count
+        )
+    return f"{base}, {cleanup}"
+
+
+def _smapi_log_count_phrase(count: int, *, one_key: str, many_key: str) -> str:
+    localizer = get_active_ui_localizer()
+    if count == 1:
+        return localizer.text(one_key)
+    return localizer.text(many_key, count=count)
+
+
+def _smapi_log_plain_issue_summary(report: SmapiLogReport) -> str:
+    localizer = get_active_ui_localizer()
+    counts = _smapi_log_issue_counts(report)
+    error_count = counts[SMAPI_LOG_ERROR]
+    failed_count = counts[SMAPI_LOG_FAILED_MOD]
+    warning_count = counts[SMAPI_LOG_WARNING]
+    runtime_count = counts[SMAPI_LOG_RUNTIME_ISSUE]
+    # Fall back to the raw finding count so a log whose missing dependencies could
+    # not be resolved to named targets still reports them instead of reading clean.
+    missing_count = (
+        counts[SMAPI_LOG_MISSING_DEPENDENCY] or report.missing_dependency_finding_count
+    )
+    update_count = len(report.mod_update_alerts)
+
+    parts: list[str] = []
+    if error_count:
+        parts.append(
+            _smapi_log_count_phrase(
+                error_count, one_key="smapi.plain.errors_one", many_key="smapi.plain.errors_many"
+            )
+        )
+    if failed_count:
+        parts.append(
+            _smapi_log_count_phrase(
+                failed_count, one_key="smapi.plain.failed_one", many_key="smapi.plain.failed_many"
+            )
+        )
+    if missing_count:
+        parts.append(
+            _smapi_log_count_phrase(
+                missing_count, one_key="smapi.plain.missing_one", many_key="smapi.plain.missing_many"
+            )
+        )
+    if warning_count:
+        parts.append(
+            _smapi_log_count_phrase(
+                warning_count, one_key="smapi.plain.warnings_one", many_key="smapi.plain.warnings_many"
+            )
+        )
+    if runtime_count:
+        parts.append(
+            _smapi_log_count_phrase(
+                runtime_count, one_key="smapi.plain.runtime_one", many_key="smapi.plain.runtime_many"
+            )
+        )
+
+    if not parts:
+        if update_count:
+            return _smapi_log_count_phrase(
+                update_count,
+                one_key="smapi.plain.no_problems_updates_one",
+                many_key="smapi.plain.no_problems_updates_many",
+            )
+        return localizer.text("smapi.plain.no_problems")
+
+    if len(parts) == 1:
+        joined = parts[0]
+    else:
+        joined = f"{', '.join(parts[:-1])} {localizer.text('smapi.plain.list_and')} {parts[-1]}"
+    sentence = localizer.text("smapi.plain.found", issues=joined)
+    if update_count:
+        sentence += " " + _smapi_log_count_phrase(
+            update_count,
+            one_key="smapi.plain.updates_suffix_one",
+            many_key="smapi.plain.updates_suffix_many",
+        )
+    return sentence
+
+
 def _smapi_log_status_message(report: SmapiLogReport, *, context_label: str) -> str:
     pt_br = get_active_ui_localizer().effective_language == "pt-BR"
     context_text = (
@@ -16354,6 +17426,8 @@ def _smapi_log_status_message(report: SmapiLogReport, *, context_label: str) -> 
             if pt_br
             else f"Missing dependencies from SMAPI log: {preview}. {context_text}"
         )
+    if report.state == SMAPI_LOG_PARSED:
+        return f"{_smapi_log_plain_issue_summary(report)} {context_text}"
     if report.message:
         return f"{report.message} {context_text}"
     return (
@@ -16775,14 +17849,31 @@ def _smapi_log_context_details(
     )
 
 
+_NORMALIZED_PATH_TEXT_CACHE: dict[str, str] = {}
+
+
 def _normalized_path_text(raw_text: str) -> str:
     text = raw_text.strip()
     if not text:
         return ""
+    cached = _NORMALIZED_PATH_TEXT_CACHE.get(text)
+    if cached is not None:
+        return cached
     try:
-        return str(Path(text).expanduser().resolve(strict=False)).replace("\\", "/").casefold()
+        # Resolving asks the filesystem, so a library-sized loop of these costs
+        # hundreds of syscalls. Cached until folders may have changed.
+        resolved = str(Path(text).expanduser().resolve(strict=False)).replace("\\", "/").casefold()
     except OSError:
-        return text.replace("\\", "/").casefold()
+        resolved = text.replace("\\", "/").casefold()
+    if len(_NORMALIZED_PATH_TEXT_CACHE) >= 8192:
+        _NORMALIZED_PATH_TEXT_CACHE.clear()
+    _NORMALIZED_PATH_TEXT_CACHE[text] = resolved
+    return resolved
+
+
+def _clear_normalized_path_text_cache() -> None:
+    """Drop resolved paths: links and folders may have changed on disk."""
+    _NORMALIZED_PATH_TEXT_CACHE.clear()
 
 
 def _discovery_compatibility_label(state: str) -> str:
@@ -17211,20 +18302,6 @@ def _workspace_nav_toggle_icon(collapsed: bool) -> QIcon:
 
     painter.end()
     return QIcon(pixmap)
-
-
-def _apply_surface_shadow(
-    widget: QWidget,
-    *,
-    blur_radius: float,
-    y_offset: float,
-    alpha: int,
-) -> None:
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(blur_radius)
-    shadow.setOffset(0, y_offset)
-    shadow.setColor(QColor(0, 0, 0, alpha))
-    widget.setGraphicsEffect(shadow)
 
 
 def _summarize_details_text(text: str) -> tuple[str, str]:

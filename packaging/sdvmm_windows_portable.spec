@@ -82,6 +82,7 @@ APP_VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
 APP_VERSION_FILE.write_text(f"{VERSION}\n", encoding="utf-8")
 
 datas = [
+    (str(ROOT / "assets" / "chevron-down.svg"), "assets"),
     (str(APP_ICON_SVG), "assets"),
     (str(APP_ICON_PNG), "assets"),
     (str(APP_ICON_ICO), "assets"),

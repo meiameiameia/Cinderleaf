@@ -40,6 +40,9 @@ class DiscoveryTabSurface(QWidget):
         )
         intro_label.setObjectName("discovery_intro_label")
         intro_label.setWordWrap(True)
+        intro_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         layout.addWidget(intro_label)
 
         discovery_search_group = QGroupBox(localizer.text("discovery.search_group"))
@@ -66,6 +69,9 @@ class DiscoveryTabSurface(QWidget):
         discovery_results_layout = QVBoxLayout(discovery_results_group)
         discovery_results_layout.setContentsMargins(10, 10, 10, 10)
         discovery_results_layout.setSpacing(8)
+        discovery_results_state_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         discovery_results_layout.addWidget(discovery_results_state_label)
         discovery_filter_layout = QHBoxLayout()
         discovery_filter_layout.setSpacing(8)
@@ -74,9 +80,18 @@ class DiscoveryTabSurface(QWidget):
         discovery_filter_layout.addWidget(discovery_filter_input, 1)
         discovery_filter_layout.addWidget(discovery_filter_stats_label)
         discovery_results_layout.addLayout(discovery_filter_layout)
-        discovery_results_layout.addWidget(discovery_table)
-        layout.addWidget(discovery_results_group)
-        layout.setStretch(1, 1)
+        # Weighted like Compare: the table dominates while it is visible, and the
+        # low-weight trailing stretch is the only stretchable item left when the
+        # table is hidden, so the guidance and filter stay pinned to the top
+        # instead of being centred in an otherwise empty panel.
+        discovery_results_layout.addWidget(discovery_table, 20)
+        discovery_results_layout.addStretch(1)
+        # Same weighting as the inner layout and as Compare: the results panel
+        # dominates while it is visible, and the low-weight trailing stretch is
+        # the only stretchable item left when it is hidden, so the intro and
+        # search form stay at the top instead of being spread down the page.
+        layout.addWidget(discovery_results_group, 20)
+        layout.addStretch(1)
 
         self.search_group = discovery_search_group
         self.results_group = discovery_results_group

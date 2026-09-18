@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import replace
 import os
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, QItemSelectionModel, Qt
 from PySide6.QtGui import QWheelEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -19,7 +21,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
 
 from sdvmm.app.i18n import UiLocalizer
 from sdvmm.app.main import _resolve_app_icon
+from sdvmm.ui.stitch_theme import STITCH_TOKENS
+from sdvmm.ui.stitch_theme import build_stitch_compact_widgets_stylesheet
 from sdvmm.app.shell_service import AppShellError
 from sdvmm.app.shell_service import AppShellService
 from sdvmm.app.shell_service import BackupBundleExportItem
@@ -53,7 +56,9 @@ from sdvmm.app.shell_service import ScanResult
 from sdvmm.app.shell_service import SandboxModProfileCreateResult
 from sdvmm.app.shell_service import SandboxModProfileDeleteResult
 from sdvmm.app.shell_service import SandboxModProfileSelectResult
+from sdvmm.app.shell_service import SandboxModsPromotionResult
 from sdvmm.domain.install_codes import BLOCKED
+from sdvmm.domain.dependency_codes import MISSING_REQUIRED_DEPENDENCY
 from sdvmm.domain.dependency_codes import SATISFIED
 from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB
@@ -62,6 +67,7 @@ from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
 from sdvmm.domain.environment_codes import GAME_PATH_DETECTED, MODS_PATH_DETECTED, SMAPI_DETECTED
 from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.package_codes import INVALID_MANIFEST_PACKAGE
+from sdvmm.domain.warning_codes import MALFORMED_MANIFEST
 from sdvmm.domain.smapi_codes import SMAPI_UP_TO_DATE
 from sdvmm.domain.smapi_log_codes import SMAPI_LOG_NOT_FOUND, SMAPI_LOG_SOURCE_AUTO_DETECTED
 from sdvmm.domain.update_codes import (
@@ -94,6 +100,7 @@ from sdvmm.domain.models import PackageInspectionBatchResult
 from sdvmm.domain.models import PackageModEntry
 from sdvmm.domain.models import PackageFinding
 from sdvmm.domain.models import PackageInspectionResult
+from sdvmm.domain.models import PackageWarning
 from sdvmm.domain.models import RestoreImportPlanningItem
 from sdvmm.domain.models import RestoreImportPlanningConfigEntry
 from sdvmm.domain.models import RestoreImportExecutionReview
@@ -110,6 +117,7 @@ from sdvmm.domain.models import SmapiContextLogCaptureResult
 from sdvmm.domain.models import SmapiLogFinding
 from sdvmm.domain.models import SmapiMissingDependency
 from sdvmm.domain.models import SmapiLogReport
+from sdvmm.domain.models import SmapiModUpdateAlert
 from sdvmm.domain.models import SmapiUpdateStatus
 from sdvmm.domain.models import ScanEntryFinding
 from sdvmm.ui.main_window import MainWindow
@@ -118,6 +126,7 @@ from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
 from sdvmm.ui.main_window import _ROLE_MOD_IS_GROUPED
 from sdvmm.ui.main_window import _ROLE_MOD_MEMBER_FOLDER_PATHS
 from sdvmm.ui.main_window import _ROLE_MOD_TOGGLEABLE
+from sdvmm.ui.main_window import _ROLE_MOD_UPDATE_STATE_CODE
 from sdvmm.ui.main_window import _ROLE_MOD_UPDATE_STATUS
 from sdvmm.ui.main_window import _build_inventory_row_entries
 from sdvmm.ui.main_window import _smapi_log_context_details
@@ -126,19 +135,34 @@ from sdvmm.ui.main_window import _ROLE_UPDATE_BLOCK_REASON
 from sdvmm.domain.scan_codes import MULTI_MOD_CONTAINER
 
 
+_ORIGINAL_SHOW_LOCALIZED_QUESTION_DIALOG = MainWindow._show_localized_question_dialog
+
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="GUI regression baseline is Windows-specific (styling metrics and path semantics).",
 )
 
 
+def _assert_headless_qt_platform(app: QApplication) -> None:
+    configured_platform = os.environ.get("QT_QPA_PLATFORM", "").casefold()
+    active_platform = app.platformName().casefold()
+    assert configured_platform == "offscreen", (
+        "GUI regression tests require QT_QPA_PLATFORM=offscreen before PySide6 "
+        f"is imported; found {configured_platform or '<unset>'}."
+    )
+    assert active_platform == "offscreen", (
+        "GUI regression tests refused to show a window because Qt is using "
+        f"the {active_platform or '<unknown>'} platform instead of offscreen."
+    )
+
+
 @pytest.fixture
-def qapp(monkeypatch: pytest.MonkeyPatch) -> QApplication:
-    # Keep GUI smoke tests runnable in headless environments.
-    monkeypatch.setenv("QT_QPA_PLATFORM", os.environ.get("QT_QPA_PLATFORM", "offscreen"))
+def qapp() -> QApplication:
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
+    _assert_headless_qt_platform(app)
     return app
 
 
@@ -163,7 +187,7 @@ def _auto_resolve_modal_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         MainWindow,
         "_show_localized_question_dialog",
-        lambda self, **_: QMessageBox.StandardButton.No,
+        lambda self, *, title, text, **_: QMessageBox.question(self, title, text),
     )
     monkeypatch.setattr(
         MainWindow,
@@ -190,6 +214,36 @@ class _FocusOverrideComboBox(QComboBox):
         return self._forced_focus
 
 
+def test_localized_question_dialog_defaults_escape_and_enter_to_no(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, QMessageBox.StandardButton] = {}
+
+    def fake_exec(dialog: QMessageBox) -> QMessageBox.StandardButton:
+        default_button = dialog.defaultButton()
+        escape_button = dialog.escapeButton()
+        assert default_button is not None
+        assert escape_button is not None
+        captured["default"] = dialog.standardButton(default_button)
+        captured["escape"] = dialog.standardButton(escape_button)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+
+    result = _ORIGINAL_SHOW_LOCALIZED_QUESTION_DIALOG(
+        main_window,
+        title="Confirm filesystem change",
+        text="Continue?",
+    )
+
+    assert result == QMessageBox.StandardButton.No
+    assert captured == {
+        "default": QMessageBox.StandardButton.No,
+        "escape": QMessageBox.StandardButton.No,
+    }
+
+
 def _test_wheel_event() -> QWheelEvent:
     return QWheelEvent(
         QPointF(10, 10),
@@ -203,25 +257,30 @@ def _test_wheel_event() -> QWheelEvent:
     )
 
 
+def _settle_background_work(window: MainWindow, qapp: QApplication, timeout: float = 15.0) -> None:
+    """Wait for work the previous action started on the background thread."""
+    deadline = time.monotonic() + timeout
+    while window._active_operation_name is not None:
+        qapp.processEvents()
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{window._active_operation_name} did not finish in {timeout}s")
+        time.sleep(0.005)
+    for _ in range(3):
+        qapp.processEvents()
+
 def _show_test_window(window: MainWindow | QWidget, qapp: QApplication) -> None:
+    _assert_headless_qt_platform(qapp)
+    # Keep a deterministic non-compact baseline. Individual tests can still
+    # resize to compact breakpoints when needed.
+    window.resize(1600, 900)
     window.show()
-    if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
-        # Keep a deterministic non-compact baseline in headless CI. Individual
-        # tests can still resize to compact breakpoints when needed.
-        window.resize(1600, 900)
-    else:
-        screens = qapp.screens()
-        try:
-            preferred_screen_index = int(os.environ.get("SDVMM_TEST_SCREEN_INDEX", "1"))
-        except ValueError:
-            preferred_screen_index = 1
-        if 0 <= preferred_screen_index < len(screens):
-            geometry = screens[preferred_screen_index].availableGeometry()
-            frame_geometry = window.frameGeometry()
-            x = geometry.x() + max(0, (geometry.width() - frame_geometry.width()) // 2)
-            y = geometry.y() + max(0, min(40, geometry.height() - frame_geometry.height()))
-            window.move(x, y)
     qapp.processEvents()
+
+
+def test_gui_regression_harness_uses_offscreen_qt_platform(
+    qapp: QApplication,
+) -> None:
+    _assert_headless_qt_platform(qapp)
 
 
 def test_main_window_combo_box_wheel_guard_blocks_unfocused_combo(
@@ -250,6 +309,326 @@ def main_window(tmp_path: Path, qapp: QApplication) -> MainWindow:
     yield window
     window.close()
     qapp.processEvents()
+
+
+def test_main_window_smapi_tab_updates_page_header_and_primary_action(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    title_label = main_window._mods_page.findChild(QLabel, "workspace_page_title")
+    subtitle_label = main_window._mods_page.findChild(QLabel, "workspace_page_subtitle")
+    assert title_label is not None
+    assert subtitle_label is not None
+    assert title_label.text() == "Library"
+
+    library_tab_index = main_window._inventory_controls_tabs.indexOf(
+        main_window._inventory_controls_tabs.widget(0)
+    )
+    smapi_tab_index = main_window._inventory_controls_tabs.indexOf(
+        main_window._inventory_controls_tabs.widget(1)
+    )
+    main_window._inventory_controls_tabs.setCurrentIndex(smapi_tab_index)
+    qapp.processEvents()
+
+    assert title_label.text() == "SMAPI"
+    assert "SMAPI" in subtitle_label.text()
+    assert main_window._check_smapi_log_button.property("buttonRole") == "primary"
+    assert main_window._check_smapi_update_button.property("buttonRole") == "utility"
+    assert main_window._load_smapi_log_button.property("buttonRole") == "utility"
+    assert main_window._open_smapi_page_button.property("buttonRole") == "utility"
+
+    main_window._inventory_controls_tabs.setCurrentIndex(library_tab_index)
+    qapp.processEvents()
+
+    assert title_label.text() == "Library"
+    assert subtitle_label.text() == "Scan mods, check updates, and launch the game."
+
+
+def test_main_window_archive_and_restore_buttons_disable_without_selection(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    assert main_window._remove_mod_button.isEnabled() is False
+    assert main_window._rollback_mod_button.isEnabled() is False
+    assert main_window._remove_mod_button.toolTip() != ""
+    assert main_window._rollback_mod_button.toolTip() != ""
+
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    mod_path = real_mods_root / "SampleMod"
+    inventory = _mods_inventory(
+        InstalledMod(
+            unique_id="Sample.Mod",
+            name="Sample Mod",
+            version="1.0.0",
+            folder_path=mod_path,
+            manifest_path=mod_path / "manifest.json",
+            dependencies=tuple(),
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    assert main_window._remove_mod_button.isEnabled() is False
+    assert main_window._rollback_mod_button.isEnabled() is False
+
+    row = _find_mod_row(main_window._mods_table, "Sample Mod")
+    assert row >= 0
+    main_window._mods_table.setCurrentCell(row, 0)
+    qapp.processEvents()
+
+    assert main_window._remove_mod_button.isEnabled() is True
+    assert main_window._rollback_mod_button.isEnabled() is True
+    assert main_window._remove_mod_button.toolTip() == ""
+    assert main_window._rollback_mod_button.toolTip() == ""
+
+    main_window._mods_table.clearSelection()
+    main_window._mods_table.setCurrentCell(-1, -1)
+    qapp.processEvents()
+
+    assert main_window._remove_mod_button.isEnabled() is False
+    assert main_window._rollback_mod_button.isEnabled() is False
+    assert main_window._remove_mod_button.toolTip() != ""
+
+
+def test_main_window_smapi_log_status_uses_plain_language_not_raw_counts(
+    main_window: MainWindow,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    log_path = tmp_path / "SMAPI-latest.txt"
+    report = SmapiLogReport(
+        state="parsed",
+        source="manual",
+        log_path=log_path,
+        game_path=game_path,
+        findings=(
+            SmapiLogFinding(kind="error", line_number=4, message="[ERROR SMAPI] boom"),
+            SmapiLogFinding(kind="error", line_number=5, message="[ERROR SMAPI] boom again"),
+            SmapiLogFinding(kind="failed_mod", line_number=6, message="Broken Mod failed to load"),
+            SmapiLogFinding(kind="warning", line_number=7, message="[WARN SMAPI] heads up"),
+        ),
+        mod_update_alerts=(
+            SmapiModUpdateAlert(
+                name="Automate",
+                latest_version="2.4.1",
+                installed_version="2.3.4",
+                page_url="https://example.test/automate",
+                line_number=9,
+            ),
+            SmapiModUpdateAlert(
+                name="UI Info Suite 2",
+                latest_version="2.9.0",
+                installed_version="2.8.26",
+                page_url="https://example.test/uiis2",
+                line_number=10,
+            ),
+        ),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=2, warnings=1, failed_mods=1, missing_dependencies=0, runtime_issues=0.",
+    )
+
+    main_window._on_check_smapi_log_completed(report)
+
+    status_text = main_window._status_strip_label.text()
+    assert "errors=" not in status_text
+    assert "warnings=" not in status_text
+    assert status_text == (
+        "The SMAPI log found 2 errors, 1 mod that failed to load and 1 warning. "
+        "2 mods also have an update available. Log context: Unknown."
+    )
+    assert "(s)" not in status_text
+
+
+def test_main_window_smapi_log_status_reports_no_problems_in_plain_language(
+    main_window: MainWindow,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    log_path = tmp_path / "SMAPI-latest.txt"
+    report = SmapiLogReport(
+        state="parsed",
+        source="manual",
+        log_path=log_path,
+        game_path=game_path,
+        findings=tuple(),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
+    )
+
+    main_window._on_check_smapi_log_completed(report)
+
+    status_text = main_window._status_strip_label.text()
+    assert "errors=" not in status_text
+    assert status_text.startswith("No problems found in the SMAPI log.")
+
+
+def test_main_window_smapi_summary_does_not_claim_clean_when_dependencies_are_unnamed(
+    main_window: MainWindow,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    log_path = tmp_path / "SMAPI-latest.txt"
+    report = SmapiLogReport(
+        state="parsed",
+        source="manual",
+        log_path=log_path,
+        game_path=game_path,
+        findings=(
+            SmapiLogFinding(
+                kind="missing_dependency",
+                line_number=4,
+                message="- Fancy Pack because it needs mods which aren't installed.",
+            ),
+        ),
+        missing_dependencies=tuple(),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
+    )
+
+    main_window._on_check_smapi_log_completed(report)
+
+    summary_text = main_window._smapi_troubleshooting_summary_label.text()
+    assert "no missing dependencies" not in summary_text.casefold()
+    assert "could not be read" in summary_text
+
+    status_text = main_window._status_strip_label.text()
+    assert "No problems found" not in status_text
+    assert "1 missing dependency" in status_text
+
+
+def test_main_window_smapi_summary_reports_named_missing_dependency_in_singular(
+    main_window: MainWindow,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Game"
+    log_path = tmp_path / "SMAPI-latest.txt"
+    report = SmapiLogReport(
+        state="parsed",
+        source="manual",
+        log_path=log_path,
+        game_path=game_path,
+        findings=(
+            SmapiLogFinding(
+                kind="missing_dependency",
+                line_number=4,
+                message="- Fancy Pack needs Pathoschild.ContentPatcher, which isn't installed.",
+            ),
+        ),
+        missing_dependencies=(
+            SmapiMissingDependency(
+                requiring_mod_name="Fancy Pack",
+                dependency_unique_id="Pathoschild.ContentPatcher",
+                source_text="Pathoschild.ContentPatcher",
+            ),
+        ),
+        missing_dependency_ids=("Pathoschild.ContentPatcher",),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=1, runtime_issues=0.",
+    )
+
+    main_window._on_check_smapi_log_completed(report)
+
+    summary_text = main_window._smapi_troubleshooting_summary_label.text()
+    assert "1 missing dependency to resolve." in summary_text
+    assert "(s)" not in summary_text
+
+
+def test_main_window_status_strip_tooltip_refreshes_when_the_window_is_resized(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    long_status = (
+        "Update check finished with a deliberately long sentence so that it wraps "
+        "past a single line in the narrow status strip and needs a tooltip to stay readable."
+    )
+    main_window._set_status(long_status)
+
+    refresh_calls: list[int] = []
+    original_refresh = main_window._refresh_status_strip_tooltip
+
+    def _counting_refresh() -> None:
+        refresh_calls.append(1)
+        original_refresh()
+
+    main_window._refresh_status_strip_tooltip = _counting_refresh  # type: ignore[method-assign]
+    try:
+        main_window.resize(700, 720)
+        qapp.processEvents()
+        main_window.resize(1600, 900)
+        qapp.processEvents()
+    finally:
+        del main_window._refresh_status_strip_tooltip
+
+    # Clipping depends on the label's current width, so a resize must re-evaluate
+    # it instead of leaving whatever _set_status decided at the previous width.
+    assert refresh_calls
+    assert main_window._status_strip_label.text() == long_status
+    assert main_window._status_strip_label.toolTip() in ("", long_status)
+
+
+def test_main_window_archive_refresh_status_uses_real_plurals(
+    main_window: MainWindow,
+) -> None:
+    main_window._on_refresh_archives_completed(tuple())
+
+    empty_status = main_window._status_strip_label.text()
+    assert "entry/ies" not in empty_status
+    assert "no archived copies yet" in empty_status
+    # An empty archive says so in its empty state; the detail dump would repeat it.
+    assert main_window._archive_output_box.toPlainText() == ""
+
+
+def test_main_window_status_strip_tooltip_only_shows_when_text_is_clipped(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    main_window.resize(1440, 920)
+    qapp.processEvents()
+
+    main_window._set_status("Ready.")
+    qapp.processEvents()
+    assert main_window._status_strip_label.toolTip() == ""
+
+    long_text = "Detected packages ready in Packages. " * 12
+    main_window._set_status(long_text)
+    qapp.processEvents()
+    assert main_window._status_strip_label.toolTip() == long_text
+
+
+def test_main_window_read_only_outputs_advance_tab_focus(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    output_boxes = (
+        main_window._inventory_output_box,
+        main_window._discovery_output_box,
+        main_window._compare_output_box,
+        main_window._packages_output_box,
+        main_window._archive_output_box,
+        main_window._review_output_box,
+        main_window._recovery_output_box,
+        main_window._setup_output_box,
+        main_window._package_inspection_result_box,
+        main_window._smapi_troubleshooting_details_box,
+    )
+
+    assert all(output_box.tabChangesFocus() for output_box in output_boxes)
+    assert all(
+        output_box.focusPolicy() == Qt.FocusPolicy.ClickFocus
+        for output_box in output_boxes
+    )
+
+    troubleshooting_box = main_window._smapi_troubleshooting_details_box
+    troubleshooting_box.setFocus()
+    qapp.processEvents()
+    assert qapp.focusWidget() is troubleshooting_box
+
+    QTest.keyClick(troubleshooting_box, Qt.Key.Key_Tab)
+    qapp.processEvents()
+
+    assert qapp.focusWidget() is not troubleshooting_box
 
 
 def _launch_test_main_window(
@@ -289,6 +668,105 @@ def _fake_background_operation_with_real_lifecycle(
 def test_main_window_instantiates_in_qt_context(main_window: MainWindow) -> None:
     assert main_window is not None
     assert main_window.windowTitle() != ""
+
+
+def test_workspace_shortcuts_switch_pages_and_remain_discoverable(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    library_button = main_window.findChild(QPushButton, "workspace_nav_button_library")
+    compare_button = main_window.findChild(QPushButton, "workspace_nav_button_compare")
+    nav_toggle = main_window.findChild(QPushButton, "workspace_nav_toggle_button")
+
+    assert library_button is not None
+    assert compare_button is not None
+    assert nav_toggle is not None
+    assert library_button.toolTip() == "Library (Ctrl+1)"
+    assert library_button.accessibleName() == "Library (Ctrl+1)"
+    assert compare_button.toolTip() == "Compare (Ctrl+6)"
+    assert nav_toggle.accessibleName() == nav_toggle.toolTip()
+
+    main_window.activateWindow()
+    main_window.setFocus()
+    QTest.keyClick(
+        main_window,
+        Qt.Key.Key_6,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    qapp.processEvents()
+
+    assert main_window._context_tabs.currentWidget() is main_window._compare_page
+    assert compare_button.isChecked() is True
+
+
+def test_main_window_portuguese_install_target_combo_is_localized_at_startup(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    combo = window._install_target_combo
+    labels = [combo.itemText(index) for index in range(combo.count())]
+
+    # Retranslation localized this combo, but construction hardcoded English, so
+    # a Portuguese system showed English until the language was toggled.
+    assert labels == [
+        "Destino Mods sandbox (seguro/teste)",
+        "Destino Mods do jogo (real)",
+    ]
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_main_window_portuguese_smapi_summary_is_fully_localized(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    report = SmapiLogReport(
+        state="parsed",
+        source="manual",
+        log_path=tmp_path / "SMAPI-latest.txt",
+        game_path=tmp_path / "Game",
+        findings=(
+            SmapiLogFinding(kind="error", line_number=4, message="[ERROR SMAPI] boom"),
+            SmapiLogFinding(
+                kind="missing_dependency",
+                line_number=5,
+                message="- Fancy Pack because it needs mods which aren't installed.",
+            ),
+        ),
+        missing_dependencies=tuple(),
+        notes=tuple(),
+        message="Parsed SMAPI log: errors=1, warnings=0, failed_mods=0, missing_dependencies=0, runtime_issues=0.",
+    )
+    window._on_check_smapi_log_completed(report)
+    qapp.processEvents()
+
+    status_text = window._status_strip_label.text()
+    summary_text = window._smapi_troubleshooting_summary_label.text()
+
+    assert "O log do SMAPI encontrou 1 erro e 1 dependência ausente." in status_text
+    assert "não foi possível ler os nomes delas" in summary_text
+    # No English leaks and no "(s)" placeholder plurals in shipped copy.
+    assert "The SMAPI log" not in status_text
+    assert "missing dependencies" not in summary_text
+    assert "(s)" not in status_text
+
+    window.close()
+    qapp.processEvents()
 
 
 def test_main_window_portuguese_localizer_keeps_stable_nav_ids_and_localized_shell_text(
@@ -486,6 +964,19 @@ def test_main_window_portuguese_localizer_translates_runtime_surface_summaries(
         window._setup_app_update_status_label.text()
         == f"Cinderleaf está atualizado (instalado {app_version}, mais recente {app_version})."
     )
+
+    newer_status = AppUpdateStatus(
+        state="newer_than_latest",
+        current_version="1.6.0",
+        latest_version="1.5.0",
+        update_page_url="https://example.com/releases",
+        message="A pre-release build is running.",
+    )
+    window._apply_app_update_status(newer_status)
+    assert window._setup_app_update_status_label.text() == (
+        "O Cinderleaf 1.6.0 é mais recente que a última versão pública (1.5.0)."
+    )
+    assert window._workspace_nav_release_status_label.text() == "Pré-lançamento"
 
     window._selected_zip_package_paths = tuple()
     window._refresh_zip_selection_summary()
@@ -1464,25 +1955,29 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     assert 42 <= context_group.maximumHeight() <= 52
     assert 40 <= status_strip_group.maximumHeight() <= 48
     assert 172 <= main_window._inventory_controls_tabs.maximumHeight() <= 188
-    assert main_window._workspace_nav_collapsed is True
-    assert mods_button.text() == ""
-    assert setup_button.text() == ""
-    assert mods_button.maximumHeight() == 30
-    assert setup_button.maximumHeight() == 30
+    # 1366x768 is a common laptop resolution; the nav rail keeps its labels
+    # there and only auto-collapses to icons below the ~1180px width
+    # threshold.
+    assert main_window._workspace_nav_collapsed is False
+    assert mods_button.text() == "Library"
+    assert setup_button.text() == "Setup"
+    for button in (mods_button, setup_button):
+        assert button.height() >= button.sizeHint().height()
+        assert button.maximumHeight() > button.sizeHint().height()
     assert inventory_controls_panel.parentWidget() is inventory_tabs.widget(0)
     assert launch_actions_band.layout().count() == 3
-    assert launch_vanilla_button.maximumHeight() == 26
-    assert launch_smapi_button.maximumHeight() == 27
-    assert launch_button.maximumHeight() == 26
+    for button in (launch_vanilla_button, launch_smapi_button, launch_button):
+        assert button.height() >= button.sizeHint().height()
+        assert button.maximumHeight() > button.sizeHint().height()
 
     main_window._inventory_controls_tabs.setCurrentIndex(smapi_tab_index)
     qapp.processEvents()
 
     assert smapi_controls_panel.parentWidget() is inventory_tabs.widget(1)
-    assert check_smapi_update_button.maximumHeight() == 24
-    assert check_smapi_log_button.maximumHeight() == 24
-    assert open_smapi_log_button.maximumHeight() == 24
-    assert open_smapi_page_button.maximumHeight() == 24
+    for button in (check_smapi_update_button, check_smapi_log_button,
+                   open_smapi_log_button, open_smapi_page_button):
+        assert button.height() >= button.sizeHint().height()
+        assert button.maximumHeight() > button.sizeHint().height()
     assert 74 <= main_window._smapi_troubleshooting_details_box.minimumHeight() <= 80
     assert 90 <= main_window._smapi_troubleshooting_details_box.maximumHeight() <= 100
 
@@ -1582,9 +2077,9 @@ def test_main_window_major_tables_keep_row_budget_and_interactive_headers(
     main_window: MainWindow,
 ) -> None:
     table_expectations = (
-        (main_window._mods_table, 8, (0, 1, 5)),
-        (main_window._discovery_table, 7, (0, 1, 5, 6, 7)),
-        (main_window._compare_results_table, 8, (0, 1, 4)),
+        (main_window._mods_table, 8, (1, 5)),
+        (main_window._discovery_table, 7, (1, 5, 6, 7)),
+        (main_window._compare_results_table, 8, (1, 4)),
         (main_window._archive_table, 7, (1, 2, 3, 4)),
     )
 
@@ -1592,6 +2087,9 @@ def test_main_window_major_tables_keep_row_budget_and_interactive_headers(
         expected_height = (max(table.verticalHeader().defaultSectionSize(), 20) * row_budget) + 30
         assert table.minimumHeight() >= expected_height
         header = table.horizontalHeader()
+        assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive
+        if table is main_window._mods_table:
+            assert table.columnWidth(0) >= 250
         for column in interactive_columns:
             assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
 
@@ -1640,12 +2138,13 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     main_window.resize(1366, 768)
     qapp.processEvents()
 
-    assert 18 <= archive_refresh_button.sizeHint().height() <= 31
-    assert 18 <= archive_cleanup_button.sizeHint().height() <= 31
-    assert 18 <= archive_restore_button.sizeHint().height() <= 31
-    assert 18 <= archive_delete_button.sizeHint().height() <= 31
-    assert 18 <= discovery_search_button.sizeHint().height() <= 31
-    assert 18 <= launch_smapi_button.sizeHint().height() <= 31
+    for button in (
+        archive_refresh_button, archive_cleanup_button, archive_restore_button,
+        archive_delete_button, discovery_search_button, launch_smapi_button,
+    ):
+        # Compact controls still need room for the actual font and padding.
+        assert button.fontMetrics().height() + 8 <= button.sizeHint().height() <= 36
+        assert button.maximumHeight() >= button.sizeHint().height()
 
 
 def test_main_window_setup_backup_summary_defaults_to_localized_copy(
@@ -1973,7 +2472,9 @@ def test_main_window_stylesheet_explicitly_themes_message_boxes(
     stylesheet = main_window.styleSheet()
 
     assert "QMessageBox" in stylesheet
-    assert "background: #15181c;" in stylesheet
+    dialog_rule = stylesheet.split("QMessageBox QWidget {", 1)[1].split("}", 1)[0]
+    assert f"background: {STITCH_TOKENS['surface_raised']};" in dialog_rule
+    assert f"color: {STITCH_TOKENS['text_primary']};" in dialog_rule
     assert "QMessageBox QLabel" in stylesheet
     assert "QWidget#history_workspace_page" in stylesheet
     assert "QWidget#history_workspace_body" in stylesheet
@@ -2004,7 +2505,7 @@ def test_main_window_top_context_surface_has_expected_panels(main_window: MainWi
     assert active_context_panel is not None
 
 
-def test_main_window_top_context_defaults_expanded_with_visible_workflow_strip(
+def test_main_window_top_context_defaults_collapsed_with_visible_workflow_strip(
     main_window: MainWindow,
 ) -> None:
     top_context_header = main_window.findChild(QWidget, "top_context_header")
@@ -2019,12 +2520,12 @@ def test_main_window_top_context_defaults_expanded_with_visible_workflow_strip(
     assert top_context_group is not None
     assert status_strip_group is not None
     assert top_context_header.isVisible() is True
-    assert top_context_body.isVisible() is True
+    assert top_context_body.isHidden() is True
     assert top_context_group.isVisible() is True
     assert status_strip_group.isVisible() is True
     assert status_strip_group.parentWidget() is not top_context_group
     assert status_strip_group.parentWidget() == top_context_group.parentWidget()
-    assert top_context_toggle.text() == "Hide details"
+    assert top_context_toggle.text() == "Show details"
     assert main_window.findChild(QLabel, "session_shell_summary_label") is None
 
 
@@ -2049,22 +2550,22 @@ def test_main_window_top_context_toggle_collapses_only_top_context_body(
     top_context_toggle.click()
     qapp.processEvents()
 
-    assert top_context_body.isHidden() is True
-    assert top_context_group.isVisible() is True
-    assert status_strip_group.isVisible() is True
-    assert brand_panel.isVisible() is False
-    assert operations_panel.isVisible() is False
-    assert top_context_toggle.text() == "Show details"
-
-    top_context_toggle.click()
-    qapp.processEvents()
-
     assert top_context_body.isVisible() is True
     assert top_context_group.isVisible() is True
     assert status_strip_group.isVisible() is True
     assert brand_panel.isVisible() is True
     assert operations_panel.isVisible() is True
     assert top_context_toggle.text() == "Hide details"
+
+    top_context_toggle.click()
+    qapp.processEvents()
+
+    assert top_context_body.isHidden() is True
+    assert top_context_group.isVisible() is True
+    assert status_strip_group.isVisible() is True
+    assert brand_panel.isVisible() is False
+    assert operations_panel.isVisible() is False
+    assert top_context_toggle.text() == "Show details"
 
 
 def test_main_window_top_context_toggle_sits_in_header(
@@ -2128,11 +2629,12 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(0).widget() is brand_header
-    assert brand_layout.itemAt(1).widget() is brand_text_stack
-    assert brand_layout.itemAt(2).widget() is brand_release_status
+    assert brand_layout.itemAt(1).widget() is brand_release_status
     brand_header_layout = brand_header.layout()
     assert brand_header_layout is not None
     assert brand_header_layout.itemAt(0).widget() is brand_icon
+    assert brand_header_layout.itemAt(1).widget() is brand_text_stack
+    assert brand_header_layout.itemAt(2).widget() is main_window._workspace_nav_toggle_button
     brand_text_layout = brand_text_stack.layout()
     assert brand_text_layout is not None
     assert brand_text_layout.itemAt(0).widget() is brand_title
@@ -2941,7 +3443,7 @@ def test_main_window_inventory_update_actionability_filter_exists_with_default_a
     assert action_filter is not None
     assert action_filter.count() == 4
     assert action_filter.itemText(0) == "all"
-    assert action_filter.itemText(1) == "actionable"
+    assert action_filter.itemText(1) == "ready to update"
     assert action_filter.itemText(2) == "blocked"
     assert action_filter.itemText(3) == "needs source repair"
     assert action_filter.currentData() == "all"
@@ -3002,6 +3504,18 @@ def test_main_window_inventory_right_rail_uses_compact_section_labels(
     assert main_window._promote_selected_to_real_button.text() == "Promote to real"
     assert main_window._inventory_real_profile_actions_label.text() == "Profiles"
     assert main_window._mods_smapi_troubleshooting_group.title() == "SMAPI log"
+    assert (
+        main_window._mods_selected_actions_row.direction()
+        == QBoxLayout.Direction.TopToBottom
+    )
+    assert (
+        main_window._inventory_real_profile_actions_row.direction()
+        == QBoxLayout.Direction.TopToBottom
+    )
+    assert (
+        main_window._inventory_sandbox_profile_actions_row.direction()
+        == QBoxLayout.Direction.TopToBottom
+    )
 
 
 def test_main_window_inventory_right_rail_actions_wrap_cleanly_at_narrow_width(
@@ -3217,6 +3731,7 @@ def test_main_window_inventory_diagnostics_hides_when_blocked_reason_is_generic(
     assert beta_item is not None
     assert status_item is not None
     status_item.setText("blocked_custom")
+    status_item.setData(_ROLE_MOD_UPDATE_STATE_CODE, "blocked_custom")
     beta_item.setData(_ROLE_UPDATE_BLOCK_REASON, "Temporarily blocked.")
     main_window._mods_table.setCurrentCell(blocked_row, 0)
     qapp.processEvents()
@@ -4554,8 +5069,8 @@ def test_main_window_inventory_selected_row_guidance_shows_not_checked_prompt(
     )
     assert (
         guidance_text
-        == "Gamma Mod: check updates first to evaluate update actionability. "
-        "Open page stays disabled until an actionable row is selected."
+        == "Gamma Mod: check updates first to see if it's ready to update. "
+        "Open page stays off until a row is ready."
     )
     assert open_remote_button is not None
     assert open_remote_button.isEnabled() is False
@@ -4608,7 +5123,7 @@ def test_main_window_inventory_update_actionability_filter_modes_show_expected_s
 
     assert _visible_row_count(main_window._mods_table) == 3
 
-    main_window._mods_update_actionability_filter_combo.setCurrentText("actionable")
+    main_window._mods_update_actionability_filter_combo.setCurrentText("ready to update")
     qapp.processEvents()
     assert _visible_row_count(main_window._mods_table) == 1
     assert _visible_mod_names(main_window._mods_table) == ("Alpha Mod",)
@@ -5022,7 +5537,7 @@ def test_main_window_renders_disabled_sandbox_mod_rows_with_checkbox_state(
     assert beta_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
     assert alpha_item.checkState() == Qt.CheckState.Checked
     assert beta_item.checkState() == Qt.CheckState.Unchecked
-    assert beta_status.text() == "not_in_profile"
+    assert beta_status.text() == "Not in profile"
 
 
 def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
@@ -5142,7 +5657,7 @@ def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
     assert updated_item is not None
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
-    assert updated_status.text() == "not_in_profile"
+    assert updated_status.text() == "Not in profile"
     assert main_window._status_strip_label.text() == "Removed from sandbox profile: Alpha Mod"
 
 
@@ -5325,7 +5840,12 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
             active_profile_id=profile.profile_id,
         ),
     )
-    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *args, **kwargs: ("Alpha Only", True)))
+    def fake_get_text(*, title: str, prompt: str) -> tuple[str, bool]:
+        captured["dialog_title"] = title
+        captured["dialog_prompt"] = prompt
+        return "Alpha Only", True
+
+    monkeypatch.setattr(main_window, "_ask_localized_text_input", fake_get_text)
 
     main_window._render_inventory(inventory)
     main_window._reload_sandbox_mod_profiles(selected_profile_id=profile.profile_id)
@@ -5337,6 +5857,8 @@ def test_main_window_create_sandbox_profile_dispatches_create_operation(
     create_kwargs = captured.get("create_kwargs")
     assert captured.get("operation_names") == ["Sandbox profile create"]
     assert isinstance(create_kwargs, dict)
+    assert captured["dialog_title"] == "Create sandbox profile"
+    assert captured["dialog_prompt"] == "Profile name:"
     assert create_kwargs["name"] == "Alpha Only"
     assert create_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
     assert main_window._sandbox_profile_combo.currentData() == profile.profile_id
@@ -5456,7 +5978,7 @@ def test_main_window_selected_sandbox_profile_change_dispatches_select_operation
     assert updated_item is not None
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
-    assert updated_status.text() == "not_in_profile"
+    assert updated_status.text() == "Not in profile"
 
 
 def test_main_window_delete_sandbox_profile_dispatches_delete_operation(
@@ -5537,11 +6059,12 @@ def test_main_window_delete_sandbox_profile_dispatches_delete_operation(
             active_profile_id=remaining_profile.profile_id,
         ),
     )
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Yes),
-    )
+    def confirm_delete(*, title: str, text: str, **_: object) -> QMessageBox.StandardButton:
+        captured["dialog_title"] = title
+        captured["dialog_text"] = text
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", confirm_delete)
 
     main_window._render_inventory(inventory)
     main_window._reload_sandbox_mod_profiles(selected_profile_id=deleted_profile.profile_id)
@@ -5555,6 +6078,8 @@ def test_main_window_delete_sandbox_profile_dispatches_delete_operation(
     assert isinstance(delete_kwargs, dict)
     assert delete_kwargs["profile_id"] == deleted_profile.profile_id
     assert delete_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
+    assert captured["dialog_title"] == "Delete sandbox profile"
+    assert "canonical sandbox library will stay untouched" in str(captured["dialog_text"])
     assert main_window._sandbox_profile_combo.currentData() == remaining_profile.profile_id
     assert "Sandbox profile deleted" in main_window._inventory_output_box.toPlainText()
 
@@ -5684,7 +6209,7 @@ def test_main_window_real_toggle_checkbox_dispatches_toggle_operation(
     assert updated_item is not None
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
-    assert updated_status.text() == "not_in_profile"
+    assert updated_status.text() == "Not in profile"
     assert main_window._status_strip_label.text() == "Removed from real profile: Alpha Mod"
 
 
@@ -6323,7 +6848,7 @@ def test_main_window_real_grouped_profile_rows_share_toggle_ownership(
         str(content_path),
     )
     assert grouped_row_item.checkState() == Qt.CheckState.Unchecked
-    assert grouped_status_item.text() == "not_in_profile"
+    assert grouped_status_item.text() == "Not in profile"
 
     main_window._suppress_mod_toggle_events = True
     grouped_row_item.setCheckState(Qt.CheckState.Checked)
@@ -6346,7 +6871,7 @@ def test_main_window_real_grouped_profile_rows_share_toggle_ownership(
         str(profile_root / "ZebrusLawnRobot"),
         str(profile_root / "[CP]ZebrusLawnRobot"),
     )
-    assert updated_status.text() == "not_checked"
+    assert updated_status.text() == "Not checked"
 
 
 def test_inventory_row_entries_group_family_components_without_update_keys(tmp_path: Path) -> None:
@@ -6480,7 +7005,12 @@ def test_main_window_create_real_profile_dispatches_create_operation(
             active_profile_id=profile.profile_id,
         ),
     )
-    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *args, **kwargs: ("Alpha Only", True)))
+    def fake_get_text(*, title: str, prompt: str) -> tuple[str, bool]:
+        captured["dialog_title"] = title
+        captured["dialog_prompt"] = prompt
+        return "Alpha Only", True
+
+    monkeypatch.setattr(main_window, "_ask_localized_text_input", fake_get_text)
 
     main_window._render_inventory(inventory)
     main_window._reload_real_mod_profiles(selected_profile_id=profile.profile_id)
@@ -6492,6 +7022,8 @@ def test_main_window_create_real_profile_dispatches_create_operation(
     create_kwargs = captured.get("create_kwargs")
     assert captured.get("operation_names") == ["Real profile create"]
     assert isinstance(create_kwargs, dict)
+    assert captured["dialog_title"] == "Create real Mods profile"
+    assert captured["dialog_prompt"] == "Profile name:"
     assert create_kwargs["name"] == "Alpha Only"
     assert create_kwargs["configured_mods_path_text"] == str(real_mods_root)
     assert main_window._real_profile_combo.currentData() == profile.profile_id
@@ -6623,7 +7155,7 @@ def test_main_window_selected_real_profile_change_dispatches_select_operation(
     assert updated_item is not None
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
-    assert updated_status.text() == "not_in_profile"
+    assert updated_status.text() == "Not in profile"
 
 
 def test_main_window_custom_profile_update_report_keeps_not_in_profile_guidance(
@@ -6742,7 +7274,7 @@ def test_main_window_custom_profile_update_report_keeps_not_in_profile_guidance(
     assert beta_row >= 0
     beta_status = main_window._mods_table.item(beta_row, 4)
     assert beta_status is not None
-    assert beta_status.text() == "not_in_profile"
+    assert beta_status.text() == "Not in profile"
     assert "not part of the active profile yet" in beta_status.toolTip()
 
     main_window._mods_table.setCurrentCell(beta_row, 0)
@@ -6839,11 +7371,12 @@ def test_main_window_delete_real_profile_dispatches_delete_operation(
             active_profile_id=remaining_profile.profile_id,
         ),
     )
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Yes),
-    )
+    def confirm_delete(*, title: str, text: str, **_: object) -> QMessageBox.StandardButton:
+        captured["dialog_title"] = title
+        captured["dialog_text"] = text
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", confirm_delete)
 
     main_window._render_inventory(inventory)
     main_window._reload_real_mod_profiles(selected_profile_id=deleted_profile.profile_id)
@@ -6857,6 +7390,8 @@ def test_main_window_delete_real_profile_dispatches_delete_operation(
     assert isinstance(delete_kwargs, dict)
     assert delete_kwargs["profile_id"] == deleted_profile.profile_id
     assert delete_kwargs["configured_mods_path_text"] == str(real_mods_root)
+    assert captured["dialog_title"] == "Delete real profile"
+    assert "canonical real Mods library will stay untouched" in str(captured["dialog_text"])
     assert main_window._real_profile_combo.currentData() == remaining_profile.profile_id
     assert "Real profile deleted" in main_window._inventory_output_box.toPlainText()
 
@@ -7168,6 +7703,29 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         button = main_window.findChild(QPushButton, name)
         assert button is not None
 
+
+def test_main_window_setup_backup_actions_use_full_width_rows(
+    main_window: MainWindow,
+) -> None:
+    actions_widget = main_window.findChild(QWidget, "setup_actions_widget")
+    assert actions_widget is not None
+    actions_layout = actions_widget.layout()
+    assert isinstance(actions_layout, QGridLayout)
+
+    button_names = (
+        "setup_export_backup_button",
+        "setup_inspect_backup_button",
+        "setup_execute_restore_import_button",
+    )
+    for expected_row, name in enumerate(button_names):
+        button = main_window.findChild(QPushButton, name)
+        assert button is not None
+        row, column, row_span, column_span = actions_layout.getItemPosition(
+            actions_layout.indexOf(button)
+        )
+        assert (row, column, row_span, column_span) == (expected_row, 0, 1, 1)
+        assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+
     active_bundle_label = main_window.findChild(QLabel, "setup_active_backup_bundle_label")
     assert active_bundle_label is not None
 
@@ -7435,6 +7993,532 @@ def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_a
     runtime_actions_layout = runtime_actions_widget.layout()
     assert isinstance(runtime_actions_layout, QBoxLayout)
     assert runtime_actions_layout.direction() == QBoxLayout.Direction.TopToBottom
+
+
+_SUPPORTED_WINDOW_SIZES = [(1100, 720), (1366, 768), (1920, 1080)]
+
+
+def _open_localized_window(
+    tmp_path: Path, qapp: QApplication, language: str, width: int, height: int,
+) -> MainWindow:
+    window = MainWindow(
+        shell_service=AppShellService(state_file=tmp_path / "app-state.json"),
+        localizer=UiLocalizer.from_preference(language),
+    )
+    _show_test_window(window, qapp)
+    window.resize(width, height)
+    qapp.processEvents()
+    return window
+
+
+def _settle_layout(qapp: QApplication) -> None:
+    # Height-for-width content (wrapped notes) reflows over a few event-loop
+    # turns after a resize; assert the settled layout, not an intermediate one.
+    for _ in range(4):
+        qapp.processEvents()
+
+
+def _show_workspace(window: MainWindow, qapp: QApplication, page: QWidget) -> None:
+    window._context_tabs.setCurrentWidget(page)
+    _settle_layout(qapp)
+
+
+def _clipped_controls(page: QWidget) -> list[str]:
+    """Describe visible controls that a parent cuts off or squeezes.
+
+    Vertical scrolling inside a page is legitimate, so the walk stops at scroll
+    viewports; horizontal overflow of those viewports is reported separately.
+    """
+    problems: list[str] = []
+    for widget in page.findChildren(QWidget):
+        if not widget.isVisible() or not isinstance(
+            widget, (QPushButton, QComboBox, QLineEdit, QLabel, QCheckBox)
+        ):
+            continue
+        name = widget.objectName() or repr(getattr(widget, "text", lambda: "")()[:40])
+        if isinstance(widget, QPushButton) and widget.height() < widget.sizeHint().height():
+            problems.append(
+                f"{name} squeezed to {widget.height()}px of {widget.sizeHint().height()}px"
+            )
+        child, parent = widget, widget.parentWidget()
+        while parent is not None and parent is not page:
+            grandparent = parent.parentWidget()
+            if isinstance(grandparent, QScrollArea) and parent is grandparent.viewport():
+                break
+            geometry, bounds = child.geometry(), parent.rect()
+            if (
+                geometry.left() < bounds.left() - 1
+                or geometry.top() < bounds.top() - 1
+                or geometry.right() > bounds.right() + 1
+                or geometry.bottom() > bounds.bottom() + 1
+            ):
+                problems.append(
+                    f"{name} overflows {parent.objectName() or type(parent).__name__}: "
+                    f"{geometry.getRect()} in {bounds.width()}x{bounds.height()}"
+                )
+                break
+            child, parent = parent, grandparent
+    for scroll in page.findChildren(QScrollArea):
+        content = scroll.widget()
+        if scroll.isVisible() and content is not None and scroll.widgetResizable():
+            if content.minimumSizeHint().width() > scroll.viewport().width():
+                problems.append(
+                    f"{scroll.objectName()} needs {content.minimumSizeHint().width()}px "
+                    f"in a {scroll.viewport().width()}px viewport"
+                )
+    return problems
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+@pytest.mark.parametrize("width,height", _SUPPORTED_WINDOW_SIZES)
+def test_workspace_pages_do_not_clip_controls(
+    tmp_path: Path, qapp: QApplication, language: str, width: int, height: int,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, width, height)
+    try:
+        for index in range(window._context_tabs.count()):
+            page = window._context_tabs.widget(index)
+            _show_workspace(window, qapp, page)
+            assert _clipped_controls(page) == [], page.objectName()
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+@pytest.mark.parametrize("width,height", _SUPPORTED_WINDOW_SIZES)
+def test_setup_backup_actions_receive_their_full_height(
+    tmp_path: Path, qapp: QApplication, language: str, width: int, height: int,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, width, height)
+    try:
+        _show_workspace(window, qapp, window._setup_page)
+        actions = window.findChild(QWidget, "setup_actions_widget")
+        backup_group = window.findChild(QGroupBox, "setup_backup_restore_group")
+        assert actions is not None and backup_group is not None
+        buttons = [button for button in actions.findChildren(QPushButton) if button.isVisible()]
+        assert len(buttons) >= 3
+        for button in buttons:
+            assert button.geometry().bottom() <= actions.rect().bottom(), button.objectName()
+            assert button.height() >= button.sizeHint().height(), button.objectName()
+        # Explanatory copy below the actions starts after the last action.
+        actions_bottom = actions.mapTo(backup_group, QPoint(0, actions.height())).y()
+        for label in backup_group.findChildren(QLabel):
+            if label.isVisible() and label.parentWidget() is backup_group:
+                assert label.mapTo(backup_group, QPoint(0, 0)).y() >= actions_bottom
+        assert actions.mapTo(backup_group, QPoint(0, actions.height())).y() <= backup_group.height()
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+@pytest.mark.parametrize("width,height", _SUPPORTED_WINDOW_SIZES)
+def test_packages_watcher_stays_beside_queue_when_both_fit(
+    tmp_path: Path, qapp: QApplication, language: str, width: int, height: int,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, width, height)
+    try:
+        _show_workspace(window, qapp, window._packages_page)
+        long_path = "C:\\" + "\\".join(["Synthetic downloads folder with a long name"] * 6)
+        window._watched_downloads_path_input.setText(long_path)
+        window._secondary_watched_downloads_path_input.setText(long_path)
+        qapp.processEvents()
+        scroll = window._packages_scroll_area
+        review = window._packages_review_target_group
+        watcher = window._packages_watcher_group
+        for size in ((1920, 1080), (1100, 720), (width, height)):
+            window.resize(*size)
+            _settle_layout(qapp)
+            assert window._packages_stacked is False, size
+            assert watcher.x() >= review.x() + review.width(), size
+            assert watcher.y() == review.y(), size
+            for panel in (review, watcher, window._packages_output_group):
+                if panel.isVisible():
+                    origin = panel.mapTo(scroll.widget(), QPoint(0, 0))
+                    assert origin.x() >= 0
+                    assert origin.x() + panel.width() <= scroll.viewport().width(), size
+            assert scroll.horizontalScrollBar().maximum() == 0
+            assert _clipped_controls(window._packages_page) == [], size
+        scroll.ensureWidgetVisible(window._watched_downloads_path_input)
+        qapp.processEvents()
+        field = window._watched_downloads_path_input
+        origin = field.mapTo(scroll.viewport(), QPoint(0, 0))
+        assert scroll.viewport().rect().contains(origin)
+        assert scroll.viewport().rect().contains(origin + field.rect().bottomRight())
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_packages_panels_stack_only_while_side_by_side_would_overflow(
+    tmp_path: Path, qapp: QApplication,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, "pt-BR", 1100, 720)
+    try:
+        _show_workspace(window, qapp, window._packages_page)
+        scroll = window._packages_scroll_area
+        watcher = window._packages_watcher_group
+        assert window._packages_stacked is False
+        # A wider side panel than the page can hold beside the queue.
+        watcher.setMinimumWidth(scroll.viewport().width() - 100)
+        _settle_layout(qapp)
+        assert window._packages_stacked is True
+        assert watcher.x() == window._packages_review_target_group.x()
+        assert scroll.horizontalScrollBar().maximum() == 0
+        assert watcher.mapTo(scroll.widget(), QPoint(watcher.width(), 0)).x() <= scroll.viewport().width()
+        watcher.setMinimumWidth(0)
+        _settle_layout(qapp)
+        assert window._packages_stacked is False
+        assert watcher.x() > window._packages_review_target_group.x()
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+@pytest.mark.parametrize("width,height", _SUPPORTED_WINDOW_SIZES)
+def test_compare_actions_keep_both_sync_directions_reachable(
+    tmp_path: Path, qapp: QApplication, language: str, width: int, height: int,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, width, height)
+    try:
+        _show_workspace(window, qapp, window._compare_page)
+        scroll = window._compare_scroll_area
+        controls = (
+            window._compare_real_vs_sandbox_button,
+            window._compare_sync_real_to_sandbox_button,
+            window._compare_sync_sandbox_to_real_button,
+            window._compare_category_filter_combo,
+            window._compare_copy_identity_button,
+        )
+        for size in ((1920, 1080), (1100, 720), (width, height)):
+            window.resize(*size)
+            _settle_layout(qapp)
+            assert scroll.horizontalScrollBar().maximum() == 0, size
+            for control in controls:
+                assert control.isVisible()
+                origin = control.mapTo(scroll.viewport(), QPoint(0, 0))
+                assert origin.x() >= 0, control.objectName()
+                assert origin.x() + control.width() <= scroll.viewport().width(), control.objectName()
+                assert control.width() >= control.sizeHint().width(), control.objectName()
+            real_to_sandbox, sandbox_to_real = controls[1], controls[2]
+            assert real_to_sandbox.text() == window._tr("compare.sync_real_to_sandbox")
+            assert sandbox_to_real.text() == window._tr("compare.sync_sandbox_to_real")
+            assert _clipped_controls(window._compare_page) == [], size
+        wrapped = window._compare_actions_layout.direction() == QBoxLayout.Direction.TopToBottom
+        run_button, combo = controls[0], controls[3]
+        assert (combo.mapTo(window, QPoint(0, 0)).y() > run_button.mapTo(window, QPoint(0, 0)).y()) is wrapped
+        if width == 1920:
+            assert wrapped is False
+        if (language, width) == ("pt-BR", 1100):
+            assert wrapped is True
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def _drag_header_section_edge(
+    header: QHeaderView, qapp: QApplication, logical_index: int, delta: int,
+) -> None:
+    from PySide6.QtGui import QMouseEvent
+
+    edge_x = header.sectionViewportPosition(logical_index) + header.sectionSize(logical_index) - 2
+    y = header.height() // 2
+    viewport = header.viewport()
+
+    def send(event_type, x: int, buttons) -> None:
+        button = Qt.MouseButton.NoButton if event_type == QMouseEvent.Type.MouseMove else Qt.MouseButton.LeftButton
+        event = QMouseEvent(
+            event_type,
+            QPointF(x, y),
+            QPointF(viewport.mapToGlobal(QPoint(x, y))),
+            button,
+            buttons,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(viewport, event)
+
+    held = Qt.MouseButton.LeftButton
+    send(QMouseEvent.Type.MouseButtonPress, edge_x, held)
+    send(QMouseEvent.Type.MouseMove, edge_x + delta // 2, held)
+    send(QMouseEvent.Type.MouseMove, edge_x + delta, held)
+    send(QMouseEvent.Type.MouseButtonRelease, edge_x + delta, Qt.MouseButton.NoButton)
+    qapp.processEvents()
+
+
+def _unused_table_width(table: QTableWidget) -> int:
+    return table.viewport().width() - table.horizontalHeader().length()
+
+
+def _synthetic_compare_result() -> ModsCompareResult:
+    real = InstalledMod(
+        unique_id="Sample.Village",
+        name="Village Conversations Expanded",
+        version="1.0.0",
+        folder_path=Path(r"C:\Game\Mods\VillageConversations"),
+        manifest_path=Path(r"C:\Game\Mods\VillageConversations\manifest.json"),
+        dependencies=tuple(),
+    )
+    sandbox = replace(
+        real,
+        version="1.1.0",
+        folder_path=Path(r"C:\Sandbox\Mods\VillageConversations"),
+        manifest_path=Path(r"C:\Sandbox\Mods\VillageConversations\manifest.json"),
+    )
+    return ModsCompareResult(
+        real_mods_path=Path(r"C:\Game\Mods"),
+        sandbox_mods_path=Path(r"C:\Sandbox\Mods"),
+        real_inventory=_mods_inventory(real),
+        sandbox_inventory=_mods_inventory(sandbox),
+        entries=(
+            ModsCompareEntry(
+                match_key="sample.village",
+                unique_id="Sample.Village",
+                name="Village Conversations Expanded",
+                state="version_mismatch",
+                real_mod=real,
+                sandbox_mod=sandbox,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+def test_tables_give_spare_width_to_names_without_losing_manual_widths(
+    tmp_path: Path, qapp: QApplication, language: str,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, 1920, 1080)
+    try:
+        window._render_inventory(_inventory_for_update_actionability_tests())
+        window._render_mods_compare_result(_synthetic_compare_result())
+        window._render_archive_entries((_archived_entry("AlphaMod", "AlphaMod"),))
+        entry = _discovery_entry("Alpha Mod", "Sample.Alpha")
+        window._render_discovery_results(
+            ModDiscoveryResult(query="alpha", provider=SMAPI_COMPATIBILITY_LIST_PROVIDER, results=(entry,)),
+            (_discovery_correlation(entry, context_summary="Not installed"),),
+        )
+        for page, table, name_column in (
+            (window._mods_page, window._mods_table, 0),
+            (window._compare_page, window._compare_results_table, 0),
+            (window._archive_page, window._archive_table, 3),
+            (window._discovery_page, window._discovery_table, 0),
+        ):
+            if window._context_tabs.indexOf(page) < 0:
+                page = window._history_page
+            _show_workspace(window, qapp, page)
+            if not table.isVisible():
+                continue
+            assert _unused_table_width(table) == 0, table.objectName()
+            assert table.horizontalScrollBar().maximum() == 0, table.objectName()
+            others = [table.columnWidth(c) for c in range(table.columnCount()) if c != name_column]
+            assert table.columnWidth(name_column) > max(others), table.objectName()
+
+        table = window._mods_table
+        header = table.horizontalHeader()
+        _show_workspace(window, qapp, window._mods_page)
+        # Narrowing the window gives back only the automatically added width.
+        window.resize(1366, 768)
+        qapp.processEvents()
+        assert table.columnWidth(0) >= 250
+        assert _unused_table_width(table) <= 0
+        window.resize(1920, 1080)
+        qapp.processEvents()
+        assert _unused_table_width(table) == 0
+
+        # Widening a metadata column by hand takes space from the name column
+        # while spare width remains, and the metadata width is kept.
+        name_before = table.columnWidth(0)
+        unique_id_before = table.columnWidth(1)
+        _drag_header_section_edge(header, qapp, 1, 60)
+        unique_id_width = table.columnWidth(1)
+        assert unique_id_width > unique_id_before
+        assert table.columnWidth(0) == name_before - (unique_id_width - unique_id_before)
+        assert _unused_table_width(table) == 0
+        name_before = table.columnWidth(0)
+
+        # A hand-set name width is kept exactly through refresh, filtering,
+        # navigation, resizing and a language change.
+        _drag_header_section_edge(header, qapp, 0, -200)
+        manual_name_width = table.columnWidth(0)
+        assert manual_name_width < name_before - 100
+
+        def assert_manual_widths(step: str) -> None:
+            assert table.columnWidth(0) == manual_name_width, step
+            assert table.columnWidth(1) == unique_id_width, step
+
+        window._render_inventory(_inventory_for_update_actionability_tests())
+        qapp.processEvents()
+        assert_manual_widths("refresh")
+        window._mods_filter_input.setText("Alpha")
+        qapp.processEvents()
+        window._mods_filter_input.setText("")
+        qapp.processEvents()
+        assert_manual_widths("filter")
+        _show_workspace(window, qapp, window._compare_page)
+        _show_workspace(window, qapp, window._mods_page)
+        assert_manual_widths("navigation")
+        window.resize(1366, 768)
+        qapp.processEvents()
+        window.resize(1920, 1080)
+        qapp.processEvents()
+        assert_manual_widths("resize")
+        window._apply_shell_setup_localizer("en" if language == "pt-BR" else "pt-BR", announce=False)
+        qapp.processEvents()
+        assert_manual_widths("language change")
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def _header_chevron_pixels(header: QHeaderView, logical_index: int) -> list[tuple[int, int]]:
+    image = header.grab().toImage()
+    label = str(header.model().headerData(logical_index, Qt.Orientation.Horizontal) or "")
+    section_left = header.sectionViewportPosition(logical_index)
+    text_right = section_left + 10 + header.fontMetrics().horizontalAdvance(label)
+    section_right = section_left + header.sectionSize(logical_index) - 2
+    return [
+        (x, y)
+        for x in range(text_right + 1, section_right)
+        for y in range(2, image.height() - 2)
+        if image.pixelColor(x, y).lightness() >= 90
+    ]
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+def test_table_sort_chevron_sits_beside_label_and_matches_sort_order(
+    tmp_path: Path, qapp: QApplication, language: str,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, 1366, 768)
+    try:
+        window._render_inventory(_inventory_for_update_actionability_tests())
+        _show_workspace(window, qapp, window._mods_page)
+        table = window._mods_table
+        header = table.horizontalHeader()
+        assert header.isSortIndicatorShown()
+        label = str(header.model().headerData(0, Qt.Orientation.Horizontal))
+        text_right = header.sectionViewportPosition(0) + 10 + header.fontMetrics().horizontalAdvance(label)
+        seen_orders = set()
+        for _click in range(2):
+            QTest.mouseClick(
+                header.viewport(),
+                Qt.MouseButton.LeftButton,
+                pos=QPoint(header.sectionViewportPosition(0) + 20, header.height() // 2),
+            )
+            qapp.processEvents()
+            assert header.sortIndicatorSection() == 0
+            order = header.sortIndicatorOrder()
+            seen_orders.add(order)
+            names = _visible_mod_names(table)
+            assert list(names) == sorted(names, reverse=order == Qt.SortOrder.DescendingOrder)
+
+            pixels = _header_chevron_pixels(header, 0)
+            assert pixels, "sort chevron was not painted"
+            xs = [x for x, _y in pixels]
+            left, right = min(xs), max(xs)
+            assert 0 < left - text_right <= 12, "chevron is not beside its label"
+            assert right < header.sectionViewportPosition(0) + header.sectionSize(0)
+            vertical_span = [y for _x, y in pixels]
+            assert min(vertical_span) > 4 and max(vertical_span) < header.height() - 4
+            middle = (left + right) / 2
+            middle_y = [y for x, y in pixels if abs(x - middle) <= 1]
+            end_y = [y for x, y in pixels if x <= left + 1 or x >= right - 1]
+            points_up = sum(middle_y) / len(middle_y) < sum(end_y) / len(end_y)
+            assert points_up is (order == Qt.SortOrder.AscendingOrder)
+            # Other sections must not show a chevron.
+            assert _header_chevron_pixels(header, 1) == []
+        assert seen_orders == {Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder}
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def _relative_luminance(color) -> float:
+    channels = []
+    for value in (color.redF(), color.greenF(), color.blueF()):
+        channels.append(value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(first, second) -> float:
+    lighter, darker = sorted((_relative_luminance(first), _relative_luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_selected_table_rows_keep_accessible_text_contrast(
+    tmp_path: Path, qapp: QApplication,
+) -> None:
+    from PySide6.QtGui import QColor
+
+    window = _open_localized_window(tmp_path, qapp, "en", 1366, 768)
+    try:
+        window._render_inventory(_inventory_for_update_actionability_tests())
+        _show_workspace(window, qapp, window._mods_page)
+        table = window._mods_table
+        table.selectRow(0)
+        item = table.item(0, 0)
+        rect = table.visualItemRect(item)
+
+        def rendered_colors() -> tuple[QColor, QColor]:
+            qapp.processEvents()
+            image = table.viewport().grab().toImage()
+            colors = [
+                image.pixelColor(x, y)
+                for x in range(rect.left() + 2, rect.right() - 2)
+                for y in range(rect.top() + 2, rect.bottom() - 2)
+            ]
+            background = max(set(c.name() for c in colors), key=[c.name() for c in colors].count)
+            text = max(colors, key=lambda c: c.lightness())
+            return QColor(background), text
+
+        # Unfocused (inactive) selection, then keyboard-focused selection and
+        # hover over the selected row: text must stay AA-readable in each.
+        states = []
+        states.append(("inactive", rendered_colors()))
+        table.setFocus()
+        states.append(("focused", rendered_colors()))
+        QTest.mouseMove(table.viewport(), rect.center())
+        states.append(("hover", rendered_colors()))
+        for state, (background, text) in states:
+            assert background.name() == STITCH_TOKENS["brand"], state
+            assert text.name() == STITCH_TOKENS["brand_text"], state
+            assert _contrast_ratio(text, background) >= 4.5, state
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+def test_library_preserves_readable_columns_and_scrolls_to_last_column(
+    tmp_path: Path, qapp: QApplication, language: str,
+) -> None:
+    window = MainWindow(
+        shell_service=AppShellService(state_file=tmp_path / "app-state.json"),
+        localizer=UiLocalizer.from_preference(language),
+    )
+    try:
+        _show_test_window(window, qapp)
+        window.resize(1366, 768)
+        window._render_inventory(_inventory_for_update_actionability_tests())
+        qapp.processEvents()
+        table = window._mods_table
+        assert table.columnWidth(0) >= 250
+        for column in range(table.columnCount()):
+            text_width = table.horizontalHeader().fontMetrics().horizontalAdvance(
+                table.horizontalHeaderItem(column).text()
+            )
+            assert table.columnWidth(column) >= text_width + 20
+        scrollbar = table.horizontalScrollBar()
+        assert scrollbar.isVisible() and scrollbar.height() > 0
+        assert scrollbar.maximum() > 0
+        scrollbar.setValue(scrollbar.maximum())
+        qapp.processEvents()
+        last = table.columnCount() - 1
+        assert table.columnViewportPosition(last) >= 0
+        assert table.columnViewportPosition(last) + table.columnWidth(last) <= table.viewport().width()
+    finally:
+        window.close()
+        qapp.processEvents()
 
 
 def test_main_window_packages_surface_uses_guided_intake_composition(
@@ -9849,6 +10933,239 @@ def test_main_window_archive_state_hint_updates_for_selection(
     assert "1 archived entry/entries selected" in main_window._archive_state_hint_label.text()
 
 
+def test_main_window_archive_empty_state_hides_duplicate_hint_label(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    archive_page = main_window.findChild(QWidget, "history_archive_panel")
+    assert history_page is not None
+    assert archive_page is not None
+    main_window._context_tabs.setCurrentWidget(history_page)
+    main_window._history_workspace_tabs.setCurrentWidget(archive_page)
+    qapp.processEvents()
+
+    main_window._archived_entries = tuple()
+    main_window._render_archive_entries(tuple())
+    main_window._refresh_archive_workspace_state()
+    qapp.processEvents()
+
+    assert main_window._archive_empty_state_label.isVisible() is True
+    assert main_window._archive_state_hint_label.isVisible() is False
+    assert "No archived copies yet" in main_window._archive_empty_state_label.text()
+
+    entry = _archived_entry("AlphaMod", "AlphaMod")
+    main_window._archived_entries = (entry,)
+    main_window._render_archive_entries((entry,))
+    main_window._refresh_archive_workspace_state()
+    qapp.processEvents()
+
+    assert main_window._archive_empty_state_label.isVisible() is False
+    assert main_window._archive_state_hint_label.isVisible() is True
+
+
+def test_main_window_entering_history_workspace_auto_refreshes_archives_when_config_present(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_window._config = AppConfig(
+        game_path=tmp_path / "Game",
+        mods_path=tmp_path / "Mods",
+        app_data_path=tmp_path / "AppData",
+    )
+    calls: list[str] = []
+
+    def _run_immediately(*, operation_name: str, task_fn, on_success, **_: object) -> None:
+        calls.append(operation_name)
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "list_archived_entries",
+        lambda **_: tuple(),
+    )
+
+    mods_page = main_window.findChild(QWidget, "mods_workspace_page")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    assert mods_page is not None
+    assert history_page is not None
+
+    main_window._context_tabs.setCurrentWidget(mods_page)
+    qapp.processEvents()
+    main_window._context_tabs.setCurrentWidget(history_page)
+    qapp.processEvents()
+
+    assert calls == ["Archive refresh"]
+
+
+def test_main_window_history_auto_refresh_retries_after_a_failed_refresh(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main_window._config = AppConfig(
+        game_path=tmp_path / "Game",
+        mods_path=tmp_path / "Mods",
+        app_data_path=tmp_path / "AppData",
+    )
+    calls: list[str] = []
+    should_fail = {"value": True}
+
+    def _run_immediately(*, operation_name: str, task_fn, on_success, **_: object) -> None:
+        calls.append(operation_name)
+        if should_fail["value"]:
+            # Mirrors a failed background operation: on_success never runs.
+            return
+        on_success(task_fn())
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "list_archived_entries",
+        lambda **_: tuple(),
+    )
+
+    mods_page = main_window.findChild(QWidget, "mods_workspace_page")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    assert mods_page is not None
+    assert history_page is not None
+
+    main_window._context_tabs.setCurrentWidget(mods_page)
+    qapp.processEvents()
+    main_window._context_tabs.setCurrentWidget(history_page)
+    qapp.processEvents()
+    assert calls == ["Archive refresh"]
+    assert main_window._history_archives_auto_loaded is False
+
+    should_fail["value"] = False
+    main_window._context_tabs.setCurrentWidget(mods_page)
+    qapp.processEvents()
+    main_window._context_tabs.setCurrentWidget(history_page)
+    qapp.processEvents()
+
+    # A failed first refresh must not latch the workspace into a stale state.
+    assert calls == ["Archive refresh", "Archive refresh"]
+    assert main_window._history_archives_auto_loaded is True
+
+
+def test_main_window_sandbox_promotion_invalidates_cached_archive_listing(
+    main_window: MainWindow,
+    tmp_path: Path,
+) -> None:
+    main_window._history_archives_auto_loaded = True
+    real_mods = tmp_path / "Mods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    promoted = real_mods / "Alpha"
+    result = SandboxModsPromotionResult(
+        destination_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        real_mods_path=real_mods,
+        sandbox_mods_path=sandbox_mods,
+        archive_path=tmp_path / "Archive",
+        source_mod_paths=(sandbox_mods / "Alpha",),
+        promoted_target_paths=(promoted,),
+        archived_target_paths=(tmp_path / "Archive" / "Alpha",),
+        replaced_target_paths=(promoted,),
+        scan_context_path=real_mods,
+        inventory=ModsInventory(
+            mods=tuple(),
+            parse_warnings=tuple(),
+            duplicate_unique_ids=tuple(),
+            missing_required_dependencies=tuple(),
+            scan_entry_findings=tuple(),
+            ignored_entries=tuple(),
+        ),
+    )
+
+    main_window._on_promote_selected_mods_to_real_completed(result, history_before=tuple())
+
+    # Promotions archive the copies they replace, so the cached listing is stale.
+    assert main_window._history_archives_auto_loaded is False
+    assert main_window._history_preferred_tab_index == 1
+
+
+def test_main_window_entering_history_workspace_skips_auto_refresh_without_config(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert main_window._config is None
+    calls: list[str] = []
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda **kwargs: calls.append(kwargs.get("operation_name", "")),
+    )
+
+    mods_page = main_window.findChild(QWidget, "mods_workspace_page")
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    assert mods_page is not None
+    assert history_page is not None
+
+    main_window._context_tabs.setCurrentWidget(mods_page)
+    qapp.processEvents()
+    main_window._context_tabs.setCurrentWidget(history_page)
+    qapp.processEvents()
+
+    assert calls == []
+
+
+def test_main_window_history_workspace_defaults_to_install_tab_after_successful_install(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
+    main_window._pending_install_plan = sandbox_plan
+
+    monkeypatch.setattr(
+        main_window,
+        "_show_localized_question_dialog",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_sandbox_install_plan",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            inventory=_mods_inventory(),
+            destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+            installed_targets=(Path(r"C:\Sandbox\Mods\SampleMod"),),
+            archived_targets=tuple(),
+            scan_context_path=Path(r"C:\Sandbox\Mods"),
+        ),
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    assert main_window._history_preferred_tab_index == 0
+
+    main_window._on_run_install()
+    qapp.processEvents()
+
+    assert main_window._history_preferred_tab_index == 1
+
+    history_page = main_window.findChild(QWidget, "history_workspace_page")
+    mods_page = main_window.findChild(QWidget, "mods_workspace_page")
+    assert history_page is not None
+    assert mods_page is not None
+
+    main_window._context_tabs.setCurrentWidget(mods_page)
+    qapp.processEvents()
+    main_window._context_tabs.setCurrentWidget(history_page)
+    qapp.processEvents()
+
+    assert main_window._history_workspace_tabs.currentIndex() == 1
+
+
 def test_main_window_plan_install_safety_panel_updates_for_real_target(
     main_window: MainWindow,
     qapp: QApplication,
@@ -9969,6 +11286,7 @@ def test_main_window_plan_install_surface_key_controls_exist(
         plan_review_explanation_label.text()
         == "No install detail yet."
     )
+    assert plan_review_explanation_label.isHidden() is True
     assert main_window._plan_install_tab.findChild(QLabel, "plan_install_intro_label") is None
     assert plan_facts_label.text() == (
         "Entries: -\n"
@@ -9977,6 +11295,7 @@ def test_main_window_plan_install_surface_key_controls_exist(
         "Approval required: -\n"
         "Blocked entries: -"
     )
+    assert plan_facts_label.isHidden() is True
     columns_row_layout = columns_row.layout()
     assert columns_row_layout is not None
     assert columns_row_layout.itemAt(0).widget() is main_column
@@ -10280,6 +11599,84 @@ def test_main_window_package_queue_select_and_deselect_all_affect_visible_rows_o
     main_window._on_deselect_all_visible_package_queue_items()
 
     assert main_window._selected_zip_package_paths == (beta.package_path,)
+
+
+def test_main_window_package_queue_select_all_excludes_not_reviewable_items(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    alpha = _intake_result("Alpha.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha")
+    mystery = _intake_result("Mystery.zip", "no_usable_manifest", "", "")
+
+    main_window._detected_intakes = (alpha, mystery)
+    main_window._intake_correlations = (
+        _intake_correlation(alpha, next_step="Review Alpha.zip"),
+        _intake_correlation(mystery, next_step="", actionable=False),
+    )
+    main_window._refresh_package_queue()
+    qapp.processEvents()
+
+    mystery_item = None
+    for row in range(main_window._package_queue_list.count()):
+        item = main_window._package_queue_list.item(row)
+        data = item.data(int(Qt.ItemDataRole.UserRole))
+        if isinstance(data, int) and main_window._detected_intakes[data] is mystery:
+            mystery_item = item
+            break
+
+    assert mystery_item is not None
+    assert bool(mystery_item.flags() & Qt.ItemFlag.ItemIsUserCheckable) is False
+    assert mystery_item.checkState() == Qt.CheckState.Unchecked
+
+    main_window._on_select_all_visible_package_queue_items()
+
+    assert main_window._selected_zip_package_paths == (alpha.package_path,)
+    assert mystery.package_path not in main_window._selected_zip_package_paths
+
+
+def test_main_window_package_queue_select_all_drops_already_selected_not_reviewable_item(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    alpha = _intake_result("Alpha.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha")
+    mystery = _intake_result("Mystery.zip", "no_usable_manifest", "", "")
+
+    main_window._detected_intakes = (alpha, mystery)
+    main_window._intake_correlations = (
+        _intake_correlation(alpha, next_step="Review Alpha.zip"),
+        _intake_correlation(mystery, next_step="", actionable=False),
+    )
+    main_window._refresh_package_queue()
+    qapp.processEvents()
+
+    # A not-reviewable package can already be selected from Browse or from an
+    # earlier queue state, so "Select all" has to remove it, not just skip it.
+    main_window._set_selected_zip_package_paths(
+        (mystery.package_path,),
+        current_path=mystery.package_path,
+    )
+    qapp.processEvents()
+    assert mystery.package_path in main_window._selected_zip_package_paths
+
+    main_window._on_select_all_visible_package_queue_items()
+
+    assert main_window._selected_zip_package_paths == (alpha.package_path,)
+    assert mystery.package_path not in main_window._selected_zip_package_paths
+
+
+def test_main_window_package_queue_select_all_disabled_when_only_not_reviewable_visible(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    mystery = _intake_result("Mystery.zip", "no_usable_manifest", "", "")
+    main_window._detected_intakes = (mystery,)
+    main_window._intake_correlations = (
+        _intake_correlation(mystery, next_step="", actionable=False),
+    )
+    main_window._refresh_package_queue()
+    qapp.processEvents()
+
+    assert main_window._package_queue_select_all_button.isEnabled() is False
 
 
 def test_main_window_select_current_only_collapses_watched_package_batch(
@@ -11136,6 +12533,8 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
         "Approval required: no\n"
         "Blocked entries: 0"
     )
+    assert main_window._plan_review_explanation_label.isHidden() is False
+    assert main_window._plan_facts_label.isHidden() is False
     assert "warning" not in main_window._plan_review_explanation_label.text().casefold()
     assert "blocked" not in main_window._plan_review_explanation_label.text().casefold()
     assert main_window._findings_box.toPlainText().startswith(review.message)
@@ -11269,6 +12668,38 @@ def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_st
     assert main_window._findings_box.toPlainText().startswith(review.message)
 
 
+def test_main_window_plan_install_blocked_review_names_missing_dependency_in_summary(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        action=BLOCKED,
+        can_install=False,
+        warnings=("Missing required dependencies: Absent.MissingFramework. Install dependencies first.",),
+        plan_warnings=(
+            "Dependency preflight found 1 missing required dependency relation(s).",
+            "Dependency: Seasonal Cute Characters (fixture.SeasonalCute) is missing required "
+            "dependency Absent.MissingFramework. Install dependency first.",
+        ),
+    )
+
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: blocked_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    main_window._on_plan_install()
+
+    explanation = main_window._plan_review_explanation_label.text()
+    assert explanation.startswith("Dependency issue:")
+    assert "Absent.MissingFramework" in explanation
+    assert "Seasonal Cute Characters" in explanation
+    assert "found 1 missing required dependency relation" not in explanation
+
+
 def test_main_window_plan_install_blocked_by_package_issues_sets_summary(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -11298,6 +12729,167 @@ def test_main_window_plan_install_blocked_by_package_issues_sets_summary(
     assert main_window._pending_install_plan is None
     assert main_window._plan_review_summary_label.text() == "Install plan: blocked by package issues."
     assert main_window._plan_review_explanation_label.text().startswith("Package issue:")
+
+
+def _missing_dependency_plan() -> SandboxInstallPlan:
+    return _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        action=BLOCKED,
+        can_install=False,
+        warnings=("Missing required dependencies: Absent.MissingFramework.",),
+        dependency_findings=(
+            DependencyPreflightFinding(
+                source="sandbox_plan",
+                state=MISSING_REQUIRED_DEPENDENCY,
+                required_by_unique_id="fixture.SeasonalCute",
+                required_by_name="Seasonal Cute Characters",
+                dependency_unique_id="Absent.MissingFramework",
+                required=True,
+            ),
+        ),
+        plan_warnings=(
+            "Dependency preflight found 1 missing required dependency relation(s).",
+            "Dependency: Seasonal Cute Characters (fixture.SeasonalCute) is missing required "
+            "dependency Absent.MissingFramework. Install dependency first.",
+        ),
+    )
+
+
+def test_main_window_blocked_install_explains_dependency_from_structured_finding(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        main_window._shell_service, "build_install_plan", lambda **_: _missing_dependency_plan()
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    main_window._on_plan_install()
+
+    explanation = main_window._plan_review_explanation_label.text()
+    assert explanation.startswith("Dependency issue:")
+    assert "Seasonal Cute Characters" in explanation
+    assert "Absent.MissingFramework" in explanation
+    # The structured finding wins over the service's English warning string.
+    assert "is missing required dependency" not in explanation
+    assert "found 1 missing required dependency relation" not in explanation
+
+
+def test_main_window_blocked_install_dependency_explanation_is_fully_portuguese(
+    tmp_path: Path,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    monkeypatch.setattr(
+        window._shell_service, "build_install_plan", lambda **_: _missing_dependency_plan()
+    )
+    monkeypatch.setattr(
+        window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    window._on_plan_install()
+
+    explanation = window._plan_review_explanation_label.text()
+    assert explanation.startswith("Problema de dependência:")
+    assert "Seasonal Cute Characters" in explanation
+    assert "Absent.MissingFramework" in explanation
+    assert "precisa de" in explanation
+    # A Portuguese prefix wrapped around an English service message was the bug.
+    assert "is missing required dependency" not in explanation
+    assert "Install dependency first" not in explanation
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_main_window_package_issue_explanation_is_localized_from_its_kind(
+    tmp_path: Path,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    window = MainWindow(
+        shell_service=service,
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+
+    blocked_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        action=BLOCKED,
+        can_install=False,
+        warnings=("Package manifest invalid.",),
+        package_findings=(
+            PackageFinding(
+                kind=INVALID_MANIFEST_PACKAGE,
+                message="Manifest is invalid",
+                related_paths=(r"C:\Packages\Sample\manifest.json",),
+            ),
+        ),
+    )
+    monkeypatch.setattr(window._shell_service, "build_install_plan", lambda **_: blocked_plan)
+    monkeypatch.setattr(
+        window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    window._on_plan_install()
+
+    explanation = window._plan_review_explanation_label.text()
+    assert explanation.startswith("Problema no pacote:")
+    assert "manifest.json" in explanation
+    # The record's English message is a fallback, not the displayed text.
+    assert "Manifest is invalid" not in explanation
+
+    window.close()
+    qapp.processEvents()
+
+
+def test_main_window_plan_install_survives_structured_package_warnings(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # plan.package_warnings holds PackageWarning records, not strings. The review
+    # summary used to call .strip() on them, which raised AttributeError for any
+    # package whose inspection produced a warning and no other warning source.
+    warning_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        action=INSTALL_NEW,
+        can_install=True,
+        package_warnings=(
+            PackageWarning(
+                code=MALFORMED_MANIFEST,
+                message="manifest.json is not valid JSON",
+                manifest_path=r"C:\Packages\Sample\Extra\manifest.json",
+            ),
+        ),
+    )
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: warning_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    main_window._on_plan_install()
+
+    explanation = main_window._plan_review_explanation_label.text()
+    assert explanation
+    assert "PackageWarning(" not in explanation
 
 
 def test_main_window_plan_install_runnable_with_warnings_sets_summary(
@@ -11585,6 +13177,8 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
         "Installation successful. Sandbox install complete: 1 target(s)."
     )
     assert main_window._findings_box.toPlainText() == "install ok"
+    assert main_window._pending_install_plan is None
+    assert main_window._run_install_button.isEnabled() is False
 
 
 def test_main_window_install_completion_patches_only_updated_row_status(
@@ -11783,7 +13377,11 @@ def test_main_window_run_install_lock_failure_keeps_dialog_concise_and_details_t
 
     assert captured["critical_args"][1:] == ("Install failed", friendly_message)
     assert main_window._status_strip_label.text() == friendly_message
-    assert main_window._findings_box.toPlainText() == friendly_message
+    assert main_window._findings_box.toPlainText() == technical_detail
+    assert main_window._pending_install_plan is None
+    assert main_window._current_inventory is None
+    assert main_window._scan_results_by_target == {}
+    assert main_window._history_preferred_tab_index == 1
 
 
 def test_main_window_successful_install_selects_new_recorded_install_for_recovery(
@@ -12190,6 +13788,80 @@ def test_main_window_inventory_type_column_shows_player_facing_row_kinds(
     assert main_window._mods_table.item(built_in_row, 5).text() == "Built-in"
     assert main_window._mods_table.item(disabled_row, 5).text() == "Not in profile"
     assert str(content_path) in main_window._mods_table.item(groceries_row, 5).toolTip()
+
+
+def test_main_window_inventory_type_column_uses_content_pack_for_not_cp_dependency(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    # Unbracketed C# mod that merely has an optional dependency on Content
+    # Patcher: must classify as a regular mod, not a content pack.
+    csharp_mod_path = real_mods_root / "LookupAnything"
+    # Unbracketed mod whose manifest actually declares ContentPackFor: must
+    # classify as a content pack even without the "[...]" folder convention.
+    declared_pack_path = real_mods_root / "PlainNamedContentPack"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Pathoschild.LookupAnything",
+                name="Lookup Anything",
+                version="1.55.0",
+                folder_path=csharp_mod_path,
+                manifest_path=csharp_mod_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=False,
+                    ),
+                ),
+            ),
+            InstalledMod(
+                unique_id="Sample.PlainNamedContentPack",
+                name="Plain Named Content Pack",
+                version="1.0.0",
+                folder_path=declared_pack_path,
+                manifest_path=declared_pack_path / "manifest.json",
+                dependencies=(
+                    ManifestDependency(
+                        unique_id="Pathoschild.ContentPatcher",
+                        required=True,
+                    ),
+                ),
+                content_pack_for="Pathoschild.ContentPatcher",
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        )
+    )
+
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    csharp_row = _find_mod_row(main_window._mods_table, "Lookup Anything")
+    declared_pack_row = _find_mod_row(main_window._mods_table, "Plain Named Content Pack")
+    assert csharp_row >= 0
+    assert declared_pack_row >= 0
+
+    assert main_window._mods_table.item(csharp_row, 5).text() == "Mod"
+    assert main_window._mods_table.item(declared_pack_row, 5).text() == "Content pack"
 
 
 def test_main_window_groups_top_level_paired_components_with_shared_update_key(
@@ -12688,10 +14360,10 @@ def test_main_window_recovery_selector_labels_are_human_readable_and_newest_firs
     main_window._refresh_install_operation_selector()
 
     assert main_window._install_history_combo.itemText(0) == (
-        "NewerPack.zip | 2026-03-13T11:30:00Z | REAL Mods"
+        "NewerPack.zip | 2026-03-13T11:30:00Z | REAL Mods | Completed"
     )
     assert main_window._install_history_combo.itemText(1) == (
-        "OlderPack.zip | 2026-03-12T09:00:00Z | Sandbox"
+        "OlderPack.zip | 2026-03-12T09:00:00Z | Sandbox | Completed"
     )
     assert main_window._selected_install_operation() is newer_operation
 
@@ -12869,6 +14541,8 @@ def test_main_window_recovery_inspect_run_behavior_remains_intact_for_filtered_v
             executed_entry_count=1,
             removed_target_paths=(Path(r"C:\Sandbox\Mods\SampleMod"),),
             restored_target_paths=tuple(),
+            retained_archive_paths=(Path(r"C:\Sandbox\Archive\SampleMod__sdvmm_archive_001"),),
+            journal_path=Path(r"C:\Sandbox\Archive\.sdvmm-recovery-visible.json"),
             destination_kind=INSTALL_TARGET_SANDBOX_MODS,
             destination_mods_path=Path(r"C:\Sandbox\Mods"),
             scan_context_path=Path(r"C:\Sandbox\Mods"),
@@ -12881,9 +14555,12 @@ def test_main_window_recovery_inspect_run_behavior_remains_intact_for_filtered_v
     main_window._install_history_filter_combo.setCurrentText("ready")
     qapp.processEvents()
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     assert main_window._run_recovery_button.isEnabled() is True
 
     main_window._on_run_selected_install_recovery()
+
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     assert execute_calls == [inspection.recovery_review]
@@ -12957,6 +14634,7 @@ def test_main_window_recovery_inspection_renders_composed_info_and_linked_histor
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     details_text = main_window._findings_box.toPlainText()
@@ -12965,12 +14643,12 @@ def test_main_window_recovery_inspection_renders_composed_info_and_linked_histor
     assert f"Install operation ID: {operation.operation_id}" in details_text
     assert "Recoverable vs non-executable: 2 recoverable / 1 non-executable now" in details_text
     assert "Archive restoration involved: yes" in details_text
-    assert "- 2026-03-13T15:00:00Z | completed | executed=1 | removed=1 | restored=0" in details_text
-    assert "- 2026-03-13T16:00:00Z | failed_partial | executed=1 | removed=1 | restored=0 | failure=Restore target already exists" in details_text
+    assert "- 2026-03-13T15:00:00Z | Completed | executed=1 | removed=1 | restored=0" in details_text
+    assert "- 2026-03-13T16:00:00Z | Incomplete (legacy record) | executed=1 | removed=1 | restored=0 | failure=Restore target already exists" in details_text
     summary_text = main_window._recovery_selection_summary_label.text()
     assert "Recovery status: blocked." in summary_text
     assert inspection.recovery_review.message in summary_text
-    assert "Latest recovery outcome: failed_partial at 2026-03-13T16:00:00Z (executed=1)." in summary_text
+    assert "Latest recovery outcome: Incomplete (legacy record) at 2026-03-13T16:00:00Z (executed=1)." in summary_text
 
 
 def test_main_window_recovery_inspection_legacy_record_shows_expected_message(
@@ -12994,6 +14672,7 @@ def test_main_window_recovery_inspection_legacy_record_shows_expected_message(
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     expected_message = (
@@ -13027,6 +14706,7 @@ def test_main_window_recovery_inspection_unknown_id_error_is_surfaced_cleanly(
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     expected_message = "Install operation ID not found: install_missing"
@@ -13072,6 +14752,11 @@ def test_main_window_allowed_recovery_inspection_enables_run_and_executes(
             executed_entry_count=2,
             removed_target_paths=(Path(r"C:\Sandbox\Mods\SampleMod"),),
             restored_target_paths=(Path(r"C:\Sandbox\Mods\ExistingMod"),),
+            retained_archive_paths=(
+                Path(r"C:\Sandbox\Archive\SampleMod__sdvmm_archive_001"),
+                Path(r"C:\Sandbox\Archive\ExistingMod__sdvmm_archive_001"),
+            ),
+            journal_path=Path(r"C:\Sandbox\Archive\.sdvmm-recovery-allowed.json"),
             destination_kind=INSTALL_TARGET_SANDBOX_MODS,
             destination_mods_path=Path(r"C:\Sandbox\Mods"),
             scan_context_path=Path(r"C:\Sandbox\Mods"),
@@ -13083,9 +14768,12 @@ def test_main_window_allowed_recovery_inspection_enables_run_and_executes(
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     assert main_window._run_recovery_button.isEnabled() is True
 
     main_window._on_run_selected_install_recovery()
+
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     assert execute_calls == [inspection.recovery_review]
@@ -13125,9 +14813,12 @@ def test_main_window_blocked_recovery_does_not_execute_and_surfaces_message(
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     assert main_window._run_recovery_button.isEnabled() is False
 
     main_window._on_run_selected_install_recovery()
+
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     assert main_window._status_strip_label.text() == inspection.recovery_review.message
@@ -13155,6 +14846,7 @@ def test_main_window_legacy_record_cannot_execute_recovery(
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_run_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     expected_message = (
@@ -13205,7 +14897,9 @@ def test_main_window_recovery_confirmation_cancel_leaves_execution_unrun(
     main_window._refresh_install_operation_selector()
     main_window._install_history_combo.setCurrentIndex(0)
     main_window._on_inspect_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     main_window._on_run_selected_install_recovery()
+    _settle_background_work(main_window, qapp)
     qapp.processEvents()
 
     assert captured["title"] == "Confirm recovery execution"
@@ -14216,13 +15910,211 @@ def test_main_window_archive_surface_uses_tighter_spacing_between_actions_and_re
     )
     archive_layout = archive_tab.layout()
     assert isinstance(archive_layout, QVBoxLayout)
-    assert archive_layout.itemAt(archive_layout.count() - 1).spacerItem() is not None
+    # The results group is the last item and carries the layout's only
+    # stretch, so it fills available space instead of leaving a dead void
+    # below it (a separate trailing spacer would compete for that space).
+    last_index = archive_layout.count() - 1
+    assert archive_layout.itemAt(last_index).widget() is archive_results_group
+    assert archive_layout.stretch(last_index) == 1
 
     results_layout = archive_results_group.layout()
     assert isinstance(results_layout, QVBoxLayout)
     margins = results_layout.contentsMargins()
     assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (10, 10, 10, 10)
     assert results_layout.spacing() == 6
+
+
+def test_main_window_compare_results_group_hides_when_empty_and_fills_when_populated(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    main_window._context_tabs.setCurrentWidget(main_window._compare_page)
+    qapp.processEvents()
+    compare_tab = main_window.findChild(QWidget, "compare_workspace_body")
+    layout = compare_tab.layout()
+    assert isinstance(layout, QVBoxLayout)
+
+    # Empty state: hidden, and the controls above it are capped so leftover
+    # space collects at the bottom (a low-weight trailing stretch) instead of
+    # Qt centering the compact controls in the middle of the page.
+    assert main_window._compare_results_group.isVisible() is False
+    results_index = None
+    for index in range(layout.count()):
+        if layout.itemAt(index).widget() is main_window._compare_results_group:
+            results_index = index
+            break
+    assert results_index is not None
+    assert layout.stretch(results_index) == 20
+    assert layout.itemAt(layout.count() - 1).spacerItem() is not None
+    assert layout.stretch(layout.count() - 1) == 1
+
+    real_path = Path(r"C:\Game\Mods\RealOnly")
+    real_mod = InstalledMod(
+        unique_id="Sample.RealOnly",
+        name="Real Only",
+        version="1.0.0",
+        folder_path=real_path,
+        manifest_path=real_path / "manifest.json",
+        dependencies=tuple(),
+    )
+    result = ModsCompareResult(
+        real_mods_path=Path(r"C:\Game\Mods"),
+        sandbox_mods_path=Path(r"C:\Sandbox\Mods"),
+        real_inventory=_mods_inventory(real_mod),
+        sandbox_inventory=_mods_inventory(),
+        entries=(
+            ModsCompareEntry(
+                match_key="Sample.RealOnly",
+                unique_id="Sample.RealOnly",
+                name="Real Only",
+                state="only_in_real",
+                real_mod=real_mod,
+                sandbox_mod=None,
+            ),
+        ),
+    )
+    main_window._current_mods_compare_result = result
+    main_window._render_mods_compare_result(result)
+    qapp.processEvents()
+
+    assert main_window._compare_results_group.isVisible() is True
+    assert main_window._compare_results_table.isVisible() is True
+
+    main_window._clear_mods_compare_result()
+    qapp.processEvents()
+
+    assert main_window._compare_results_group.isVisible() is False
+    assert main_window._compare_results_table.isVisible() is False
+
+
+def test_main_window_compare_controls_are_height_capped_so_they_never_stretch(
+    main_window: MainWindow,
+) -> None:
+    # These sit above the results group; if they were allowed to grow, an
+    # empty compare (results group hidden) would leave them stretched and
+    # vertically centered instead of pinned compactly to the top.
+    actions_widget = main_window._compare_real_vs_sandbox_button.parentWidget()
+    assert actions_widget.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+    assert (
+        main_window._compare_summary_label.sizePolicy().verticalPolicy()
+        == QSizePolicy.Policy.Maximum
+    )
+
+
+def test_main_window_discovery_results_group_receives_the_stretch_not_the_search_group(
+    main_window: MainWindow,
+) -> None:
+    surface = main_window._discovery_surface
+    layout = surface.layout()
+    assert isinstance(layout, QVBoxLayout)
+
+    search_index = None
+    results_index = None
+    for index in range(layout.count()):
+        widget = layout.itemAt(index).widget()
+        if widget is surface.search_group:
+            search_index = index
+        elif widget is surface.results_group:
+            results_index = index
+    assert search_index is not None
+    assert results_index is not None
+    assert layout.stretch(search_index) == 0
+    assert layout.stretch(results_index) == 20
+    assert surface.search_group.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+    assert surface.intro_label.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+
+    # With the results panel hidden it is the only stretchable item left, so the
+    # page stays pinned to the top instead of Qt spreading the controls out.
+    last_index = layout.count() - 1
+    assert layout.itemAt(last_index).spacerItem() is not None
+    assert layout.stretch(last_index) == 1
+
+
+def test_main_window_discovery_empty_state_stays_pinned_to_the_top(
+    main_window: MainWindow,
+) -> None:
+    results_layout = main_window._discovery_surface.results_group.layout()
+    assert isinstance(results_layout, QVBoxLayout)
+
+    table_index = None
+    for index in range(results_layout.count()):
+        if results_layout.itemAt(index).widget() is main_window._discovery_table:
+            table_index = index
+    assert table_index is not None
+
+    last_index = results_layout.count() - 1
+    # The table dominates while visible; the low-weight trailing stretch is the
+    # only stretchable item left when it is hidden, so the guidance and filter
+    # stay at the top instead of being centred in an empty panel.
+    assert results_layout.stretch(table_index) == 20
+    assert results_layout.itemAt(last_index).spacerItem() is not None
+    assert results_layout.stretch(last_index) == 1
+    assert (
+        main_window._discovery_results_state_label.sizePolicy().verticalPolicy()
+        == QSizePolicy.Policy.Maximum
+    )
+
+
+def test_main_window_discovery_results_panel_hidden_until_a_search_runs(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    discovery_page = main_window.findChild(QWidget, "discovery_workspace_page")
+    assert discovery_page is not None
+    main_window._context_tabs.setCurrentWidget(discovery_page)
+    qapp.processEvents()
+
+    main_window._current_discovery_result = None
+    main_window._refresh_discovery_workspace_state()
+    qapp.processEvents()
+    assert main_window._discovery_surface.results_group.isVisible() is False
+
+    # A search that finds nothing must still show the panel, because that
+    # outcome is reported inside it.
+    main_window._current_discovery_result = ModDiscoveryResult(
+        query="nothing matches this",
+        provider=DISCOVERY_SOURCE_NEXUS,
+        results=tuple(),
+    )
+    main_window._refresh_discovery_workspace_state()
+    qapp.processEvents()
+    assert main_window._discovery_surface.results_group.isVisible() is True
+
+
+def test_main_window_discovery_table_hides_until_there_are_results(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    main_window._context_tabs.setCurrentWidget(main_window._discovery_page)
+    qapp.processEvents()
+    assert main_window._discovery_table.isVisible() is False
+
+    result = ModDiscoveryResult(
+        query="automate",
+        provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+        results=(
+            ModDiscoveryEntry(
+                name="Automate",
+                unique_id="Sample.Automate",
+                author="Pathoschild",
+                provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+                source_provider=DISCOVERY_SOURCE_GITHUB,
+                source_page_url="https://example.test/automate",
+                compatibility_state=COMPATIBLE,
+                compatibility_status="Compatible",
+            ),
+        ),
+    )
+    main_window._render_discovery_results(result, tuple())
+    qapp.processEvents()
+
+    assert main_window._discovery_table.isVisible() is True
+
+    main_window._discovery_table.setRowCount(0)
+    main_window._refresh_discovery_workspace_state()
+    qapp.processEvents()
+
+    assert main_window._discovery_table.isVisible() is False
 
 
 def test_main_window_archive_buttons_toggle_with_row_selection(
@@ -14304,7 +16196,8 @@ def test_main_window_archive_cleanup_button_and_retention_column_follow_candidat
     assert main_window._archive_table.columnCount() == 7
     assert main_window._archive_table.item(0, 6).text() == "Keep latest (1/4)"
     assert main_window._archive_table.item(3, 6).text() == "Cleanup candidate (4/4)"
-    assert "exceed retention" in main_window._archive_state_hint_label.text()
+    # One candidate, so the copy is singular: "1 older archived copy exceeds ...".
+    assert "1 older archived copy exceeds retention" in main_window._archive_state_hint_label.text()
 
 
 def test_main_window_archive_cleanup_runs_explicit_retention_flow(
@@ -15676,7 +17569,7 @@ def test_main_window_manual_overwrite_choice_still_applies_after_stage_update(
     assert captured["allow_overwrite"] is True
 
 
-def test_main_window_batch_open_install_inherits_compare_target_install_destination(
+def test_main_window_batch_open_install_preserves_current_install_destination(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
     qapp: QApplication,
@@ -15710,7 +17603,7 @@ def test_main_window_batch_open_install_inherits_compare_target_install_destinat
     main_window._on_plan_selected_intake()
     qapp.processEvents()
 
-    assert main_window._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert main_window._current_install_target() == INSTALL_TARGET_SANDBOX_MODS
     assert main_window._context_tabs.currentWidget() == main_window._plan_install_tab
     assert main_window._staged_package_label.text() == (
         "2 packages staged for install: Alpha.zip, Beta.zip"
@@ -15917,6 +17810,7 @@ def _sandbox_install_plan(
     package_findings: tuple[PackageFinding, ...] = tuple(),
     package_warnings: tuple[object, ...] = tuple(),
     plan_warnings: tuple[str, ...] = tuple(),
+    dependency_findings: tuple[DependencyPreflightFinding, ...] = tuple(),
 ) -> SandboxInstallPlan:
     destination_mods_path = (
         Path(r"C:\Game\Mods")
@@ -15950,6 +17844,7 @@ def _sandbox_install_plan(
         package_findings=package_findings,
         package_warnings=package_warnings,
         plan_warnings=plan_warnings,
+        dependency_findings=dependency_findings,
         destination_kind=destination_kind,
     )
 
@@ -16191,3 +18086,335 @@ def _mods_inventory(*mods: InstalledMod) -> ModsInventory:
         scan_entry_findings=tuple(),
         ignored_entries=tuple(),
     )
+
+
+def test_normalized_path_text_is_cached_until_folders_may_have_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sdvmm.ui.main_window import _clear_normalized_path_text_cache, _normalized_path_text
+
+    _clear_normalized_path_text_cache()
+    resolved_calls: list[str] = []
+    original_resolve = Path.resolve
+
+    def counting_resolve(self: Path, strict: bool = False) -> Path:
+        resolved_calls.append(str(self))
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", counting_resolve)
+    folder = tmp_path / "Mods" / "AlphaMod"
+    folder.mkdir(parents=True)
+
+    first = _normalized_path_text(str(folder))
+    assert _normalized_path_text(str(folder)) == first
+    assert len(resolved_calls) == 1, "repeated lookups must not ask the filesystem again"
+
+    # Resolution follows links, so anything that may move folders drops the cache.
+    _clear_normalized_path_text_cache()
+    assert _normalized_path_text(str(folder)) == first
+    assert len(resolved_calls) == 2
+
+
+def test_finishing_background_work_drops_resolved_path_cache(main_window: MainWindow) -> None:
+    from sdvmm.ui import main_window as main_window_module
+
+    main_window_module._normalized_path_text(str(Path.cwd()))
+    assert main_window_module._NORMALIZED_PATH_TEXT_CACHE
+    main_window._active_operation_name = "Install execution"
+    main_window._finish_background_operation("Install execution", success=True)
+    assert main_window_module._NORMALIZED_PATH_TEXT_CACHE == {}
+
+
+def test_library_grouping_compares_only_candidate_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard against re-introducing an all-pairs scan over the whole library."""
+    from sdvmm.ui import main_window as main_window_module
+
+    comparisons: list[int] = []
+    original_link = main_window_module._inventory_rows_link
+
+    def counting_link(left, right):
+        comparisons.append(1)
+        return original_link(left, right)
+
+    monkeypatch.setattr(main_window_module, "_inventory_rows_link", counting_link)
+    root = Path(r"C:\Synthetic\Mods")
+    mod_count = 400
+    mods = tuple(
+        replace(
+            _installed_mod_for_update_ui(
+                name=f"Synthetic Mod {index:04d}",
+                unique_id=f"Syn.Mod{index:04d}",
+                folder_name=f"SyntheticMod{index:04d}",
+            ),
+            folder_path=root / f"SyntheticMod{index:04d}",
+        )
+        for index in range(mod_count)
+    )
+    rows = main_window_module._build_inventory_row_entries(
+        inventory=_mods_inventory(*mods), roots=(root,),
+    )
+
+    assert len(rows) == mod_count
+    # Unrelated mods share no family prefix or dependency, so nothing qualifies.
+    assert len(comparisons) <= mod_count, (
+        f"{len(comparisons)} comparisons for {mod_count} unrelated mods suggests an all-pairs scan"
+    )
+
+def test_collapsed_nav_rail_centres_its_brand_and_toggle(
+    main_window: MainWindow, qapp: QApplication,
+) -> None:
+    rail = main_window._workspace_nav_rail
+    icon = main_window._workspace_nav_brand_icon_label
+    toggle = main_window._workspace_nav_toggle_button
+    main_window._workspace_nav_manual_override = True
+    main_window._workspace_nav_collapsed = True
+    main_window._apply_workspace_nav_state()
+    qapp.processEvents()
+    qapp.processEvents()
+
+    workspace_button = next(iter(main_window._workspace_nav_buttons.values()))
+    centres = {
+        name: widget.mapTo(rail, QPoint(0, 0)).x() + widget.width() / 2
+        for name, widget in (
+            ("brand icon", icon), ("toggle", toggle), ("workspace button", workspace_button),
+        )
+    }
+    for name, centre in centres.items():
+        assert abs(centre - rail.width() / 2) <= 1, f"{name} sits off the collapsed rail centre"
+    # Stacked controls must also fit the rail instead of overflowing it.
+    for name, widget in (("brand icon", icon), ("toggle", toggle)):
+        left = widget.mapTo(rail, QPoint(0, 0)).x()
+        assert left >= 0 and left + widget.width() <= rail.width(), name
+
+
+def _theme_contrast(first: str, second: str) -> float:
+    from PySide6.QtGui import QColor
+
+    return _contrast_ratio(QColor(first), QColor(second))
+
+
+def test_controls_read_as_clickable_against_their_surfaces() -> None:
+    """Buttons must not blend into the panel, and hover must be obvious."""
+    panel = STITCH_TOKENS["surface_raised"]
+    canvas = STITCH_TOKENS["surface_canvas"]
+    fill = STITCH_TOKENS["control_fill"]
+    hover = STITCH_TOKENS["control_fill_hover"]
+    border = STITCH_TOKENS["control_border"]
+    hover_border = STITCH_TOKENS["control_border_hover"]
+
+    # A visible boundary: WCAG 1.4.11 asks 3:1 for a control's edge.
+    assert _theme_contrast(border, panel) >= 3.0
+    assert _theme_contrast(border, canvas) >= 3.0
+    # A fill that is distinct from the surface behind it, and from disabled.
+    assert _theme_contrast(fill, panel) >= 1.35
+    assert _theme_contrast(fill, STITCH_TOKENS["surface_raised"]) >= 1.35
+    # Hover has to change more than a hair.
+    assert _theme_contrast(hover, fill) >= 1.3
+    assert _theme_contrast(hover_border, hover) >= 3.0
+    # Text stays comfortably readable on both states.
+    assert _theme_contrast(STITCH_TOKENS["text_primary"], fill) >= 4.5
+    assert _theme_contrast(STITCH_TOKENS["text_primary"], hover) >= 4.5
+
+
+@pytest.mark.parametrize("role", ["secondary", "utility", "danger", "primary"])
+def test_enabled_and_disabled_buttons_render_differently(
+    qapp: QApplication, role: str,
+) -> None:
+    from collections import Counter
+
+    from PySide6.QtGui import QColor
+
+    panel = QGroupBox("Panel")
+    panel.setStyleSheet(build_stitch_compact_widgets_stylesheet())
+    layout = QVBoxLayout(panel)
+    rendered: dict[bool, str] = {}
+    for enabled in (True, False):
+        button = QPushButton(f"{role} action")
+        button.setProperty("buttonRole", role)
+        button.setEnabled(enabled)
+        layout.addWidget(button)
+        rendered[enabled] = button
+    panel.resize(280, 140)
+    panel.show()
+    qapp.processEvents()
+
+    def dominant_fill(widget: QPushButton) -> str:
+        image = widget.grab().toImage()
+        counts = Counter(
+            image.pixelColor(x, y).name()
+            for x in range(6, max(widget.width() - 6, 7))
+            for y in range(4, max(widget.height() - 4, 5))
+        )
+        return counts.most_common(1)[0][0]
+
+    enabled_fill = dominant_fill(rendered[True])
+    disabled_fill = dominant_fill(rendered[False])
+    assert enabled_fill != disabled_fill
+    assert _contrast_ratio(QColor(enabled_fill), QColor(disabled_fill)) >= 1.2, (
+        f"{role} enabled and disabled look alike: {enabled_fill} vs {disabled_fill}"
+    )
+    panel.close()
+
+def test_recovery_inspection_runs_in_the_background_and_gates_its_buttons(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    operation = _install_operation_record_for_ui(operation_id="install_background")
+    inspection = _install_recovery_inspection_for_ui(operation, allowed=True)
+    release = threading.Event()
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_install_operation_history",
+        lambda: SimpleNamespace(operations=(operation,)),
+    )
+
+    def slow_inspect(operation_id: str) -> object:
+        release.wait(10)
+        return inspection
+
+    monkeypatch.setattr(
+        main_window._shell_service, "inspect_install_recovery_by_operation_id", slow_inspect,
+    )
+    main_window._refresh_install_operation_selector()
+    main_window._install_history_combo.setCurrentIndex(0)
+
+    main_window._on_inspect_selected_install_recovery()
+
+    # The window keeps working while the mod folders are being checked.
+    assert main_window._active_operation_name == main_window._tr("recovery.operation.inspect")
+    assert main_window._inspect_recovery_button.isEnabled() is False
+    assert main_window._run_recovery_button.isEnabled() is False
+    qapp.processEvents()
+
+    release.set()
+    _settle_background_work(main_window, qapp)
+    assert main_window._inspect_recovery_button.isEnabled() is True
+    assert main_window._run_recovery_button.isEnabled() is True
+
+    # Applying recovery moves real folders, so it must not block the window either.
+    execution_release = threading.Event()
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(main_window, "_show_localized_question_dialog", lambda **kwargs: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(main_window, "_show_inventory_for_context", lambda **kwargs: None)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_install_recovery_review",
+        lambda review: (execution_release.wait(10), SimpleNamespace(
+            review=inspection.recovery_review,
+            executed_entry_count=1,
+            removed_target_paths=(),
+            restored_target_paths=(),
+            retained_archive_paths=(),
+            journal_path=Path(r"C:\Sandbox\Archive\.sdvmm-recovery.json"),
+            destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+            destination_mods_path=Path(r"C:\Sandbox\Mods"),
+            scan_context_path=Path(r"C:\Sandbox\Mods"),
+            inventory=object(),
+        ))[1],
+    )
+    main_window._on_run_selected_install_recovery()
+    assert main_window._active_operation_name == main_window._tr("recovery.operation.execute")
+    qapp.processEvents()
+    execution_release.set()
+    _settle_background_work(main_window, qapp)
+
+
+def test_recovery_buttons_stay_disabled_while_other_background_work_runs(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation = _install_operation_record_for_ui(operation_id="install_busy")
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_install_operation_history",
+        lambda: SimpleNamespace(operations=(operation,)),
+    )
+    main_window._refresh_install_operation_selector()
+    main_window._install_history_combo.setCurrentIndex(0)
+    assert main_window._inspect_recovery_button.isEnabled() is True
+
+    # Opening History refreshes archives; inspecting must not be offered then.
+    main_window._set_background_actions_enabled(False)
+    main_window._active_operation_name = "Archive refresh"
+    main_window._refresh_recovery_action_state()
+    assert main_window._inspect_recovery_button.isEnabled() is False
+    assert main_window._run_recovery_button.isEnabled() is False
+
+    main_window._active_operation_name = None
+    main_window._set_background_actions_enabled(True)
+    assert main_window._inspect_recovery_button.isEnabled() is True
+
+
+def test_recovery_inspection_result_is_dropped_when_the_selection_moved_on(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _install_operation_record_for_ui(operation_id="install_first")
+    second = _install_operation_record_for_ui(
+        operation_id="install_second", timestamp="2026-03-14T12:00:00Z",
+    )
+    inspection = _install_recovery_inspection_for_ui(first, allowed=True)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_install_operation_history",
+        lambda: SimpleNamespace(operations=(first, second)),
+    )
+    main_window._refresh_install_operation_selector()
+
+    # A result for a different install must not be applied to the one on screen.
+    selected = main_window._selected_install_operation()
+    assert selected is not None
+    stale_operation_id = "install_first" if selected.operation_id != "install_first" else "install_second"
+    main_window._on_inspect_selected_install_recovery_completed(
+        inspection, operation_id=stale_operation_id,
+    )
+
+    assert main_window._current_recovery_inspection is None
+    assert main_window._run_recovery_button.isEnabled() is False
+    assert main_window._status_strip_label.text() == main_window._tr(
+        "recovery.status.selection_changed"
+    )
+
+def test_failure_dialogs_and_progress_follow_the_interface_language(
+    tmp_path: Path, qapp: QApplication, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Portuguese owner must not meet English when something fails."""
+    window = MainWindow(
+        shell_service=AppShellService(state_file=tmp_path / "app-state.json"),
+        localizer=UiLocalizer.from_preference("pt-BR"),
+    )
+    _show_test_window(window, qapp)
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda _parent, title, text, *args, **kwargs: shown.append((str(title), str(text))),
+    )
+
+    def failing_scan(**_kwargs: object) -> object:
+        raise AppShellError("Mods directory is required")
+
+    monkeypatch.setattr(window._shell_service, "scan_with_target", failing_scan)
+    try:
+        window._scan_button.click()
+        # The progress line is Portuguese while the work runs.
+        assert window._status_strip_label.text() == "Verificando a pasta de Mods selecionada..."
+        assert window._scan_button.text() == "Verificando..."
+        _settle_background_work(window, qapp)
+
+        assert shown, "a failed scan must report itself"
+        title, _text = shown[-1]
+        assert title == "Falha na verificação de mods"
+        assert window._operation_state_label.text().startswith("Última")
+        assert "Verificação de mods" in window._operation_state_label.text()
+    finally:
+        window.close()
+        qapp.processEvents()

@@ -174,7 +174,7 @@ class SetupConfigurationSurface(QScrollArea):
 
         setup_group = QGroupBox(localizer.text("setup.folders"))
         setup_group.setObjectName("setup_surface_group")
-        setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         setup_layout = QVBoxLayout(setup_group)
         setup_layout.setContentsMargins(14, 14, 14, 14)
         setup_layout.setSpacing(12)
@@ -213,7 +213,7 @@ class SetupConfigurationSurface(QScrollArea):
 
         advanced_group = QGroupBox(localizer.text("setup.extras"))
         advanced_group.setObjectName("setup_advanced_group")
-        advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setContentsMargins(14, 14, 14, 14)
         advanced_layout.setSpacing(12)
@@ -320,14 +320,17 @@ class SetupConfigurationSurface(QScrollArea):
             if button is not None
         )
         for index, button in enumerate(action_buttons):
-            setup_actions_layout.addWidget(button, index // 2, index % 2)
-        for column in range(2):
-            setup_actions_layout.setColumnStretch(column, 1)
+            setup_actions_layout.addWidget(button, index, 0)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Fixed,
+            )
+        setup_actions_layout.setColumnStretch(0, 1)
         self._compact_action_grids.append((setup_actions_layout, action_buttons))
 
         backup_group = QGroupBox(localizer.text("setup.backup"))
         backup_group.setObjectName("setup_backup_restore_group")
-        backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         backup_layout = QVBoxLayout(backup_group)
         backup_layout.setContentsMargins(14, 14, 14, 14)
         backup_layout.setSpacing(10)
@@ -344,7 +347,7 @@ class SetupConfigurationSurface(QScrollArea):
 
         managed_group = QGroupBox(localizer.text("setup.managed"))
         managed_group.setObjectName("setup_managed_folders_group")
-        managed_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        managed_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         managed_layout = QVBoxLayout(managed_group)
         managed_layout.setContentsMargins(14, 14, 14, 14)
         managed_layout.setSpacing(10)
@@ -406,7 +409,7 @@ class SetupConfigurationSurface(QScrollArea):
         setup_output_group.setObjectName("setup_output_group")
         setup_output_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
         )
         setup_output_layout = QVBoxLayout(setup_output_group)
         setup_output_layout.setContentsMargins(14, 14, 14, 14)
@@ -468,6 +471,9 @@ class SetupConfigurationSurface(QScrollArea):
         secondary_panel_layout.addWidget(backup_group)
         secondary_panel_layout.addWidget(managed_group)
         secondary_panel_layout.addWidget(setup_output_group)
+        # Word-wrapped copy needs its height-for-width, which a Maximum policy
+        # caps at the unwrapped size hint; keep spare height below the groups.
+        secondary_panel_layout.addStretch(1)
 
         secondary_layout.addWidget(secondary_panel)
         secondary_layout.addStretch(1)
@@ -568,13 +574,13 @@ class SetupConfigurationSurface(QScrollArea):
                 if widget is not None:
                     widget.setParent(None)
 
-            columns = 1 if compact else 2
+            columns = 1
             for index, button in enumerate(buttons):
                 row = index // columns
                 column = index % columns
                 grid_layout.addWidget(button, row, column)
                 button.setSizePolicy(
-                    QSizePolicy.Policy.Expanding if compact else QSizePolicy.Policy.Preferred,
+                    QSizePolicy.Policy.Expanding,
                     QSizePolicy.Policy.Fixed,
                 )
             grid_layout.setHorizontalSpacing(8 if compact else 9)

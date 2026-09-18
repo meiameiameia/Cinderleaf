@@ -98,9 +98,8 @@ class ArchiveTabSurface(QWidget):
         archive_results_layout.setContentsMargins(10, 10, 10, 10)
         archive_results_layout.setSpacing(6)
         archive_results_layout.addWidget(archive_table)
-        layout.addWidget(archive_results_group)
+        layout.addWidget(archive_results_group, 1)
         archive_results_group.setVisible(False)
-        layout.addStretch(1)
 
         self.controls_group = archive_controls_group
         self.empty_state_label = archive_empty_state_label
