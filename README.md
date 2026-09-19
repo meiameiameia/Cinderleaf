@@ -129,7 +129,8 @@ That means dependency problems show up earlier, during review, instead of only a
 
 ## Screenshots
 
-These screenshots reflect the current `1.5.0` app surface.
+These screenshots reflect the `1.6.0` app surface built from source. The latest
+packaged public release is still `1.5.0`.
 
 ![Setup workspace](media/nexus-screenshots/00-setup-workspace.png)
 
