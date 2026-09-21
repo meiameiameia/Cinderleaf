@@ -91,21 +91,30 @@ jobs:
       - name: Build Windows portable package
         run: python scripts/build_windows_portable.py
 
-      - name: Archive Windows portable package
+      - name: Verify Windows portable archive checksum
         shell: pwsh
         run: |
-          $distFolder = "dist/cinderleaf-${{ steps.project_meta.outputs.version }}-windows-portable"
           $zipPath = "dist/${{ steps.project_meta.outputs.zip_name }}"
-          if (Test-Path $zipPath) {
-            Remove-Item -Force $zipPath
+          $checksumPath = "$zipPath.sha256"
+          if (-not (Test-Path -LiteralPath $zipPath)) {
+            throw "Portable archive was not created: $zipPath"
           }
-          Compress-Archive -Path $distFolder -DestinationPath $zipPath
+          if (-not (Test-Path -LiteralPath $checksumPath)) {
+            throw "Portable checksum was not created: $checksumPath"
+          }
+          $expected = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Portable checksum mismatch: expected $expected, got $actual"
+          }
 
       - name: Upload Windows portable artifact
         uses: actions/upload-artifact@v4
         with:
           name: cinderleaf-windows-portable
-          path: dist/${{ steps.project_meta.outputs.zip_name }}
+          path: |
+            dist/${{ steps.project_meta.outputs.zip_name }}
+            dist/${{ steps.project_meta.outputs.zip_name }}.sha256
           if-no-files-found: error
 
   publish-github-release:
@@ -126,4 +135,6 @@ jobs:
           tag_name: ${{ needs.build-windows-portable.outputs.release_ref }}
           name: Cinderleaf ${{ needs.build-windows-portable.outputs.release_ref }}
           generate_release_notes: true
-          files: release-artifacts/${{ needs.build-windows-portable.outputs.zip_name }}
+          files: |
+            release-artifacts/${{ needs.build-windows-portable.outputs.zip_name }}
+            release-artifacts/${{ needs.build-windows-portable.outputs.zip_name }}.sha256

@@ -165,7 +165,7 @@ from sdvmm.services.sandbox_installer import (
     remove_mod_to_archive as remove_mod_to_archive_service,
 )
 from sdvmm.services.install_integrity import (
-    paths_overlap, validate_integrity, InstallIntegrityError, snapshot_manifest_context,
+    capture_integrity, paths_overlap, validate_integrity, InstallIntegrityError, snapshot_manifest_context,
     snapshot_path,
 )
 from sdvmm.services.install_recovery import (
@@ -2515,6 +2515,7 @@ class AppShellService:
             destination_kind=destination_kind,
             target_override_paths=target_override_paths or None,
         )
+        plan = _seal_mod_folder_copy_plan(plan)
         review = self.review_install_execution(plan)
         return CompareModsSyncPreview(
             direction=direction,
@@ -2534,6 +2535,14 @@ class AppShellService:
         if not preview.review.allowed:
             raise AppShellError(preview.review.message)
 
+        try:
+            validate_integrity(preview.plan)
+        except (InstallIntegrityError, OSError) as exc:
+            raise AppShellError(
+                get_active_ui_localizer().text("install.integrity.changed"),
+                detail_message=str(exc),
+            ) from exc
+
         target_mods_path = (
             preview.sandbox_mods_path
             if preview.direction == "real_to_sandbox"
@@ -2549,18 +2558,35 @@ class AppShellService:
             if preview.direction == "real_to_sandbox"
             else "REAL Mods"
         )
-        _ensure_archive_root_service(archive_path)
         staging_root = target_mods_path / f".sdvmm-compare-sync-stage-{uuid4().hex[:10]}"
         applied_entries: list[SandboxInstallPlanEntry] = []
         installed_targets: list[Path] = []
         archived_targets: list[Path] = []
         replaced_targets: list[Path] = []
+        installed_target_digests: dict[Path, str] = {}
+        archived_target_digests: dict[Path, str] = {}
+        operation_id = _new_operation_id("compare-sync")
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        operation_recorded = False
         try:
             staging_root.mkdir(parents=False, exist_ok=False)
 
             for entry in preview.plan.entries:
                 staged_target = staging_root / entry.target_path.name
                 shutil.copytree(Path(entry.source_root_path), staged_target)
+
+            _validate_staged_mod_folder_copies(preview.plan, staging_root)
+            validate_integrity(preview.plan)
+            _ensure_archive_root_service(archive_path)
+            self._record_install_operation_state(
+                plan=preview.plan,
+                installed_targets=tuple(),
+                archived_targets=tuple(),
+                operation_id=operation_id,
+                timestamp=timestamp,
+                outcome_status="in_progress",
+            )
+            operation_recorded = True
 
             for entry in preview.plan.entries:
                 staged_target = staging_root / entry.target_path.name
@@ -2574,6 +2600,19 @@ class AppShellService:
                         ) from exc
                     installed_targets.append(entry.target_path)
                     applied_entries.append(entry)
+                    installed_target_digests[entry.target_path] = (
+                        snapshot_path(entry.target_path).digest or ""
+                    )
+                    self._record_install_operation_state(
+                        plan=preview.plan,
+                        installed_targets=tuple(installed_targets),
+                        archived_targets=tuple(archived_targets),
+                        operation_id=operation_id,
+                        timestamp=timestamp,
+                        outcome_status="in_progress",
+                        installed_target_digests=tuple(installed_target_digests.items()),
+                        archived_target_digests=tuple(archived_target_digests.items()),
+                    )
                     continue
 
                 if entry.action == OVERWRITE_WITH_ARCHIVE:
@@ -2594,6 +2633,22 @@ class AppShellService:
                     archived_targets.append(entry.archive_path)
                     replaced_targets.append(entry.target_path)
                     applied_entries.append(entry)
+                    installed_target_digests[entry.target_path] = (
+                        snapshot_path(entry.target_path).digest or ""
+                    )
+                    archived_target_digests[entry.archive_path] = (
+                        snapshot_path(entry.archive_path).digest or ""
+                    )
+                    self._record_install_operation_state(
+                        plan=preview.plan,
+                        installed_targets=tuple(installed_targets),
+                        archived_targets=tuple(archived_targets),
+                        operation_id=operation_id,
+                        timestamp=timestamp,
+                        outcome_status="in_progress",
+                        installed_target_digests=tuple(installed_target_digests.items()),
+                        archived_target_digests=tuple(archived_target_digests.items()),
+                    )
                     continue
 
                 raise AppShellError(
@@ -2621,18 +2676,50 @@ class AppShellService:
                 inventory=target_inventory,
                 destination_kind=preview.plan.destination_kind,
             )
-            self._record_completed_install_operation(plan=preview.plan, result=result)
-        except (AppShellError, SandboxInstallError, OSError) as exc:
+            self._record_install_operation_state(
+                plan=preview.plan,
+                installed_targets=result.installed_targets,
+                archived_targets=result.archived_targets,
+                operation_id=operation_id,
+                timestamp=timestamp,
+                outcome_status="completed",
+                installed_target_digests=tuple(installed_target_digests.items()),
+                archived_target_digests=tuple(archived_target_digests.items()),
+            )
+        except (AppShellError, SandboxInstallError, InstallIntegrityError, OSError) as exc:
             if not applied_entries:
+                if operation_recorded:
+                    self._record_install_operation_state(
+                        plan=preview.plan,
+                        installed_targets=tuple(),
+                        archived_targets=tuple(),
+                        operation_id=operation_id,
+                        timestamp=timestamp,
+                        outcome_status="rolled_back",
+                        failure_message=str(exc),
+                    )
                 raise _normalize_compare_sync_error(exc) from exc
 
-            rollback_errors = self._rollback_compare_mods_sync_entries(tuple(applied_entries))
+            rollback_errors = self._rollback_compare_mods_sync_entries(
+                tuple(applied_entries),
+                installed_target_digests=installed_target_digests,
+                archived_target_digests=archived_target_digests,
+            )
             (
                 remaining_entries,
                 remaining_installed_targets,
                 remaining_archived_targets,
             ) = self._remaining_compare_mods_sync_state(tuple(applied_entries))
             if not remaining_entries:
+                self._record_install_operation_state(
+                    plan=preview.plan,
+                    installed_targets=tuple(),
+                    archived_targets=tuple(),
+                    operation_id=operation_id,
+                    timestamp=timestamp,
+                    outcome_status="rolled_back",
+                    failure_message=str(exc),
+                )
                 raise AppShellError(
                     f"{_normalize_compare_sync_error(exc)} "
                     "Compare sync rollback restored the prior inventory state."
@@ -2653,6 +2740,20 @@ class AppShellService:
                     plan=partial_plan,
                     installed_targets=remaining_installed_targets,
                     archived_targets=remaining_archived_targets,
+                    operation_id=operation_id,
+                    timestamp=timestamp,
+                    outcome_status="partial",
+                    failure_message=str(exc),
+                    installed_target_digests=tuple(
+                        (path, digest)
+                        for path, digest in installed_target_digests.items()
+                        if path in remaining_installed_targets
+                    ),
+                    archived_target_digests=tuple(
+                        (path, digest)
+                        for path, digest in archived_target_digests.items()
+                        if path in remaining_archived_targets
+                    ),
                 )
             except AppShellError as record_exc:
                 partial_record_error = record_exc
@@ -4082,6 +4183,7 @@ class AppShellService:
             source_paths=source_paths,
             source_inventory=source_inventory,
         )
+        plan = _seal_mod_folder_copy_plan(plan)
         review = self.review_install_execution(plan)
         return SandboxModsPromotionPreview(
             plan=plan,
@@ -4117,7 +4219,14 @@ class AppShellService:
         if not preview.review.allowed:
             raise AppShellError(preview.review.message)
 
-        _ensure_archive_root_service(preview.archive_path)
+        try:
+            validate_integrity(preview.plan)
+        except (InstallIntegrityError, OSError) as exc:
+            raise AppShellError(
+                get_active_ui_localizer().text("install.integrity.changed"),
+                detail_message=str(exc),
+            ) from exc
+
         staging_root = (
             preview.real_mods_path / f".sdvmm-promotion-stage-{uuid4().hex[:10]}"
         )
@@ -4125,12 +4234,30 @@ class AppShellService:
         installed_targets: list[Path] = []
         archived_targets: list[Path] = []
         replaced_targets: list[Path] = []
+        installed_target_digests: dict[Path, str] = {}
+        archived_target_digests: dict[Path, str] = {}
+        operation_id = _new_operation_id("promotion")
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        operation_recorded = False
         try:
             staging_root.mkdir(parents=False, exist_ok=False)
 
             for entry in preview.plan.entries:
                 staged_target = staging_root / entry.target_path.name
                 shutil.copytree(Path(entry.source_root_path), staged_target)
+
+            _validate_staged_mod_folder_copies(preview.plan, staging_root)
+            validate_integrity(preview.plan)
+            _ensure_archive_root_service(preview.archive_path)
+            self._record_install_operation_state(
+                plan=preview.plan,
+                installed_targets=tuple(),
+                archived_targets=tuple(),
+                operation_id=operation_id,
+                timestamp=timestamp,
+                outcome_status="in_progress",
+            )
+            operation_recorded = True
 
             for entry in preview.plan.entries:
                 staged_target = staging_root / entry.target_path.name
@@ -4144,6 +4271,19 @@ class AppShellService:
                         ) from exc
                     installed_targets.append(entry.target_path)
                     applied_entries.append(entry)
+                    installed_target_digests[entry.target_path] = (
+                        snapshot_path(entry.target_path).digest or ""
+                    )
+                    self._record_install_operation_state(
+                        plan=preview.plan,
+                        installed_targets=tuple(installed_targets),
+                        archived_targets=tuple(archived_targets),
+                        operation_id=operation_id,
+                        timestamp=timestamp,
+                        outcome_status="in_progress",
+                        installed_target_digests=tuple(installed_target_digests.items()),
+                        archived_target_digests=tuple(archived_target_digests.items()),
+                    )
                     continue
 
                 if entry.action == OVERWRITE_WITH_ARCHIVE:
@@ -4164,6 +4304,22 @@ class AppShellService:
                     archived_targets.append(entry.archive_path)
                     replaced_targets.append(entry.target_path)
                     applied_entries.append(entry)
+                    installed_target_digests[entry.target_path] = (
+                        snapshot_path(entry.target_path).digest or ""
+                    )
+                    archived_target_digests[entry.archive_path] = (
+                        snapshot_path(entry.archive_path).digest or ""
+                    )
+                    self._record_install_operation_state(
+                        plan=preview.plan,
+                        installed_targets=tuple(installed_targets),
+                        archived_targets=tuple(archived_targets),
+                        operation_id=operation_id,
+                        timestamp=timestamp,
+                        outcome_status="in_progress",
+                        installed_target_digests=tuple(installed_target_digests.items()),
+                        archived_target_digests=tuple(archived_target_digests.items()),
+                    )
                     continue
 
                 raise AppShellError(
@@ -4185,13 +4341,34 @@ class AppShellService:
                 inventory=inventory,
                 destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
             )
-            self._record_completed_install_operation(plan=preview.plan, result=result)
-        except (AppShellError, SandboxInstallError, OSError) as exc:
+            self._record_install_operation_state(
+                plan=preview.plan,
+                installed_targets=result.installed_targets,
+                archived_targets=result.archived_targets,
+                operation_id=operation_id,
+                timestamp=timestamp,
+                outcome_status="completed",
+                installed_target_digests=tuple(installed_target_digests.items()),
+                archived_target_digests=tuple(archived_target_digests.items()),
+            )
+        except (AppShellError, SandboxInstallError, InstallIntegrityError, OSError) as exc:
             if not applied_entries:
+                if operation_recorded:
+                    self._record_install_operation_state(
+                        plan=preview.plan,
+                        installed_targets=tuple(),
+                        archived_targets=tuple(),
+                        operation_id=operation_id,
+                        timestamp=timestamp,
+                        outcome_status="rolled_back",
+                        failure_message=str(exc),
+                    )
                 raise _normalize_sandbox_promotion_error(exc) from exc
 
             rollback_errors = self._rollback_sandbox_mods_promotion_entries(
-                tuple(applied_entries)
+                tuple(applied_entries),
+                installed_target_digests=installed_target_digests,
+                archived_target_digests=archived_target_digests,
             )
             (
                 remaining_entries,
@@ -4199,6 +4376,15 @@ class AppShellService:
                 remaining_archived_targets,
             ) = self._remaining_sandbox_mods_promotion_state(tuple(applied_entries))
             if not remaining_entries:
+                self._record_install_operation_state(
+                    plan=preview.plan,
+                    installed_targets=tuple(),
+                    archived_targets=tuple(),
+                    operation_id=operation_id,
+                    timestamp=timestamp,
+                    outcome_status="rolled_back",
+                    failure_message=str(exc),
+                )
                 raise AppShellError(
                     f"{_normalize_sandbox_promotion_error(exc)} "
                     "Promotion rollback restored prior REAL Mods state."
@@ -4219,6 +4405,20 @@ class AppShellService:
                     plan=partial_plan,
                     installed_targets=remaining_installed_targets,
                     archived_targets=remaining_archived_targets,
+                    operation_id=operation_id,
+                    timestamp=timestamp,
+                    outcome_status="partial",
+                    failure_message=str(exc),
+                    installed_target_digests=tuple(
+                        (path, digest)
+                        for path, digest in installed_target_digests.items()
+                        if path in remaining_installed_targets
+                    ),
+                    archived_target_digests=tuple(
+                        (path, digest)
+                        for path, digest in archived_target_digests.items()
+                        if path in remaining_archived_targets
+                    ),
                 )
             except AppShellError as record_exc:
                 partial_record_error = record_exc
@@ -6641,11 +6841,22 @@ class AppShellService:
     def _rollback_compare_mods_sync_entries(
         self,
         entries: tuple[SandboxInstallPlanEntry, ...],
+        *,
+        installed_target_digests: dict[Path, str],
+        archived_target_digests: dict[Path, str],
     ) -> tuple[str, ...]:
         errors: list[str] = []
         for entry in reversed(entries):
             if entry.action == INSTALL_NEW:
                 if not entry.target_path.exists():
+                    continue
+                ownership_error = _copy_rollback_ownership_error(
+                    entry.target_path,
+                    installed_target_digests.get(entry.target_path),
+                    label="synced target",
+                )
+                if ownership_error is not None:
+                    errors.append(ownership_error)
                     continue
                 try:
                     _remove_path_for_promotion_rollback(entry.target_path)
@@ -6657,15 +6868,6 @@ class AppShellService:
 
             if entry.action == OVERWRITE_WITH_ARCHIVE:
                 archive_path = entry.archive_path
-                if entry.target_path.exists():
-                    try:
-                        _remove_path_for_promotion_rollback(entry.target_path)
-                    except OSError as exc:
-                        errors.append(
-                            f"could not remove replaced target {entry.target_path}: {exc}"
-                        )
-                        continue
-
                 if archive_path is None:
                     errors.append(
                         f"missing archive path for rollback of {entry.target_path}"
@@ -6677,6 +6879,31 @@ class AppShellService:
                         f"{archive_path}"
                     )
                     continue
+                archive_ownership_error = _copy_rollback_ownership_error(
+                    archive_path,
+                    archived_target_digests.get(archive_path),
+                    label="archived target",
+                )
+                if archive_ownership_error is not None:
+                    errors.append(archive_ownership_error)
+                    continue
+                if entry.target_path.exists():
+                    target_ownership_error = _copy_rollback_ownership_error(
+                        entry.target_path,
+                        installed_target_digests.get(entry.target_path),
+                        label="replacement target",
+                    )
+                    if target_ownership_error is not None:
+                        errors.append(target_ownership_error)
+                        continue
+                    try:
+                        _remove_path_for_promotion_rollback(entry.target_path)
+                    except OSError as exc:
+                        errors.append(
+                            f"could not remove replaced target {entry.target_path}: {exc}"
+                        )
+                        continue
+
                 try:
                     archive_path.rename(entry.target_path)
                 except OSError as exc:
@@ -6748,11 +6975,22 @@ class AppShellService:
     def _rollback_sandbox_mods_promotion_entries(
         self,
         entries: tuple[SandboxInstallPlanEntry, ...],
+        *,
+        installed_target_digests: dict[Path, str],
+        archived_target_digests: dict[Path, str],
     ) -> tuple[str, ...]:
         errors: list[str] = []
         for entry in reversed(entries):
             if entry.action == INSTALL_NEW:
                 if not entry.target_path.exists():
+                    continue
+                ownership_error = _copy_rollback_ownership_error(
+                    entry.target_path,
+                    installed_target_digests.get(entry.target_path),
+                    label="promoted target",
+                )
+                if ownership_error is not None:
+                    errors.append(ownership_error)
                     continue
                 try:
                     _remove_path_for_promotion_rollback(entry.target_path)
@@ -6764,15 +7002,6 @@ class AppShellService:
 
             if entry.action == OVERWRITE_WITH_ARCHIVE:
                 archive_path = entry.archive_path
-                if entry.target_path.exists():
-                    try:
-                        _remove_path_for_promotion_rollback(entry.target_path)
-                    except OSError as exc:
-                        errors.append(
-                            f"could not remove replaced target {entry.target_path}: {exc}"
-                        )
-                        continue
-
                 if archive_path is None:
                     errors.append(
                         f"missing archive path for rollback of {entry.target_path}"
@@ -6784,6 +7013,31 @@ class AppShellService:
                         f"{archive_path}"
                     )
                     continue
+                archive_ownership_error = _copy_rollback_ownership_error(
+                    archive_path,
+                    archived_target_digests.get(archive_path),
+                    label="archived target",
+                )
+                if archive_ownership_error is not None:
+                    errors.append(archive_ownership_error)
+                    continue
+                if entry.target_path.exists():
+                    target_ownership_error = _copy_rollback_ownership_error(
+                        entry.target_path,
+                        installed_target_digests.get(entry.target_path),
+                        label="replacement target",
+                    )
+                    if target_ownership_error is not None:
+                        errors.append(target_ownership_error)
+                        continue
+                    try:
+                        _remove_path_for_promotion_rollback(entry.target_path)
+                    except OSError as exc:
+                        errors.append(
+                            f"could not remove replaced target {entry.target_path}: {exc}"
+                        )
+                        continue
+
                 try:
                     archive_path.rename(entry.target_path)
                 except OSError as exc:
@@ -8016,6 +8270,7 @@ class AppShellService:
             plan=plan,
             installed_targets=result.installed_targets,
             archived_targets=result.archived_targets,
+            outcome_status="completed",
         )
 
     def _record_install_operation_state(
@@ -8026,7 +8281,7 @@ class AppShellService:
         archived_targets: tuple[Path, ...],
         operation_id: str | None = None,
         timestamp: str | None = None,
-        outcome_status: str = "completed",
+        outcome_status: str,
         failure_message: str | None = None,
         journal_path: Path | None = None,
         installed_target_digests: tuple[tuple[Path, str], ...] = tuple(),
@@ -10875,8 +11130,84 @@ def _entry_count_label(count: int) -> str:
     return "entry" if count == 1 else "entries"
 
 
+def _seal_mod_folder_copy_plan(plan: SandboxInstallPlan) -> SandboxInstallPlan:
+    try:
+        source_snapshots = tuple(
+            snapshot_path(Path(entry.source_root_path)) for entry in plan.entries
+        )
+        for entry in plan.entries:
+            source_root = Path(entry.source_root_path)
+            manifest_result = parse_manifest_file(
+                Path(entry.source_manifest_path),
+                source_root,
+            )
+            manifest = manifest_result.manifest
+            if manifest is None or (
+                manifest.name,
+                manifest.unique_id,
+                manifest.version,
+            ) != (entry.name, entry.unique_id, entry.version):
+                raise InstallIntegrityError(
+                    f"Source manifest changed while preparing the review: {entry.source_manifest_path}"
+                )
+            if entry.target_path.exists() != entry.target_exists:
+                raise InstallIntegrityError(
+                    f"Install target changed while preparing the review: {entry.target_path}"
+                )
+        sealed = replace(plan, integrity=capture_integrity(plan, source_snapshots))
+        for expected in source_snapshots:
+            if snapshot_path(expected.path) != expected:
+                raise InstallIntegrityError(
+                    f"Source changed while preparing the review: {expected.path}"
+                )
+        return sealed
+    except (InstallIntegrityError, OSError) as exc:
+        raise AppShellError(
+            get_active_ui_localizer().text("install.integrity.unverifiable"),
+            detail_message=str(exc),
+        ) from exc
+
+
+def _validate_staged_mod_folder_copies(
+    plan: SandboxInstallPlan,
+    staging_root: Path,
+) -> None:
+    if plan.integrity is None:
+        raise InstallIntegrityError("Copy plan has no review seal; rebuild it first.")
+    source_seals = {item.path: item for item in plan.integrity.packages}
+    for entry in plan.entries:
+        source_path = Path(entry.source_root_path).absolute()
+        source_seal = source_seals.get(source_path)
+        if source_seal is None:
+            raise InstallIntegrityError(
+                f"Reviewed source is missing from the copy seal: {source_path}"
+            )
+        staged_target = staging_root / entry.target_path.name
+        if snapshot_path(staged_target).digest != source_seal.digest:
+            raise InstallIntegrityError(
+                f"Source changed while staging; rebuild the review: {source_path}"
+            )
+
+
+def _copy_rollback_ownership_error(
+    path: Path,
+    expected_digest: str | None,
+    *,
+    label: str,
+) -> str | None:
+    if expected_digest is None:
+        return f"could not verify ownership of {label}; preserved for manual recovery: {path}"
+    try:
+        current_digest = snapshot_path(path).digest
+    except (InstallIntegrityError, OSError) as exc:
+        return f"could not inspect {label}; preserved for manual recovery: {path}: {exc}"
+    if current_digest != expected_digest:
+        return f"{label} changed externally; preserved for manual recovery: {path}"
+    return None
+
+
 def _normalize_sandbox_promotion_error(
-    exc: AppShellError | SandboxInstallError | OSError,
+    exc: AppShellError | SandboxInstallError | InstallIntegrityError | OSError,
 ) -> AppShellError:
     if isinstance(exc, AppShellError):
         return exc
@@ -10886,7 +11217,7 @@ def _normalize_sandbox_promotion_error(
 
 
 def _normalize_compare_sync_error(
-    exc: AppShellError | SandboxInstallError | OSError,
+    exc: AppShellError | SandboxInstallError | InstallIntegrityError | OSError,
 ) -> AppShellError:
     if isinstance(exc, AppShellError):
         return exc

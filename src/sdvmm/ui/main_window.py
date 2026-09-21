@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 import os
@@ -186,7 +187,7 @@ from sdvmm.domain.dependency_codes import (
     UNRESOLVED_DEPENDENCY_CONTEXT,
 )
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_GITHUB, DISCOVERY_SOURCE_NEXUS
-from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
+from sdvmm.domain.install_codes import BLOCKED, INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.smapi_codes import (
     SMAPI_DETECTED_VERSION_KNOWN,
     SMAPI_NOT_DETECTED_FOR_UPDATE,
@@ -1590,6 +1591,7 @@ class MainWindow(QMainWindow):
         self._last_app_update_status: AppUpdateStatus | None = None
         self._thread_pool = QThreadPool.globalInstance()
         self._active_operation_name: str | None = None
+        self._active_operation_blocks_close = False
         self._active_operation_display_label: str | None = None
         self._active_background_task: BackgroundTask | None = None
         self._active_operation_button: QWidget | None = None
@@ -2105,6 +2107,11 @@ class MainWindow(QMainWindow):
         self._scan_target_combo = QComboBox()
         self._scan_target_combo.addItem(self._tr("library.scan_target.real"), SCAN_TARGET_CONFIGURED_REAL_MODS)
         self._scan_target_combo.addItem(self._tr("library.scan_target.sandbox"), SCAN_TARGET_SANDBOX_MODS)
+        _configure_combo_box_readability(
+            self._scan_target_combo,
+            minimum_contents_length=24,
+            sample_text=self._tr("library.scan_target.sandbox"),
+        )
         self._intake_result_combo = QComboBox()
         self._packages_compare_target_combo = QComboBox()
         self._packages_compare_target_combo.setObjectName("packages_compare_target_combo")
@@ -3498,7 +3505,13 @@ class MainWindow(QMainWindow):
         source_row_widget = QWidget()
         source_row_widget.setObjectName("mods_inventory_source_actions_widget")
         source_row = QHBoxLayout(source_row_widget)
-        source_row.setContentsMargins(0, 0, 0, 0)
+        # Keep the styled selector fully inside its row. On native Windows the
+        # maximized layout can otherwise compress this parent below the combo's
+        # height and clip the selector's bottom border.
+        source_row.setContentsMargins(0, 1, 0, 1)
+        source_row_widget.setMinimumHeight(
+            max(34, self._scan_target_combo.sizeHint().height() + 2)
+        )
         source_row.setSpacing(10)
         self._inventory_source_row_layout = source_row
         scan_source_label = QLabel(self._tr("library.scan_source"))
@@ -4226,7 +4239,7 @@ class MainWindow(QMainWindow):
             safety_group.setProperty("translationKey", "install.safety")
             safety_group.setFlat(True)
             safety_group.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
             )
             safety_layout = QVBoxLayout(safety_group)
             safety_layout.setContentsMargins(7, 5, 7, 5)
@@ -5453,6 +5466,15 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._run_startup_checks_if_meaningful)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._active_operation_name is not None and self._active_operation_blocks_close:
+            operation = self._active_operation_display_label or self._active_operation_name
+            QMessageBox.information(
+                self,
+                self._tr("app.close.busy.title"),
+                self._tr("app.close.busy.message", operation=operation),
+            )
+            event.ignore()
+            return
         self._persist_session_config_on_close()
         super().closeEvent(event)
 
@@ -6145,6 +6167,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Managed-folder migration",
+            blocks_close=True,
             running_label=self._tr("ui.op.managed_migration"),
             started_status=self._tr("ui.progress.moving_managed"),
             error_title=self._tr("ui.error.managed_migration"),
@@ -6355,6 +6378,7 @@ class MainWindow(QMainWindow):
         self._clear_restore_import_plan_state(reset_summary=False)
         self._run_background_operation(
             operation_name="Backup export",
+            blocks_close=True,
             running_label=self._tr("ui.op.backup_export"),
             started_status=self._tr("backup.status.exporting"),
             error_title=self._tr("ui.error.backup_export"),
@@ -6674,6 +6698,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Restore/import execution",
+            blocks_close=True,
             running_label=self._tr("ui.op.restore_import_execution"),
             started_status=self._tr("restore.status.running"),
             error_title=self._tr("ui.error.restore_import_execution"),
@@ -7240,6 +7265,7 @@ class MainWindow(QMainWindow):
         )
         self._run_background_operation(
             operation_name=running_label,
+            blocks_close=True,
             running_label=running_label,
             started_status=started_status,
             error_title=error_title,
@@ -7417,6 +7443,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Install execution",
+            blocks_close=True,
             running_label=self._tr("ui.op.install_execution"),
             started_status=self._tr("install.status.applying"),
             error_title=self._tr("ui.error.install"),
@@ -7772,6 +7799,7 @@ class MainWindow(QMainWindow):
         # runs so nobody force-quits mid-write.
         self._run_background_operation(
             operation_name=self._tr("recovery.operation.execute"),
+            blocks_close=True,
             running_label=self._tr("recovery.operation.execute"),
             started_status=self._tr("recovery.status.executing"),
             error_title=self._tr("recovery.error.execute_title"),
@@ -8789,6 +8817,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Mod removal",
+            blocks_close=True,
             running_label=self._tr("ui.op.mod_removal"),
             started_status=f"Removing {mod_name} to archive...",
             error_title=self._tr("ui.error.mod_removal"),
@@ -8962,6 +8991,7 @@ class MainWindow(QMainWindow):
         self._set_inventory_output_text(build_mod_rollback_plan_text(plan))
         self._run_background_operation(
             operation_name="Mod rollback",
+            blocks_close=True,
             running_label=self._tr("ui.op.mod_rollback"),
             started_status=f"Rolling back {mod_name} from archive...",
             error_title=self._tr("ui.error.mod_rollback"),
@@ -9088,6 +9118,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Archive cleanup",
+            blocks_close=True,
             running_label=self._tr("ui.op.archive_cleanup"),
             started_status=self._tr("ui.progress.cleaning_archives"),
             error_title=self._tr("ui.error.archive_cleanup"),
@@ -9160,6 +9191,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Archive restore",
+            blocks_close=True,
             running_label=self._tr("ui.op.archive_restore"),
             started_status=f"Restoring {entry.archived_folder_name}...",
             error_title=self._tr("ui.error.archive_restore"),
@@ -9247,6 +9279,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Archive permanent delete",
+            blocks_close=True,
             running_label=self._tr("ui.op.archive_delete"),
             started_status=f"Deleting {selected_count} archived item(s) permanently...",
             error_title=self._tr("ui.error.archive_permanent_delete"),
@@ -10250,6 +10283,7 @@ class MainWindow(QMainWindow):
         requested_name = profile_name.strip()
         self._run_background_operation(
             operation_name=self._tr("library.profile.operation.real_create"),
+            blocks_close=True,
             running_label=self._tr("library.profile.operation.real_create"),
             started_status=self._tr("library.profile.creating_real", name=requested_name),
             error_title=self._tr("library.profile.create_real_failed"),
@@ -10285,6 +10319,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name=self._tr("library.profile.operation.real_select"),
+            blocks_close=True,
             running_label=self._tr("library.profile.operation.real_select"),
             started_status=self._tr(
                 "library.profile.switching_real",
@@ -10335,6 +10370,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name=self._tr("library.profile.operation.real_delete"),
+            blocks_close=True,
             running_label=self._tr("library.profile.operation.real_delete"),
             started_status=self._tr(
                 "library.profile.deleting_real",
@@ -10383,6 +10419,7 @@ class MainWindow(QMainWindow):
         requested_name = profile_name.strip()
         self._run_background_operation(
             operation_name=self._tr("library.profile.operation.sandbox_create"),
+            blocks_close=True,
             running_label=self._tr("library.profile.operation.sandbox_create"),
             started_status=self._tr(
                 "library.profile.creating_sandbox",
@@ -10424,6 +10461,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name=self._tr("library.profile.operation.sandbox_select"),
+            blocks_close=True,
             running_label=self._tr("library.profile.operation.sandbox_select"),
             started_status=self._tr(
                 "library.profile.switching_sandbox",
@@ -10477,6 +10515,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name=self._tr("library.profile.operation.sandbox_delete"),
+            blocks_close=True,
             running_label=self._tr("library.profile.operation.sandbox_delete"),
             started_status=self._tr(
                 "library.profile.deleting_sandbox",
@@ -11555,6 +11594,7 @@ class MainWindow(QMainWindow):
         show_error_dialog: bool = True,
         busy_button: QWidget | None = None,
         busy_button_text: str | None = None,
+        blocks_close: bool = False,
     ) -> None:
         if self._active_operation_name is not None:
             self._set_status(
@@ -11568,6 +11608,7 @@ class MainWindow(QMainWindow):
         # operation_name identifies the operation in code; running_label is what
         # the owner reads, so the finished/failed line uses the label.
         self._active_operation_name = operation_name
+        self._active_operation_blocks_close = blocks_close
         self._active_operation_display_label = running_label
         self._active_operation_button = busy_button
         self._active_operation_button_text = original_busy_text
@@ -11652,6 +11693,7 @@ class MainWindow(QMainWindow):
             self._active_operation_button = None
             self._active_operation_button_text = None
         self._active_operation_name = None
+        self._active_operation_blocks_close = False
         self._active_background_task = None
         self._set_background_actions_enabled(True)
         self._refresh_restore_import_execution_state()
@@ -13100,6 +13142,7 @@ class MainWindow(QMainWindow):
         if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             self._run_background_operation(
                 operation_name="Real profile mod toggle",
+                blocks_close=True,
                 running_label=self._tr("ui.op.real_profile_toggle"),
                 started_status=(
                     f"Adding {mod_name} to real profile..."
@@ -13125,6 +13168,7 @@ class MainWindow(QMainWindow):
 
         self._run_background_operation(
             operation_name="Sandbox mod toggle",
+            blocks_close=True,
             running_label=self._tr("ui.op.sandbox_toggle"),
             started_status=(
                 f"Adding {mod_name} to sandbox profile..."
@@ -14444,6 +14488,7 @@ class MainWindow(QMainWindow):
         selected_count = len(selected_mod_folder_paths)
         self._run_background_operation(
             operation_name="Sandbox sync",
+            blocks_close=True,
             running_label=self._tr("ui.op.sandbox_sync"),
             started_status=(
                 f"Syncing {selected_count} selected mod(s) from real Mods to sandbox..."
@@ -14507,6 +14552,7 @@ class MainWindow(QMainWindow):
         history_before = self._install_operation_history
         self._run_background_operation(
             operation_name="Sandbox promotion",
+            blocks_close=True,
             running_label=self._tr("ui.op.sandbox_promotion"),
             started_status=(
                 f"Promoting {selected_count} selected mod(s) from sandbox Mods to REAL Mods..."
@@ -15691,7 +15737,10 @@ class MainWindow(QMainWindow):
             if compact_small_desktop
             else max(154, min(170, int(window_height * 0.215)))
             if compact_viewport
-            else max(116, min(132, int(window_height * 0.162)))
+            # The wide layout keeps every source action on one styled row.
+            # Its native Windows size hint is taller than the earlier 132px
+            # cap, which made Qt shave the bottom from that row when maximized.
+            else max(144, min(156, int(window_height * 0.17)))
         )
         flow_hint_cap = max(32, min(60, int(window_height * 0.074)))
         intake_result_cap = max(92, min(140, int(window_height * 0.18)))
@@ -15880,20 +15929,57 @@ def _install_operation_selector_text(operation: InstallOperationRecord) -> str:
         if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
         else "Sandbox"
     )
-    package_name = operation.package_path.name
+    timestamp = _friendly_history_timestamp(operation.timestamp)
     if operation.operation_id is None:
         legacy_text = "registro legado" if localizer.effective_language == "pt-BR" else "legacy record"
-        return f"{package_name} | {operation.timestamp} | {destination_label} | {legacy_text}"
+        return f"{operation.package_path.name} | {timestamp} | {destination_label} | {legacy_text}"
     outcome = localizer.text(f"install.outcome.{operation.outcome_status}")
-    return f"{package_name} | {operation.timestamp} | {destination_label} | {outcome}"
+    if len(operation.entries) == 1:
+        return localizer.text(
+            "history.selector.one",
+            name=operation.entries[0].name,
+            timestamp=timestamp,
+            destination=destination_label,
+            outcome=outcome,
+        )
+    return localizer.text(
+        "history.selector.other",
+        count=len(operation.entries),
+        timestamp=timestamp,
+        destination=destination_label,
+        outcome=outcome,
+    )
+
+
+def _friendly_history_timestamp(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    suffix = " UTC" if value.endswith("Z") else ""
+    if get_active_ui_localizer().effective_language == "pt-BR":
+        return parsed.strftime("%d/%m/%Y %H:%M") + suffix
+    return parsed.strftime("%b %d, %Y %H:%M") + suffix
 
 
 def _build_install_operation_summary_text(operation: InstallOperationRecord) -> str:
     localizer = get_active_ui_localizer()
     destination_label = _install_destination_label(operation.destination_kind)
+    if len(operation.entries) == 1:
+        entry = operation.entries[0]
+        changes = localizer.text(
+            "history.installed_mod.one",
+            name=entry.name,
+            version=entry.version,
+        )
+    else:
+        changes = localizer.text(
+            "history.installed_mod.other",
+            count=len(operation.entries),
+        )
     return (
-        f"{localizer.text('history.selected_install', package_name=operation.package_path.name)}\n"
-        f"{localizer.text('history.recorded_at', timestamp=operation.timestamp)}\n"
+        f"{changes}\n"
+        f"{localizer.text('history.recorded_at', timestamp=_friendly_history_timestamp(operation.timestamp))}\n"
         f"{localizer.text('history.destination', destination=destination_label)}\n"
         f"{localizer.text('install.outcome.summary', outcome=localizer.text(f'install.outcome.{operation.outcome_status}'))}"
         + (f"\n{localizer.text('install.outcome.journal', path=operation.journal_path)}" if operation.journal_path else "")
@@ -16175,34 +16261,56 @@ def _build_plan_facts_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str:
-    pt_br = get_active_ui_localizer().effective_language == "pt-BR"
-    summary = review.summary
+    localizer = get_active_ui_localizer()
     blocked_entry_count = _count_blocked_plan_entries(plan)
-    package_count = _plan_source_package_count(plan)
+    entry_count = len(plan.entries)
     lines = [
-        (
-            f"Pacotes: {package_count}\n"
-            f"Entradas: {summary.total_entry_count}\n"
-            f"Substitui existentes: {'sim' if summary.has_existing_targets_to_replace else 'não'}\n"
-            f"Gravações no arquivo: {'sim' if summary.has_archive_writes else 'não'}\n"
-            f"Aprovação obrigatória: {'sim' if review.requires_explicit_approval else 'não'}\n"
-            f"Entradas bloqueadas: {blocked_entry_count}"
-            if pt_br
-            else f"Packages: {package_count}\n"
-            f"Entries: {summary.total_entry_count}\n"
-            f"Replace existing: {'yes' if summary.has_existing_targets_to_replace else 'no'}\n"
-            f"Archive writes: {'yes' if summary.has_archive_writes else 'no'}\n"
-            f"Approval required: {'yes' if review.requires_explicit_approval else 'no'}\n"
-            f"Blocked entries: {blocked_entry_count}"
+        localizer.text(
+            "install.summary.changes.one"
+            if entry_count == 1
+            else "install.summary.changes.other",
+            count=entry_count,
         )
     ]
-    config_preservation_fact = _config_preservation_fact_text(plan)
-    if config_preservation_fact is not None:
-        lines.append(f"\n{config_preservation_fact}")
+    for entry in plan.entries:
+        if not entry.can_install or entry.action == BLOCKED:
+            key = "install.summary.entry.blocked"
+        elif entry.action == OVERWRITE_WITH_ARCHIVE:
+            key = "install.summary.entry.replace"
+        else:
+            key = "install.summary.entry.new"
+        lines.append(f"- {localizer.text(key, name=entry.name, version=entry.version)}")
+    lines.append(
+        localizer.text(
+            "install.summary.destination",
+            destination=_install_destination_label(plan.destination_kind),
+        )
+    )
+    if blocked_entry_count:
+        lines.append(
+            localizer.text(
+                "install.summary.blocked.one"
+                if blocked_entry_count == 1
+                else "install.summary.blocked.other",
+                count=blocked_entry_count,
+            )
+        )
+    preserved_config_count = _preserved_config_entry_count(plan)
+    if preserved_config_count:
+        lines.append(
+            localizer.text(
+                "install.summary.config.one"
+                if preserved_config_count == 1
+                else "install.summary.config.other",
+                count=preserved_config_count,
+            )
+        )
+    elif any(entry.action == OVERWRITE_WITH_ARCHIVE for entry in plan.entries):
+        lines.append(localizer.text("install.summary.config.enabled"))
     staged_dependency_fact = _staged_dependency_fact_text(plan)
     if staged_dependency_fact is not None:
         lines.append(staged_dependency_fact)
-    return "".join(lines)
+    return "\n".join(lines)
 
 
 def _count_blocked_plan_entries(plan: SandboxInstallPlan) -> int:
@@ -16474,7 +16582,7 @@ def _first_config_preservation_warning_text(
             or "config artifacts will be preserved" in lowered
             or "preserve existing config artifacts" in lowered
         ):
-            return warning_text
+            return get_active_ui_localizer().text("install.warning.config_preservation")
     return None
 
 

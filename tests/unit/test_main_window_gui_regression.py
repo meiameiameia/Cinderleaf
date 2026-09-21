@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, QItemSelectionModel, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtGui import QCloseEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -2279,10 +2279,35 @@ def test_main_window_close_persists_practical_setup_paths_across_restart(
         reopened_window._install_target_combo.currentData()
         == INSTALL_TARGET_CONFIGURED_REAL_MODS
     )
-
     reopened_window.close()
     qapp.processEvents()
 
+
+def test_main_window_close_is_blocked_while_background_work_is_running(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, title, text: shown.append((str(title), str(text))),
+    )
+    main_window._active_operation_name = "Install execution"
+    main_window._active_operation_display_label = "Applying install"
+    main_window._active_operation_blocks_close = True
+    event = QCloseEvent()
+
+    main_window.closeEvent(event)
+
+    assert event.isAccepted() is False
+    assert shown == [
+        (
+            "Cinderleaf is still working",
+            "Applying install is still running. Wait for it to finish before closing "
+            "Cinderleaf so files and recovery history stay consistent.",
+        )
+    ]
 
 def test_main_window_keeps_status_strip_and_removes_bottom_details_region(
     main_window: MainWindow,
@@ -8087,6 +8112,33 @@ def test_workspace_pages_do_not_clip_controls(
 
 @pytest.mark.parametrize("language", ["en", "pt-BR"])
 @pytest.mark.parametrize("width,height", _SUPPORTED_WINDOW_SIZES)
+def test_library_source_selector_keeps_native_border_paint_clearance(
+    tmp_path: Path,
+    qapp: QApplication,
+    language: str,
+    width: int,
+    height: int,
+) -> None:
+    window = _open_localized_window(tmp_path, qapp, language, width, height)
+    try:
+        combo = window._scan_target_combo
+        row = combo.parentWidget()
+        assert row is not None
+        controls = (combo, window._scan_button, window._check_updates_button)
+        for control in controls:
+            assert control.geometry().top() >= 1
+            assert row.height() >= control.height() + 2
+            assert row.rect().bottom() - control.geometry().bottom() >= 1
+        if width > 1366 and height > 768:
+            tabs = window._inventory_controls_tabs
+            assert tabs.maximumHeight() >= tabs.sizeHint().height()
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("language", ["en", "pt-BR"])
+@pytest.mark.parametrize("width,height", _SUPPORTED_WINDOW_SIZES)
 def test_setup_backup_actions_receive_their_full_height(
     tmp_path: Path, qapp: QApplication, language: str, width: int, height: int,
 ) -> None:
@@ -10844,7 +10896,7 @@ def test_main_window_global_status_strip_uses_single_status_heading(
     current_status_label = main_window.findChild(QLabel, "global_status_current_label")
 
     assert summary_label is not None
-    assert summary_label.text() == "Status"
+    assert summary_label.text() == "Last action"
     assert panel_title is None
     assert current_status_label is not None
 
@@ -12526,12 +12578,9 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
     assert main_window._plan_review_summary_label.text() == "Install plan: ready to install."
     assert main_window._plan_review_explanation_label.text() == "Ready: no blocking issues detected."
     assert main_window._plan_facts_label.text() == (
-        "Packages: 1\n"
-        "Entries: 1\n"
-        "Replace existing: no\n"
-        "Archive writes: no\n"
-        "Approval required: no\n"
-        "Blocked entries: 0"
+        "1 mod in this plan\n"
+        "- Add Sample Mod 1.0.0\n"
+        "Destination: Sandbox Mods destination"
     )
     assert main_window._plan_review_explanation_label.isHidden() is False
     assert main_window._plan_facts_label.isHidden() is False
@@ -12570,7 +12619,7 @@ def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
     assert review.requires_explicit_approval is True
     assert main_window._status_strip_label.text() == review.message
     assert main_window._plan_review_explanation_label.text() == "Ready: no blocking issues detected."
-    assert "Approval required: yes" in main_window._plan_facts_label.text()
+    assert "Destination: Game Mods destination (real)" in main_window._plan_facts_label.text()
     assert "warning" not in main_window._plan_review_explanation_label.text().casefold()
     assert "blocked" not in main_window._plan_review_explanation_label.text().casefold()
     assert main_window._findings_box.toPlainText().startswith(review.message)
@@ -12604,7 +12653,7 @@ def test_main_window_plan_install_shows_config_preservation_cue(
     main_window._on_plan_install()
 
     assert "config preservation" in main_window._plan_review_explanation_label.text().casefold()
-    assert "Config preserve: enabled (1 target detected)" in main_window._plan_facts_label.text()
+    assert "Existing settings will be preserved for 1 replaced mod." in main_window._plan_facts_label.text()
 
 
 def test_main_window_plan_install_shows_generic_overwrite_config_preservation_cue(
@@ -12634,7 +12683,7 @@ def test_main_window_plan_install_shows_generic_overwrite_config_preservation_cu
     assert "preserve existing config artifacts" in (
         main_window._plan_review_explanation_label.text().casefold()
     )
-    assert "Config preserve: enabled for overwrite updates" in main_window._plan_facts_label.text()
+    assert "Existing settings will be preserved when found" in main_window._plan_facts_label.text()
 
 
 def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_status(
@@ -12664,7 +12713,7 @@ def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_st
     assert main_window._status_strip_label.text() == review.message
     assert main_window._plan_review_summary_label.text() == "Install plan: blocked by dependency issues."
     assert main_window._plan_review_explanation_label.text().startswith("Dependency issue:")
-    assert "Blocked entries: 1" in main_window._plan_facts_label.text()
+    assert "Blocked change: 1" in main_window._plan_facts_label.text()
     assert main_window._findings_box.toPlainText().startswith(review.message)
 
 
@@ -12915,12 +12964,9 @@ def test_main_window_plan_install_runnable_with_warnings_sets_summary(
     assert main_window._plan_review_summary_label.text() == "Install plan: runnable with warnings."
     assert main_window._plan_review_explanation_label.text().startswith("Warning:")
     assert main_window._plan_facts_label.text() == (
-        "Packages: 1\n"
-        "Entries: 1\n"
-        "Replace existing: no\n"
-        "Archive writes: no\n"
-        "Approval required: no\n"
-        "Blocked entries: 0"
+        "1 mod in this plan\n"
+        "- Add Sample Mod 1.0.0\n"
+        "Destination: Sandbox Mods destination"
     )
 
 
@@ -14360,10 +14406,10 @@ def test_main_window_recovery_selector_labels_are_human_readable_and_newest_firs
     main_window._refresh_install_operation_selector()
 
     assert main_window._install_history_combo.itemText(0) == (
-        "NewerPack.zip | 2026-03-13T11:30:00Z | REAL Mods | Completed"
+        "Sample Mod | Mar 13, 2026 11:30 UTC | REAL Mods | Completed"
     )
     assert main_window._install_history_combo.itemText(1) == (
-        "OlderPack.zip | 2026-03-12T09:00:00Z | Sandbox | Completed"
+        "Sample Mod | Mar 12, 2026 09:00 UTC | Sandbox | Completed"
     )
     assert main_window._selected_install_operation() is newer_operation
 
@@ -14387,7 +14433,7 @@ def test_main_window_recovery_selector_labels_mark_legacy_records_clearly(
     main_window._refresh_install_operation_selector()
 
     assert main_window._install_history_combo.itemText(0) == (
-        "LegacyPack.zip | 2026-03-11T08:00:00Z | Sandbox | legacy record"
+        "LegacyPack.zip | Mar 11, 2026 08:00 UTC | Sandbox | legacy record"
     )
 
 
@@ -14426,26 +14472,26 @@ def test_main_window_recovery_selector_filter_modes_show_expected_subsets_and_or
 
     main_window._refresh_install_operation_selector()
     qapp.processEvents()
-    assert main_window._install_history_combo.itemText(0).startswith("ReadyNew.zip | 2026-03-13T13:00:00Z")
-    assert main_window._install_history_combo.itemText(1).startswith("BlockedMid.zip | 2026-03-13T12:00:00Z")
-    assert main_window._install_history_combo.itemText(2).startswith("LegacyOld.zip | 2026-03-13T11:00:00Z")
-    assert main_window._install_history_combo.itemText(3).startswith("ReadyOld.zip | 2026-03-13T10:00:00Z")
+    assert "Mar 13, 2026 13:00 UTC" in main_window._install_history_combo.itemText(0)
+    assert "Mar 13, 2026 12:00 UTC" in main_window._install_history_combo.itemText(1)
+    assert main_window._install_history_combo.itemText(2).startswith("LegacyOld.zip | Mar 13, 2026 11:00 UTC")
+    assert "Mar 13, 2026 10:00 UTC" in main_window._install_history_combo.itemText(3)
 
     main_window._install_history_filter_combo.setCurrentText("ready")
     qapp.processEvents()
     assert main_window._install_history_combo.count() == 2
-    assert main_window._install_history_combo.itemText(0).startswith("ReadyNew.zip | 2026-03-13T13:00:00Z")
-    assert main_window._install_history_combo.itemText(1).startswith("ReadyOld.zip | 2026-03-13T10:00:00Z")
+    assert "Mar 13, 2026 13:00 UTC" in main_window._install_history_combo.itemText(0)
+    assert "Mar 13, 2026 10:00 UTC" in main_window._install_history_combo.itemText(1)
 
     main_window._install_history_filter_combo.setCurrentText("blocked")
     qapp.processEvents()
     assert main_window._install_history_combo.count() == 1
-    assert main_window._install_history_combo.itemText(0).startswith("BlockedMid.zip | 2026-03-13T12:00:00Z")
+    assert "Mar 13, 2026 12:00 UTC" in main_window._install_history_combo.itemText(0)
 
     main_window._install_history_filter_combo.setCurrentText("legacy")
     qapp.processEvents()
     assert main_window._install_history_combo.count() == 1
-    assert main_window._install_history_combo.itemText(0).startswith("LegacyOld.zip | 2026-03-13T11:00:00Z")
+    assert main_window._install_history_combo.itemText(0).startswith("LegacyOld.zip | Mar 13, 2026 11:00 UTC")
     assert "legacy record" in main_window._install_history_combo.itemText(0)
 
 
@@ -14489,7 +14535,8 @@ def test_main_window_recovery_selector_filter_fail_soft_when_current_selection_i
 
     assert main_window._selected_install_operation() is legacy_old
     summary_text = main_window._recovery_selection_summary_label.text()
-    assert "Selected install: LegacyOld.zip" in summary_text
+    assert "Mod: Sample Mod 1.0.0" in summary_text
+    assert "Recorded at: Mar 13, 2026 11:00 UTC" in summary_text
     assert "Legacy record: recovery inspection is unavailable because this entry has no operation ID." in summary_text
 
 
@@ -14594,8 +14641,8 @@ def test_main_window_recovery_summary_updates_for_selection_and_legacy_state(
     qapp.processEvents()
 
     summary_text = main_window._recovery_selection_summary_label.text()
-    assert "Selected install: NewestPack.zip" in summary_text
-    assert "Recorded at: 2026-03-13T13:00:00Z" in summary_text
+    assert "Mod: Sample Mod 1.0.0" in summary_text
+    assert "Recorded at: Mar 13, 2026 13:00 UTC" in summary_text
     assert "Destination: Game Mods destination (real)" in summary_text
     assert "Recovery status: not inspected yet." in summary_text
 
@@ -14603,7 +14650,7 @@ def test_main_window_recovery_summary_updates_for_selection_and_legacy_state(
     qapp.processEvents()
 
     legacy_summary = main_window._recovery_selection_summary_label.text()
-    assert "Selected install: LegacyPack.zip" in legacy_summary
+    assert "Mod: Sample Mod 1.0.0" in legacy_summary
     assert "Legacy record: recovery inspection is unavailable because this entry has no operation ID." in legacy_summary
 
 

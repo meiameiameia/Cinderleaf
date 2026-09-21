@@ -4089,6 +4089,113 @@ def test_execute_compare_mods_sync_preview_replaces_existing_sandbox_counterpart
     assert operation.entries[0].action == OVERWRITE_WITH_ARCHIVE
 
 
+def test_execute_compare_mods_sync_preview_rejects_source_changed_after_review(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    real_mod = _create_mod(real_mods, "AlphaMod", "Alpha.Mod")
+    payload = real_mod / "payload.txt"
+    payload.write_text("reviewed", encoding="utf-8")
+
+    preview = service.build_compare_mods_sync_preview(
+        direction="real_to_sandbox",
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        source_mod_folder_path_text=str(real_mod),
+        existing_config=None,
+    )
+    payload.write_text("changed after review", encoding="utf-8")
+
+    with pytest.raises(AppShellError, match="reviewed files or destination changed"):
+        service.execute_compare_mods_sync_preview(preview)
+
+    assert not (sandbox_mods / "AlphaMod").exists()
+    assert service.load_install_operation_history().operations == tuple()
+
+
+def test_compare_sync_preserves_externally_changed_target_and_records_partial_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    alpha_source = _create_mod(real_mods, "AlphaMod", "Alpha.Mod")
+    beta_source = _create_mod(real_mods, "BetaMod", "Beta.Mod")
+    original_rename = Path.rename
+
+    preview = service.build_compare_mods_sync_preview(
+        direction="real_to_sandbox",
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        source_mod_folder_path_texts=(str(alpha_source), str(beta_source)),
+        existing_config=None,
+    )
+
+    concurrent_file = sandbox_mods / "AlphaMod" / "user-created.json"
+
+    def fake_rename(self: Path, target: Path):
+        if target == sandbox_mods / "BetaMod" and self.parent.name.startswith(
+            ".sdvmm-compare-sync-stage-"
+        ):
+            concurrent_file.write_text("preserve me", encoding="utf-8")
+            raise OSError("simulated second target failure")
+        return original_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fake_rename)
+
+    with pytest.raises(
+        AppShellError,
+        match="Remaining changes were recorded in install history",
+    ):
+        service.execute_compare_mods_sync_preview(preview)
+
+    assert concurrent_file.read_text(encoding="utf-8") == "preserve me"
+    history = service.load_install_operation_history()
+    assert len(history.operations) == 1
+    operation = history.operations[0]
+    assert operation.outcome_status == "partial"
+    assert operation.installed_targets == (sandbox_mods / "AlphaMod",)
+
+
+def test_execute_sandbox_promotion_preview_rejects_source_changed_after_review(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    sandbox_mod = _create_mod(sandbox_mods, "AlphaMod", "Alpha.Mod")
+    payload = sandbox_mod / "payload.txt"
+    payload.write_text("reviewed", encoding="utf-8")
+
+    preview = service.build_sandbox_mods_promotion_preview(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        selected_mod_folder_paths_text=(str(sandbox_mod),),
+        existing_config=None,
+    )
+    payload.write_text("changed after review", encoding="utf-8")
+
+    with pytest.raises(AppShellError, match="reviewed files or destination changed"):
+        service.execute_sandbox_mods_promotion_preview(preview)
+
+    assert not (real_mods / "AlphaMod").exists()
+    assert service.load_install_operation_history().operations == tuple()
+
+
 def test_promote_installed_mods_from_sandbox_to_real_rolls_back_earlier_live_writes_on_later_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4124,7 +4231,9 @@ def test_promote_installed_mods_from_sandbox_to_real_rolls_back_earlier_live_wri
     assert not (real_mods / "AlphaMod").exists()
     assert not (real_mods / "BetaMod").exists()
     history = service.load_install_operation_history()
-    assert history.operations == tuple()
+    assert len(history.operations) == 1
+    assert history.operations[0].outcome_status == "rolled_back"
+    assert history.operations[0].installed_targets == tuple()
 
 
 def test_promote_installed_mods_from_sandbox_to_real_records_partial_history_when_rollback_cannot_restore(
@@ -4173,6 +4282,7 @@ def test_promote_installed_mods_from_sandbox_to_real_records_partial_history_whe
     history = service.load_install_operation_history()
     assert len(history.operations) == 1
     operation = history.operations[0]
+    assert operation.outcome_status == "partial"
     assert operation.installed_targets == (alpha_target,)
     assert operation.archived_targets == tuple()
     assert len(operation.entries) == 1
