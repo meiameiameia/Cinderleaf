@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -9,6 +10,25 @@ from pathlib import Path
 
 PUBLIC_DIST_SLUG = "cinderleaf"
 PUBLIC_EXE_NAME = "Cinderleaf.exe"
+
+
+def _build_environment() -> dict[str, str]:
+    """Keep unrelated tools on the caller's PATH out of PyInstaller's DLL scan."""
+    environment = os.environ.copy()
+    if sys.platform != "win32":
+        return environment
+
+    windows_root = Path(environment.get("SystemRoot", r"C:\Windows"))
+    search_roots = (
+        Path(sys.executable).parent,
+        Path(sys.base_prefix),
+        windows_root / "System32",
+        windows_root,
+    )
+    environment["PATH"] = os.pathsep.join(
+        str(path) for path in dict.fromkeys(search_roots) if path.is_dir()
+    )
+    return environment
 
 
 def _archive_dist_folder(dist_path: Path) -> Path:
@@ -51,7 +71,7 @@ def main() -> int:
         f"--workpath={work_path}",
         str(spec_path),
     ]
-    subprocess.run(command, cwd=repo_root, check=True)
+    subprocess.run(command, cwd=repo_root, env=_build_environment(), check=True)
     packaged_exe = dist_path / PUBLIC_EXE_NAME
     qwindows_plugin = (
         dist_path
