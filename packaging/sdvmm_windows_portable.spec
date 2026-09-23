@@ -18,7 +18,6 @@ PYPROJECT = ROOT / "pyproject.toml"
 PROJECT = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
 VERSION = PROJECT["version"]
 DIST_NAME = f"cinderleaf-{VERSION}-windows-portable"
-APP_ICON_SVG = ROOT / "assets" / "cinderleaf-icon.svg"
 APP_ICON_PNG = ROOT / "assets" / "app-icon.png"
 APP_ICON_ICO = ROOT / "assets" / "cinderleaf.ico"
 SEVEN_ZIP_DIR = ROOT / "assets" / "tools" / "7zip"
@@ -83,7 +82,6 @@ APP_VERSION_FILE.write_text(f"{VERSION}\n", encoding="utf-8")
 
 datas = [
     (str(ROOT / "assets" / "chevron-down.svg"), "assets"),
-    (str(APP_ICON_SVG), "assets"),
     (str(APP_ICON_PNG), "assets"),
     (str(APP_ICON_ICO), "assets"),
     (str(APP_VERSION_FILE), "."),

@@ -44,7 +44,7 @@ name = "stardew-mod-manager"
     assert app_main._resolve_app_version() == "1.1.7"
 
 
-def test_resolve_runtime_icon_asset_prefers_svg_source(
+def test_runtime_icon_uses_size_specific_ico_while_in_app_brand_uses_png(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -56,8 +56,10 @@ def test_resolve_runtime_icon_asset_prefers_svg_source(
     (assets_root / "cinderleaf.ico").write_bytes(b"ico")
 
     monkeypatch.setattr(app_main, "_resolve_runtime_root", lambda: runtime_root)
+    monkeypatch.setattr(main_window, "_resolve_runtime_root", lambda: runtime_root)
 
-    assert app_main._resolve_runtime_icon_asset_path() == assets_root / "cinderleaf-icon.svg"
+    assert app_main._resolve_runtime_icon_asset_path() == assets_root / "cinderleaf.ico"
+    assert main_window._resolve_runtime_icon_asset_path() == assets_root / "app-icon.png"
 
 
 def test_single_instance_lock_rejects_second_copy_and_releases_cleanly(tmp_path: Path) -> None:

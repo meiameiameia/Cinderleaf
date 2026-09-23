@@ -6,9 +6,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import tomllib
 
-from PySide6.QtCore import QLockFile, QRectF
-from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
-from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QLockFile
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from sdvmm.app.crash_reporter import crash_report_directory, install_crash_reporter
@@ -23,9 +22,8 @@ APP_DISPLAY_NAME = "Cinderleaf"
 APP_VERSION_FALLBACK = "unknown"
 APP_VERSION_FILENAME = "app-version.txt"
 APP_RUNTIME_ICON_NAMES = (
-    "cinderleaf-icon.svg",
-    "app-icon.png",
     "cinderleaf.ico",
+    "app-icon.png",
     "stardew-mod-manager.ico",
 )
 WINDOWS_APP_USER_MODEL_ID = "local.cinderleaf.cinderleaf"
@@ -79,29 +77,10 @@ def _resolve_runtime_icon_asset_path() -> Path | None:
     return None
 
 
-def _load_svg_icon(icon_path: Path) -> QIcon | None:
-    renderer = QSvgRenderer(str(icon_path))
-    if not renderer.isValid():
-        return None
-
-    icon = QIcon()
-    for size in (16, 24, 32, 48, 64, 128, 256):
-        image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
-        image.fill(0)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        renderer.render(painter, QRectF(0, 0, size, size))
-        painter.end()
-        icon.addPixmap(QPixmap.fromImage(image))
-    return icon if not icon.isNull() else None
-
-
 def _resolve_app_icon() -> QIcon | None:
     icon_path = _resolve_runtime_icon_asset_path()
     if icon_path is None:
         return None
-    if icon_path.suffix.lower() == ".svg":
-        return _load_svg_icon(icon_path)
 
     icon = QIcon(str(icon_path))
     if not icon.isNull():

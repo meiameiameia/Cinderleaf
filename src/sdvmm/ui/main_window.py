@@ -34,13 +34,11 @@ from PySide6.QtGui import QIcon
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtGui import QKeySequence
 from PySide6.QtGui import QPainter
-from PySide6.QtGui import QImage
 from PySide6.QtGui import QPalette
 from PySide6.QtGui import QPen
 from PySide6.QtGui import QPixmap
 from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -229,7 +227,6 @@ from sdvmm.ui.top_context_surface import TopContextSurface
 _APP_PACKAGE_NAME = "stardew-mod-manager"
 _APP_BRAND_NAME = "Cinderleaf"
 _APP_RUNTIME_ICON_NAMES = (
-    "cinderleaf-icon.svg",
     "app-icon.png",
     "cinderleaf.ico",
     "stardew-mod-manager.ico",
@@ -18251,18 +18248,6 @@ def _resolve_brand_icon_pixmap(size: int) -> QPixmap | None:
     icon_path = _resolve_runtime_icon_asset_path()
     if icon_path is None:
         return None
-    if icon_path.suffix.lower() == ".svg":
-        renderer = QSvgRenderer(str(icon_path))
-        if not renderer.isValid():
-            return None
-        image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
-        image.fill(0)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        renderer.render(painter, QRectF(0, 0, size, size))
-        painter.end()
-        return QPixmap.fromImage(image)
-
     pixmap = QPixmap(str(icon_path))
     if pixmap.isNull():
         return None
