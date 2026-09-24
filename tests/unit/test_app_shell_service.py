@@ -4746,7 +4746,7 @@ def test_build_sandbox_install_plan_blocks_target_matching_configured_real_mods_
 
     with pytest.raises(
         AppShellError,
-        match="(matches configured real Mods path|coincide com o caminho configurado dos Mods reais)",
+        match="(neither may contain the other|nenhuma pode conter a outra)",
     ):
         service.build_sandbox_install_plan(
             str(package),

@@ -12,6 +12,7 @@ import platform
 import sys
 import traceback
 from datetime import datetime, timezone
+from itertools import count
 from pathlib import Path
 from types import TracebackType
 from typing import Callable
@@ -42,26 +43,31 @@ def write_crash_report(
     """Write one report and return its path. Raises only if the write fails."""
     moment = now or datetime.now(timezone.utc)
     report_directory.mkdir(parents=True, exist_ok=True)
-    report_path = report_directory / f"crash-{moment.strftime('%Y%m%d-%H%M%S-%f')}.txt"
     details = "".join(traceback.format_exception(exc_type, exc, exc_traceback))
-    report_path.write_text(
-        "\n".join(
-            (
-                f"Cinderleaf {app_version}",
-                f"Recorded: {moment.isoformat()}",
-                f"Python: {sys.version.split()[0]}",
-                f"Platform: {platform.platform()}",
-                f"Packaged build: {'yes' if getattr(sys, 'frozen', False) else 'no'}",
-                "",
-                "This file may contain folder paths from this computer.",
-                "Review it before sharing.",
-                "",
-                details,
-            )
-        ),
-        encoding="utf-8",
+    report_text = "\n".join(
+        (
+            f"Cinderleaf {app_version}",
+            f"Recorded: {moment.isoformat()}",
+            f"Python: {sys.version.split()[0]}",
+            f"Platform: {platform.platform()}",
+            f"Packaged build: {'yes' if getattr(sys, 'frozen', False) else 'no'}",
+            "",
+            "This file may contain folder paths from this computer.",
+            "Review it before sharing.",
+            "",
+            details,
+        )
     )
-    return report_path
+    stem = f"crash-{moment.strftime('%Y%m%d-%H%M%S-%f')}"
+    for attempt in count():
+        suffix = f"-{attempt}" if attempt else ""
+        report_path = report_directory / f"{stem}{suffix}.txt"
+        try:
+            with report_path.open("x", encoding="utf-8") as report:
+                report.write(report_text)
+        except FileExistsError:
+            continue
+        return report_path
 
 
 def install_crash_reporter(

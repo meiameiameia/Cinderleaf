@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,25 @@ def test_write_crash_report_records_the_failure_and_its_context(tmp_path: Path) 
     assert "_raise" in text, "the traceback itself must be recorded"
     # The owner may share this file, so it says what it can contain.
     assert "Review it before sharing." in text
+
+
+def test_crash_reports_with_the_same_timestamp_do_not_overwrite(tmp_path: Path) -> None:
+    exc_type, exc, exc_traceback = _captured_exception()
+    timestamp = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    options = dict(
+        report_directory=tmp_path / "crash-reports",
+        exc_type=exc_type,
+        exc=exc,
+        exc_traceback=exc_traceback,
+        app_version="1.6.0",
+        now=timestamp,
+    )
+
+    first = write_crash_report(**options)
+    second = write_crash_report(**options)
+
+    assert first != second
+    assert first.is_file() and second.is_file()
 
 
 def test_installed_reporter_records_and_reports_unexpected_failures(
