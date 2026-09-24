@@ -10,7 +10,7 @@ Localized docs:
   - [README (PT-BR)](i18n/pt-BR/README.md)
   - [User Guide (PT-BR)](i18n/pt-BR/USER_GUIDE.md)
 
-The public docs currently track the `1.6.0` working line. The latest packaged public release is still `1.5.0`.
+The public docs track the `1.6.0` Windows portable release. The experimental Linux portable remains at `1.5.0`.
 
 This `docs/` area stays intentionally small:
 
@@ -25,4 +25,4 @@ Docs direction for `1.6.0`:
 - make dependency planning and profile dependency handling easy to understand for non-technical players
 - describe `History` as the combined home for archived copies and install rollback
 - treat PT-BR app localization as shipped baseline, with polish-on-sight fixes for runtime text gaps
-- document Linux portable packaging as an experimental available lane (not yet broad distro support)
+- document the older `1.5.0` Linux portable as experimental; there is no validated `1.6.0` Linux build yet

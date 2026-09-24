@@ -2,6 +2,15 @@
 
 All notable user-facing changes for this repository are tracked here.
 
+## [1.6.0]
+
+- Added reviewed, one-way sync between real and sandbox Mods in `Compare`. The chosen direction, affected mods, replacements, and archive location are shown before any write; linked multi-folder mod families stay together.
+- Made install planning and recovery more protective: changed packages or destinations require a fresh review, and completed 1.6.0 installs can only be recovered automatically when the installed mod and archived copy still match the recorded operation.
+- Improved update-source matching and SMAPI log troubleshooting so update and mod-loading results are clearer and more reliable.
+- Refined the Windows interface across everyday workspaces, including more usable layouts, clearer actions and status text, and additional English and Brazilian Portuguese coverage.
+- Updated the Cinderleaf icon and Windows portable branding. The Windows build is still unsigned; a checksum accompanies the release artifact.
+- **History compatibility:** 1.6.0 can read older install history, but writes a newer format that 1.5.0 cannot read. Back up Cinderleaf's state before trying 1.6.0, and do not run an older build against state written by 1.6.0.
+
 ## [1.5.0]
 
 - Expanded PT-BR localization across workspace shell copy, setup/runtime status text, and install/archive confirmation flows for a more complete localized everyday experience.

@@ -2,17 +2,16 @@
 
 Este documento é a versão em Português (Brasil) do README público do Cinderleaf.
 
-- Traduzido da base em inglês no commit: `a1074f1`
-- Status da tradução: `completo (linha 1.6.0)`
+- Status da tradução: `completo (versão 1.6.0)`
 - Documento-fonte (EN): [README raiz](../../../README.md)
 
-**Cinderleaf** é um gerenciador de mods para desktop de **Stardew Valley**, com releases portáteis para Windows e Linux.
+**Cinderleaf** é um gerenciador de mods para desktop de **Stardew Valley**. A versão portátil atual é para Windows; também existe uma versão experimental anterior para Linux.
 
 `for Stardew Valley` é uma descrição, não uma afiliação oficial. Cinderleaf é uma ferramenta da comunidade e não é endossada por ConcernedApe.
 
 Versão atual do projeto: **1.6.0**
 
-Última versão pública empacotada: **1.5.0**
+Última versão pública empacotada: **1.6.0**
 
 Se você quiser o passo a passo completo, leia o [Guia do Usuário (PT-BR)](USER_GUIDE.md).
 
@@ -39,14 +38,15 @@ A ideia é deixar o fluxo do dia a dia mais calmo e claro, sem te prender em pro
 - `Histórico`: cópias arquivadas e histórico de instalação
 - `Configuração`: pastas, backup, restore/import e configurações extras
 
-## Por que a versão `1.5.0` importa
+## Novidades da versão `1.6.0`
 
-- UI mais calma e consistente nos workspaces principais
-- `Arquivo` + `Recuperação` foram consolidados em `Histórico`
-- fluxo de `Pacotes` mais rápido (`Adicionar pacote`, handoff melhor e abertura automática de `Instalar` quando o próximo passo é óbvio)
-- dependências mais visíveis no fluxo normal
-- cobertura PT-BR muito mais ampla no app
-- lane Linux portátil experimental disponível
+- `Comparar` permite sincronizar mods selecionados entre as pastas reais e sandbox nos dois sentidos, sempre com uma revisão antes da gravação.
+- Pastas relacionadas ao mesmo mod continuam juntas durante a sincronização.
+- Planos de instalação recusam arquivos ou destinos alterados; a recuperação verifica se uma instalação concluída ainda corresponde ao registro.
+- Melhorias na identificação de fontes de atualização, no resumo do log do SMAPI, na interface e no texto em português e inglês.
+- Novo ícone do Cinderleaf e identidade atualizada no pacote portátil para Windows.
+
+Antes de atualizar, guarde um backup do estado do Cinderleaf e das pastas de Mods. A versão `1.6.0` lê o histórico antigo, mas grava um formato que a `1.5.0` não consegue ler.
 
 Histórico completo: [CHANGELOG.md](../../../CHANGELOG.md)
 
@@ -55,11 +55,11 @@ Histórico completo: [CHANGELOG.md](../../../CHANGELOG.md)
 Os artefatos públicos são publicados no GitHub Releases.
 
 1. Abra [Releases](https://github.com/meiameiameia/Cinderleaf/releases).
-2. Baixe o artefato da sua plataforma.
+2. Baixe `cinderleaf-1.6.0-windows-portable.zip` para Windows. A versão experimental para Linux continua disponível no release `1.5.0`.
 3. Extraia para uma pasta comum.
 4. Execute `Cinderleaf.exe` (Windows) ou `./Cinderleaf` (Linux).
 
-Se houver arquivos de checksum, valide SHA256 antes de usar.
+Confira o SHA-256 usando o arquivo de checksum publicado antes de usar.
 
 O Cinderleaf permite apenas uma cópia em execução por vez, evitando que duas janelas
 alterem simultaneamente as mesmas pastas de Mods ou o histórico de recuperação.
@@ -71,7 +71,7 @@ alterem simultaneamente as mesmas pastas de Mods ou o histórico de recuperaçã
 - instalação continua explícita e revisada (sem install silencioso)
 - restore de saves continua manual
 - Windows é a plataforma principal hoje
-- Linux portátil está disponível, mas ainda em fase experimental
+- Linux portátil está disponível apenas na versão anterior `1.5.0` e ainda é experimental
 
 ## Idiomas da documentação
 

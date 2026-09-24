@@ -105,6 +105,29 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# QtGui's PyInstaller hook collects every platform-input plugin. The app does
+# not use Qt Virtual Keyboard; shipping its GPL-only plugin would impose a
+# different license on a bundle whose own code is PolyForm Noncommercial.
+# The PDF image-format plugin is likewise unused and pulls in Qt PDF/PDFium.
+# QML/Quick/OpenGL are dependency-only additions of that unused keyboard
+# plugin; Cinderleaf imports QtCore/QtGui/QtWidgets, not these modules.
+UNUSED_QT_BINARIES = {
+    "qtvirtualkeyboardplugin.dll",
+    "qt6virtualkeyboard.dll",
+    "qpdf.dll",
+    "qt6pdf.dll",
+    "qt6qml.dll",
+    "qt6qmlmeta.dll",
+    "qt6qmlmodels.dll",
+    "qt6qmlworkerscript.dll",
+    "qt6quick.dll",
+    "qt6opengl.dll",
+}
+a.binaries = type(a.binaries)(
+    item for item in a.binaries
+    if Path(item[0]).name.lower() not in UNUSED_QT_BINARIES
+)
 pyz = PYZ(a.pure)
 
 exe = EXE(

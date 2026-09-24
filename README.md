@@ -1,6 +1,6 @@
 # Cinderleaf
 
-**Cinderleaf** is a desktop mod manager for **Stardew Valley** with portable releases for Windows and Linux.
+**Cinderleaf** is a desktop mod manager for **Stardew Valley**. The current portable release is for Windows; an earlier experimental Linux build is also available.
 
 It is made for players who want modding to feel simpler:
 
@@ -16,14 +16,18 @@ It is made for players who want modding to feel simpler:
 
 Current project version: **1.6.0**
 
-Latest packaged public release: **1.5.0**
+Latest packaged public release: **1.6.0**
 
-Release lanes in `1.5.0`:
+Release lanes:
 
-- Windows portable (`.zip`)
-- Linux portable (`.tar.gz`, experimental lane validated on Ubuntu 24.04)
+- `1.6.0`: Windows portable (`.zip`)
+- `1.5.0`: Linux portable (`.tar.gz`, experimental lane validated on Ubuntu 24.04)
 
 If you want the full walkthrough, start with the [User Guide](docs/USER_GUIDE.md).
+
+The Windows ZIP includes Cinderleaf's license and notices for its bundled
+software. Matching Qt/PySide source archives are attached to the GitHub release;
+those libraries keep their own LGPL terms.
 
 ## Documentation languages
 
@@ -63,20 +67,18 @@ The goal is not to bury you in process. The goal is to make the normal flow feel
 - `History`: archived copies and install rollback history in one place
 - `Setup`: folders, backups, restore/import tools, and a few extra configuration options
 
-## Why `1.5.0` matters
+## What's new in `1.6.0`
 
-This release is a usability release.
+This release makes the main workflow easier to review and safer to recover.
 
-The app now feels much more like an everyday mod manager first:
+- `Compare` can sync selected mods between real and sandbox Mods in either direction, with an explicit review before writing.
+- Linked folders that belong to one mod stay together during Compare sync.
+- Install plans reject changed packages and destinations; recovery checks that completed 1.6.0 installs still match their recorded contents.
+- Update-source matching, SMAPI log feedback, layouts, and EN/PT-BR wording have been refined.
+- Cinderleaf has a new app icon and updated Windows portable branding.
 
-- the main workspaces are calmer and easier to scan
-- `Archive` and `Recovery` are now together under `History`
-- `Packages` is faster to use, with `Add package`, better watcher handoff, and automatic `Install` opening when the next step is obvious
-- dependency handling is more visible in the normal flow, with install planning warnings and smarter profile enabling
-- `Compare` shows more rows at once
-- packaged build behavior is cleaner on both lanes, including Linux table/header rendering fixes and prior Windows watcher stability fixes
-- app localization is now shipped, including broad Brazilian Portuguese (`pt-BR`) coverage across the main shell and workflow surfaces
-- Linux portable packaging is now available as an experimental release lane alongside Windows portable builds
+Before upgrading, keep a backup of your Cinderleaf state and Mods folders. `1.6.0`
+reads older install history but writes a newer format that `1.5.0` cannot read.
 
 For the release history, see [CHANGELOG.md](CHANGELOG.md).
 
@@ -86,14 +88,14 @@ Public release artifacts are published on GitHub Releases.
 
 1. Open the repository [Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
 2. Download the artifact for your platform:
-   - Windows: `cinderleaf-1.5.0-windows-portable.zip`
-   - Linux: `cinderleaf-1.5.0-linux-portable.tar.gz` (experimental lane)
+   - Windows: `cinderleaf-1.6.0-windows-portable.zip`
+   - Linux: `cinderleaf-1.5.0-linux-portable.tar.gz` (older experimental lane)
 3. Extract to a normal folder.
 4. Run `Cinderleaf.exe` on Windows, or `./Cinderleaf` inside the Linux portable folder.
 
-If checksum files are published with the release, verify against:
+Verify the published checksum files against:
 
-- `cinderleaf-1.5.0-windows-portable.zip.sha256`
+- `cinderleaf-1.6.0-windows-portable.zip.sha256`
 - `cinderleaf-1.5.0-linux-portable.tar.gz.sha256`
 
 Good to know:
@@ -129,24 +131,21 @@ That means dependency problems show up earlier, during review, instead of only a
 
 ## Screenshots
 
-These screenshots reflect the `1.6.0` app surface built from source. The latest
-packaged public release is still `1.5.0`.
-
-![Setup workspace](media/nexus-screenshots/00-setup-workspace.png)
+These screenshots show `1.6.0` with fictional demo mods and folders.
 
 ![Library workspace](media/nexus-screenshots/01-library-workspace.png)
 
-![SMAPI workspace](media/nexus-screenshots/02-smapi-workspace.png)
-
-![Packages workspace](media/nexus-screenshots/03-packages-workspace.png)
-
 ![Install workspace](media/nexus-screenshots/04-install-workspace.png)
 
-![Discover workspace](media/nexus-screenshots/05-discover-workspace.png)
+![Packages workspace](media/nexus-screenshots/03-packages-workspace.png)
 
 ![Compare workspace](media/nexus-screenshots/06-compare-workspace.png)
 
 ![History workspace](media/nexus-screenshots/07-history-workspace.png)
+
+![Setup workspace](media/nexus-screenshots/00-setup-workspace.png)
+
+![Library workspace in Brazilian Portuguese](media/nexus-screenshots/08-library-pt-BR.png)
 
 ## Current limits
 

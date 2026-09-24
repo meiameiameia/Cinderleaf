@@ -1,0 +1,47 @@
+Cinderleaf Windows portable — third-party software
+==================================================
+
+Cinderleaf's own code is licensed under PolyForm Noncommercial 1.0.0; see
+LICENSE.txt in this folder. That license does not replace or restrict the
+separate terms below for software supplied by other authors.
+
+Qt and Qt for Python
+--------------------
+This package includes Qt 6.11.2 (Qt Base and Qt SVG), PySide6 6.11.2, and
+Shiboken6 6.11.2, developed by The Qt Company Ltd. and contributors.
+These components are used under GNU Lesser General Public License version 3
+(LGPLv3). Copies of the LGPLv3 and the GNU GPLv3 text it incorporates are in
+licenses/LGPL-3.0.txt and licenses/GPL-3.0.txt.
+
+The Qt/PySide libraries are separate files under _internal and are loaded
+dynamically. You may replace them with compatible modified versions and run
+the resulting application. The PolyForm license does not limit rights the
+LGPL grants you in those libraries, including reverse engineering to debug
+such modifications. Cinderleaf does not modify the Qt/PySide source.
+
+The matching source archives for the Qt/PySide components in this binary are
+published alongside the Windows portable ZIP on the Cinderleaf GitHub release
+page for this version:
+  https://github.com/meiameiameia/Cinderleaf/releases
+Look for qtbase-everywhere-src-6.11.2.tar.xz,
+qtsvg-everywhere-src-6.11.2.tar.xz, and
+pyside-setup-everywhere-src-6.11.2.tar.xz.
+Qt's own third-party attributions are included in those source archives and
+documented at https://doc.qt.io/qt-6/licenses-used-in-qt.html and
+https://doc.qt.io/qtforpython-6/licenses.html.
+
+Python
+------
+This package includes the Python interpreter. Its license is in
+licenses/PYTHON-LICENSE.txt.
+
+PyInstaller
+-----------
+The executable includes the PyInstaller bootloader. PyInstaller's license
+and bootloader exception are in licenses/PYINSTALLER-COPYING.txt.
+
+7-Zip
+-----
+The archive helper includes 7-Zip 26.00 by Igor Pavlov. Its license,
+copyrights, and additional component notices are in
+_internal/tools/7zip/License.txt.
